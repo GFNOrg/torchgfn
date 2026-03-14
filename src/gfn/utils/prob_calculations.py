@@ -99,7 +99,7 @@ def get_trajectory_pfs(
 
         if not is_vectorized:
             # Per-step path.
-            N = trajectories.n_trajectories
+            N = trajectories.batch_size
             device = trajectories.states.device
 
             if trajectories.states.conditions is not None:
@@ -214,7 +214,7 @@ def get_trajectory_pfs(
 
     assert log_pf_trajectories.shape == (
         trajectories.max_length,
-        trajectories.n_trajectories,
+        trajectories.batch_size,
     )
 
     return log_pf_trajectories
@@ -282,7 +282,7 @@ def get_trajectory_pbs(
 
         assert log_pb_trajectories.shape == (
             trajectories.max_length,
-            trajectories.n_trajectories,
+            trajectories.batch_size,
         )
 
         return log_pb_trajectories
@@ -300,7 +300,7 @@ def get_trajectory_pbs(
 
     if not is_vectorized:
         # Per-step pb evaluation (state at t+1, action at t)
-        N = trajectories.n_trajectories
+        N = trajectories.batch_size
         device = trajectories.states.device
 
         if trajectories.states.conditions is not None:
@@ -371,7 +371,7 @@ def get_trajectory_pbs(
 
     assert log_pb_trajectories.shape == (
         trajectories.max_length,
-        trajectories.n_trajectories,
+        trajectories.batch_size,
     )
 
     return log_pb_trajectories

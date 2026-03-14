@@ -342,7 +342,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
-            A tuple of tensors of shape (max_length, n_trajectories) containing
+            A tuple of tensors of shape (max_length, batch_size) containing
             the log_pf and log_pb for each action in each trajectory.
         """
         return get_trajectory_pfs_and_pbs(
@@ -367,7 +367,7 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
-            A tensor of shape (n_trajectories,) containing the scores for each trajectory.
+            A tensor of shape (batch_size,) containing the scores for each trajectory.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -388,8 +388,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
                 raise ValueError("Infinite pf logprobs found")
             if torch.any(torch.isinf(total_log_pb_trajectories)):
                 raise ValueError("Infinite pb logprobs found")
-            assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
-            assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
+            assert total_log_pf_trajectories.shape == (trajectories.batch_size,)
+            assert total_log_pb_trajectories.shape == (trajectories.batch_size,)
         return total_log_pf_trajectories - total_log_pb_trajectories - log_rewards
 
     def to_training_samples(self, trajectories: Trajectories) -> Trajectories:

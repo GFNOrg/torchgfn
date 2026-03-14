@@ -28,18 +28,18 @@ class Trajectories(Container):
 
     Attributes:
         env: The environment where the states and actions are defined.
-        states: States with batch_shape (max_length+1, n_trajectories).
-        actions: Actions with batch_shape (max_length, n_trajectories).
-        terminating_idx: Tensor of shape (n_trajectories,) indicating the time step
+        states: States with batch_shape (max_length+1, batch_size).
+        actions: Actions with batch_shape (max_length, batch_size).
+        terminating_idx: Tensor of shape (batch_size,) indicating the time step
             at which each trajectory ends.
         is_backward: Whether the trajectories are backward or forward. When not
             is_backward, the `states` are ordered from initial to terminal states.
             When is_backward, the `states` are ordered from terminal to initial states.
-        _log_rewards: (Optional) Tensor of shape (n_trajectories,) containing the
+        _log_rewards: (Optional) Tensor of shape (batch_size,) containing the
             log rewards of the trajectories.
-        log_probs: (Optional) Tensor of shape (max_length, n_trajectories) indicating
+        log_probs: (Optional) Tensor of shape (max_length, batch_size) indicating
             the log probabilities of the trajectories' actions.
-        estimator_outputs: (Optional) Tensor of shape (max_length, n_trajectories, ...)
+        estimator_outputs: (Optional) Tensor of shape (max_length, batch_size, ...)
             containing outputs of a function approximator for each step.
     """
 
@@ -58,18 +58,18 @@ class Trajectories(Container):
 
         Args:
             env: The environment where the states and actions are defined.
-            states: States with batch_shape (max_length+1, n_trajectories). If None,
+            states: States with batch_shape (max_length+1, batch_size). If None,
                 an empty States object is created.
-            actions: Actions with batch_shape (max_length, n_trajectories). If None,
+            actions: Actions with batch_shape (max_length, batch_size). If None,
                 an empty Actions object is created.
-            terminating_idx: Tensor of shape (n_trajectories,) indicating the time step
+            terminating_idx: Tensor of shape (batch_size,) indicating the time step
                 at which each trajectory ends.
             is_backward: Whether the trajectories are backward or forward.
-            log_rewards: Optional tensor of shape (n_trajectories,) containing the
+            log_rewards: Optional tensor of shape (batch_size,) containing the
                 log rewards of the trajectories. If None, computed on the fly when needed.
-            log_probs: Optional tensor of shape (max_length, n_trajectories) indicating
+            log_probs: Optional tensor of shape (max_length, batch_size) indicating
                 the log probabilities of the trajectories' actions.
-            estimator_outputs: Optional tensor of shape (max_length, n_trajectories, ...)
+            estimator_outputs: Optional tensor of shape (max_length, batch_size, ...)
                 containing outputs of a function approximator for each step.
         Note:
             When states and actions are not None, the Trajectories is initialized as
@@ -114,13 +114,13 @@ class Trajectories(Container):
             if terminating_idx is not None
             else torch.full(size=(0,), fill_value=-1, device=device)
         )
-        assert self.terminating_idx.shape == (self.n_trajectories,) and is_int_dtype(
+        assert self.terminating_idx.shape == (self.batch_size,) and is_int_dtype(
             self.terminating_idx
         )
 
         self._log_rewards = log_rewards
         assert self._log_rewards is None or (
-            self._log_rewards.shape == (self.n_trajectories,)
+            self._log_rewards.shape == (self.batch_size,)
             and self._log_rewards.is_floating_point()
         )
 
@@ -144,7 +144,7 @@ class Trajectories(Container):
             A string summary of the trajectories.
         """
         trajectories_representation = ""
-        n_traj_to_print = min(10, self.n_trajectories)
+        n_traj_to_print = min(10, self.batch_size)
 
         if isinstance(self.states, GraphStates):
             for i in range(n_traj_to_print):
@@ -165,7 +165,7 @@ class Trajectories(Container):
                 trajectories_representation += "-> ".join(one_traj_repr) + "\n"
         return (
             "Trajectories("
-            + f"n_trajectories={self.n_trajectories}, max_length={self.max_length}\n"
+            + f"batch_size={self.batch_size}, max_length={self.max_length}\n"
             + f"First {n_traj_to_print} trajectories:\n"
             + f"states=\n{trajectories_representation}"
             + f"terminating_idx={self.terminating_idx[:10].cpu().numpy()})"
@@ -181,7 +181,7 @@ class Trajectories(Container):
         return self.states.device
 
     @property
-    def n_trajectories(self) -> int:
+    def batch_size(self) -> int:
         """The number of trajectories in the container.
 
         Returns:
@@ -195,7 +195,7 @@ class Trajectories(Container):
         Returns:
             The number of trajectories.
         """
-        return self.n_trajectories
+        return self.batch_size
 
     @property
     def max_length(self) -> int:
@@ -216,14 +216,14 @@ class Trajectories(Container):
         Returns:
             The terminating states.
         """
-        return self.states[self.terminating_idx - 1, torch.arange(self.n_trajectories)]
+        return self.states[self.terminating_idx - 1, torch.arange(self.batch_size)]
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
         """The log rewards for the trajectories.
 
         Returns:
-            Log rewards tensor of shape (n_trajectories,).
+            Log rewards tensor of shape (batch_size,).
 
         Note:
             If not provided at initialization, log rewards are computed on demand for
@@ -235,7 +235,7 @@ class Trajectories(Container):
         if self._log_rewards is None:
             self._log_rewards = self.env.log_reward(self.terminating_states)
 
-        assert self._log_rewards.shape == (self.n_trajectories,)
+        assert self._log_rewards.shape == (self.batch_size,)
         return self._log_rewards
 
     def __getitem__(
@@ -321,7 +321,7 @@ class Trajectories(Container):
 
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
-        self.states.extend(other.states)  # n_trajectories comes from this.
+        self.states.extend(other.states)  # batch_size comes from this.
         self.terminating_idx = torch.cat(
             (self.terminating_idx, other.terminating_idx), dim=0
         )
@@ -465,22 +465,22 @@ class Trajectories(Container):
             )
 
         # Compute sequence lengths and maximum length
-        seq_lengths = self.terminating_idx  # shape (n_trajectories,)
+        seq_lengths = self.terminating_idx  # shape (batch_size,)
         max_len = int(seq_lengths.max().item())
 
         # Get actions and states
-        actions = self.actions  # shape (max_len, n_trajectories *action_dim)
-        states = self.states  # shape (max_len + 1, n_trajectories, *state_dim)
+        actions = self.actions  # shape (max_len, batch_size *action_dim)
+        states = self.states  # shape (max_len + 1, batch_size, *state_dim)
 
         # Initialize new actions and states
         new_actions = self.env.Actions.make_dummy_actions(
             (max_len + 1, len(self)), device=actions.device
         )
-        # shape (max_len + 1, n_trajectories, *action_dim)
+        # shape (max_len + 1, batch_size, *action_dim)
         new_states = self.env.States.make_sink_states(
             (max_len + 2, len(self)), device=states.device
         )
-        # shape (max_len + 2, n_trajectories, *state_dim)
+        # shape (max_len + 2, batch_size, *state_dim)
 
         # Create helper indices and masks
         idx = (
@@ -489,8 +489,8 @@ class Trajectories(Container):
             .expand(-1, len(self))
         )
 
-        rev_idx = seq_lengths.unsqueeze(0) - 1 - idx  # shape (max_len, n_trajectories)
-        mask = rev_idx >= 0  # shape (max_len, n_trajectories)
+        rev_idx = seq_lengths.unsqueeze(0) - 1 - idx  # shape (max_len, batch_size)
+        mask = rev_idx >= 0  # shape (max_len, batch_size)
 
         # -------------------------------------------------------------
         # Replace the previous transpose-based reversal logic with a
@@ -518,14 +518,14 @@ class Trajectories(Container):
         )  # Broadcast over the trajectory dimension
 
         # We do not want to copy the last state (s0) from the backward trajectory.
-        states_excl_last = states[:-1]  # shape (max_len, n_trajectories, *state_dim)
-        new_states_data = new_states[1:-1]  # shape (max_len, n_trajectories, *state_dim)
+        states_excl_last = states[:-1]  # shape (max_len, batch_size, *state_dim)
+        new_states_data = new_states[1:-1]  # shape (max_len, batch_size, *state_dim)
         new_states_data[time_idx, traj_idx] = states_excl_last[src_time_idx, traj_idx]
 
         # ---------------------------------------------------------------------
         # new_actions / new_states already have the correct shapes
-        #   new_actions: (max_len + 1, n_trajectories, *action_dim)
-        #   new_states:  (max_len + 2, n_trajectories, *state_dim)
+        #   new_actions: (max_len + 1, batch_size, *action_dim)
+        #   new_states:  (max_len + 2, batch_size, *state_dim)
         # ---------------------------------------------------------------------
 
         # Add conditions to the new states
