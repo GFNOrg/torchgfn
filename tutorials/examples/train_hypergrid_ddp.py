@@ -73,7 +73,19 @@ def _make_optimizer_for(gflownet, args) -> torch.optim.Optimizer:
 
 
 def set_up_fm_gflownet(args, env, preprocessor):
-    """Returns a FM GFlowNet."""
+    """Build a Flow Matching GFlowNet.
+
+    Flow Matching (FM) only requires a forward policy estimator and learns by
+    matching incoming/outgoing flow at each state.
+
+    Args:
+        args: CLI arguments (uses ``tabular``, ``hidden_dim``, ``n_hidden``).
+        env: HyperGrid environment instance.
+        preprocessor: State preprocessor (e.g. KHotPreprocessor).
+
+    Returns:
+        An FMGFlowNet ready for training.
+    """
     if args.tabular:
         module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
     else:
@@ -93,7 +105,21 @@ def set_up_fm_gflownet(args, env, preprocessor):
 
 
 def set_up_pb_pf_estimators(args, env, preprocessor):
-    """Returns a pair of estimators for the forward and backward policies."""
+    """Build the forward (PF) and backward (PB) policy estimators.
+
+    Supports tabular or MLP-based modules with optional parameter tying
+    (``--tied`` shares the MLP trunk between PF, PB, and log-state-flow F)
+    and uniform backward policy (``--uniform_pb``).
+
+    Args:
+        args: CLI arguments (uses ``tabular``, ``uniform_pb``, ``tied``,
+            ``hidden_dim``, ``n_hidden``, ``n_noisy_layers``, ``noisy_std_init``).
+        env: HyperGrid environment instance.
+        preprocessor: State preprocessor.
+
+    Returns:
+        A ``(pf_estimator, pb_estimator)`` tuple.
+    """
     if args.tabular:
         pf_module = Tabular(n_states=env.n_states, output_dim=env.n_actions)
         if not args.uniform_pb:
@@ -142,7 +168,20 @@ def set_up_pb_pf_estimators(args, env, preprocessor):
 
 
 def set_up_logF_estimator(args, env, preprocessor, pf_module):
-    """Returns a LogStateFlowEstimator."""
+    """Build the log-state-flow estimator (used by DB and SubTB losses).
+
+    When ``--tied`` is set, the MLP trunk is shared with the PF module to
+    reduce the number of trainable parameters.
+
+    Args:
+        args: CLI arguments (uses ``tabular``, ``tied``, ``hidden_dim``, ``n_hidden``).
+        env: HyperGrid environment instance.
+        preprocessor: State preprocessor.
+        pf_module: The forward policy's underlying module (trunk may be reused).
+
+    Returns:
+        A ScalarEstimator for log F(s).
+    """
     if args.tabular:
         module = Tabular(n_states=env.n_states, output_dim=1)
     else:
@@ -162,7 +201,26 @@ def set_up_logF_estimator(args, env, preprocessor, pf_module):
 
 
 def set_up_gflownet(args, env, preprocessor):
-    """Returns a GFlowNet complete with the required estimators."""
+    """Build a GFlowNet for the requested loss function.
+
+    Constructs the appropriate estimators and GFlowNet variant:
+
+    - **FM** (Flow Matching): forward policy only.
+    - **TB** (Trajectory Balance): forward + backward policies, learnable logZ.
+    - **DB** (Detailed Balance): forward + backward policies + log-state-flow F.
+    - **SubTB** (Sub-Trajectory Balance): like DB, with configurable sub-trajectory weighting.
+    - **ZVar** (Log-Partition Variance): forward + backward policies.
+    - **ModifiedDB**: a variant of DB with edge-based rewards.
+
+    Args:
+        args: CLI arguments (``loss`` selects the variant; architecture flags
+            are forwarded to the estimator builders).
+        env: HyperGrid environment instance.
+        preprocessor: State preprocessor.
+
+    Returns:
+        A GFlowNet instance, or ``None`` if the loss is unrecognized.
+    """
     if args.loss == "FM":
         return set_up_fm_gflownet(args, env, preprocessor)
 
@@ -206,7 +264,28 @@ def set_up_gflownet(args, env, preprocessor):
 
 
 def main(args) -> dict:  # noqa: C901
-    """Trains a GFlowNet on the Hypergrid Environment using DDP."""
+    """Train a GFlowNet on the HyperGrid environment using DDP.
+
+    High-level flow:
+
+    1. **DDP initialization** — detect rank/world-size from torchrun, MPI, or
+       SLURM environment variables and create a ``DistributedContext``.
+    2. **Buffer ranks** — if ``--num_remote_buffers > 0``, the last *N* ranks
+       are dedicated replay-buffer servers and never enter the training loop.
+    3. **Model setup** — build the GFlowNet, optimizer, and optional replay
+       buffer on each training rank.
+    4. **Training loop** — each iteration: sample trajectories → compute loss →
+       backward → all-reduce gradients across training ranks → optimizer step.
+    5. **Validation & logging** — periodically compute L1 distance to the true
+       distribution and log metrics to WandB.
+    6. **Cleanup** — send termination signals to buffer ranks, barrier, return.
+
+    Args:
+        args: Parsed CLI arguments (see ``__main__`` block below).
+
+    Returns:
+        A dict of final training metrics (loss, l1_dist, modes found, etc.).
+    """
 
     if args.half_precision:
         torch.set_default_dtype(torch.bfloat16)
@@ -271,15 +350,24 @@ def main(args) -> dict:  # noqa: C901
         dist.ProcessGroup | None, dist.new_group(ranks=training_ranks_ddp)
     )
 
-    # Assign each training rank to a buffer rank.
+    # Assign each training rank to a buffer rank using round-robin modulo
+    # arithmetic.  For example, with 4 training ranks and 2 buffer ranks
+    # (ranks 4 and 5), the mapping is:
+    #   training rank 0 → buffer rank 4  (0 % 2 == 0)
+    #   training rank 1 → buffer rank 5  (1 % 2 == 1)
+    #   training rank 2 → buffer rank 4  (2 % 2 == 0)
+    #   training rank 3 → buffer rank 5  (3 % 2 == 1)
+    # Buffer ranks compute the inverse: which training ranks they serve.
     assigned_buffer_ddp = None
     assigned_training_ranks_ddp = None
     if args.num_remote_buffers > 0:
         if ddp_rank < num_training_ranks_ddp:
+            # Training rank → its assigned buffer rank.
             assigned_buffer_ddp = num_training_ranks_ddp + (
                 ddp_rank % args.num_remote_buffers
             )
         else:
+            # Buffer rank → list of training ranks it serves.
             assigned_training_ranks_ddp = [
                 r
                 for r in range(num_training_ranks_ddp)
@@ -340,7 +428,12 @@ def main(args) -> dict:  # noqa: C901
 
         import wandb
 
-        # Generate shared group name for wandb across all DDP processes.
+        # Generate a shared WandB group name so all DDP ranks log to the same
+        # experiment group.  Because the group name is a variable-length string,
+        # broadcasting requires two steps:
+        #   1. Broadcast the *length* of the string (a single int64 tensor).
+        #   2. Broadcast the *payload* (a uint8 tensor of UTF-8 bytes).
+        # Only rank 0 generates the name; all other ranks receive it.
         pg = distributed_context.train_global_group
         is_root = distributed_context.my_rank == 0
 
@@ -357,11 +450,11 @@ def main(args) -> dict:  # noqa: C901
             group_name_bytes = None
             group_name_len_tensor = torch.zeros(1, dtype=torch.long)
 
-        # Broadcast the length
+        # Step 1: broadcast the string length so non-root ranks can allocate.
         dist.broadcast(group_name_len_tensor, src=0, group=pg)
         group_name_len = int(group_name_len_tensor.item())
 
-        # Broadcast the payload
+        # Step 2: broadcast the UTF-8 bytes of the group name.
         if is_root:
             assert group_name_bytes is not None
             payload = torch.tensor(list(group_name_bytes), dtype=torch.uint8)
@@ -422,6 +515,11 @@ def main(args) -> dict:  # noqa: C901
         (local_mode_heatmap_side, local_mode_heatmap_side), dtype=torch.float32
     )
 
+    # Training is on-policy only when there are no sources of off-policy
+    # samples: no replay buffer, no epsilon-greedy exploration, no temperature
+    # scaling, and no NoisyNet layers.  When on-policy, log-probs computed
+    # during sampling can be reused (save_logprobs=True) instead of being
+    # recalculated during the loss computation.
     is_on_policy = (
         (args.replay_buffer_size == 0)
         and (args.epsilon == 0.0)
@@ -432,7 +530,11 @@ def main(args) -> dict:  # noqa: C901
     logger.info("n_iterations = %d", n_iterations)
     logger.info("per_node_batch_size = %d", per_node_batch_size)
 
-    # Initialize the profiler.
+    # Initialize the PyTorch profiler.  The schedule has three phases:
+    #   wait=1   — skip the first iteration (cold-start noise).
+    #   warmup=1 — run one iteration to warm JIT/caches (results discarded).
+    #   active=N — record the next N iterations for the actual trace.
+    # After wait + warmup + active iterations the profiler auto-stops (repeat=1).
     if args.profile:
         keep_active = args.trajectories_to_profile // args.batch_size
         prof = profile(
@@ -512,7 +614,12 @@ def main(args) -> dict:  # noqa: C901
         with Timer(timing, "loss_backward", enabled=args.timing) as loss_backward_timer:
             loss.backward()
 
-        # DDP gradient synchronization: all-reduce gradients across training ranks.
+        # DDP gradient synchronization: manually all-reduce gradients across
+        # training ranks and average them.  This is equivalent to what
+        # DistributedDataParallel does internally but gives us explicit control
+        # over the process group (train_global_group excludes buffer ranks).
+        # Each rank computed gradients on its local mini-batch; summing and
+        # dividing by num_training_ranks yields the gradient of the full batch.
         with Timer(timing, "ddp_grad_sync", enabled=args.timing) as ddp_sync_timer:
             for param in gflownet.parameters():
                 if param.grad is not None:
