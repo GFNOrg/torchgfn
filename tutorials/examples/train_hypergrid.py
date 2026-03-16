@@ -258,19 +258,19 @@ class ModesReplayBufferManager(ReplayBufferManager):
 
             # Sum the minimum batch x buffer distances for each batch element.
             novelty_sum = float(min_dist.sum().item())
-            logger.info("Score - Min distances: %s", min_dist)
+            logger.debug("Score - Min distances: %s", min_dist)
 
-        logger.info("Score - Novelty sum: %s", novelty_sum)
+        logger.debug("Score - Novelty sum: %s", novelty_sum)
 
         # C) High reward term (sum over batch)
         assert (
             obj.log_rewards is not None
         ), "log_rewards is None in submitted trajectories!"
         reward_sum = float(obj.log_rewards.exp().sum().item())
-        logger.info("Score - Reward sum: %s", reward_sum)
+        logger.debug("Score - Reward sum: %s", reward_sum)
 
         # D) Mode bonus
-        logger.info("Score - Modes discovered before update: %s", self.discovered_modes)
+        logger.debug("Score - Modes discovered before update: %s", self.discovered_modes)
 
         n_new_modes = 0.0
         assert isinstance(obj.terminating_states, DiscreteStates)
@@ -281,15 +281,15 @@ class ModesReplayBufferManager(ReplayBufferManager):
                 n_new_modes = float(len(new_modes))
                 self.discovered_modes.update(new_modes)
 
-        logger.info("Score - New modes found: %s", n_new_modes)
-        logger.info("Score - Modes discovered after update: %s", self.discovered_modes)
+        logger.debug("Score - New modes found: %s", n_new_modes)
+        logger.debug("Score - Modes discovered after update: %s", self.discovered_modes)
 
         # Compute the final score.
         final_score = self.w_retained * float(retained_count)
         final_score += self.w_novelty * novelty_sum
         final_score += self.w_reward * reward_sum
         final_score += self.w_mode_bonus * n_new_modes
-        logger.info("Score - Final score: %s", final_score)
+        logger.debug("Score - Final score: %s", final_score)
         # Update and return EMA of the score
         if self._score_ema is None:
             self._score_ema = final_score
@@ -297,7 +297,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
             self._score_ema = self._ema_decay * self._score_ema + (
                 1.0 - self._ema_decay
             ) * float(final_score)
-        logger.info("Score - EMA score: %s", self._score_ema)
+        logger.debug("Score - EMA score: %s", self._score_ema)
         return {
             "score": float(self._score_ema),
             "score_before_ema": final_score,
