@@ -1272,8 +1272,6 @@ def main(args) -> dict:  # noqa: C901
             group=distributed_context.get_train_group(backend=args.dist_lib),
             backend=args.dist_lib,
         )
-        assert averaging_policy_torch is not None
-        assert averaging_policy_mpi4py is not None
         try:
             if args.dist_lib == "torch":
                 assert averaging_policy_torch is not None
