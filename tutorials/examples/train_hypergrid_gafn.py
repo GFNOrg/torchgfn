@@ -172,7 +172,7 @@ class TBGAFN(TBGFlowNet):
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
-            A tensor of shape (n_trajectories,) containing the scores for each trajectory.
+            A tensor of shape (batch_size,) containing the scores for each trajectory.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -209,8 +209,8 @@ class TBGAFN(TBGFlowNet):
 
             terminal_ri = edge_ri[
                 trajectories.terminating_idx - 1,
-                torch.arange(trajectories.n_trajectories, device=edge_ri.device),
-            ]  # shape: (n_trajectories,)
+                torch.arange(trajectories.batch_size, device=edge_ri.device),
+            ]  # shape: (batch_size,)
             _terminal_part = torch.stack(
                 [log_rewards, terminal_ri.log()], dim=0
             ).logsumexp(dim=0)
@@ -226,7 +226,7 @@ class TBGAFN(TBGFlowNet):
             # being zero, i.e., r(s_t \to s_{t+1}) = 0 for all t.
             terminal_ri = self.rnd.compute_intrinsic_reward(
                 trajectories.terminating_states
-            )  # shape: (n_trajectories,)
+            )  # shape: (batch_size,)
             _terminal_part = torch.stack(
                 [log_rewards, terminal_ri.log()], dim=0
             ).logsumexp(dim=0)

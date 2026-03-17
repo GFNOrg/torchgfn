@@ -66,7 +66,7 @@ class States(ABC):
 
     A `batch_shape` property keeps track of the batch dimension. A trajectory can be
     represented by a States object with `batch_shape = (n_states,)`. Multiple trajectories
-    can be represented by a States object with `batch_shape = (n_states, n_trajectories)`.
+    can be represented by a States object with `batch_shape = (n_states, batch_size)`.
 
     Because multiple trajectories can have different lengths, batching requires
     appending a dummy state ($sf$) to trajectories that are shorter than the longest

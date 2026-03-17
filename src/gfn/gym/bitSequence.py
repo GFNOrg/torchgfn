@@ -644,12 +644,12 @@ class BitSequence(DiscreteEnv):
         Args:
             terminating_states_tensor: A tensor containing the terminating
                 states from which to generate the trajectories. The shape of the
-                tensor should be `(n_trajectories, words_per_seq)`.
+                tensor should be `(batch_size, words_per_seq)`.
 
         Returns:
             An object containing the generated trajectories.
         """
-        n_trajectories = terminating_states_tensor.shape[0]
+        batch_size = terminating_states_tensor.shape[0]
         list_of_states = []
         list_of_actions = []
 
@@ -658,13 +658,13 @@ class BitSequence(DiscreteEnv):
                 prefix = terminating_states_tensor[:, :i].to(self.device)
             else:
                 prefix = torch.empty(
-                    (n_trajectories, 0),
+                    (batch_size, 0),
                     dtype=terminating_states_tensor.dtype,
                     device=self.device,
                 )
 
             suffix = torch.full(
-                (n_trajectories, self.words_per_seq - i),
+                (batch_size, self.words_per_seq - i),
                 -1,
                 dtype=terminating_states_tensor.dtype,
                 device=self.device,
@@ -674,7 +674,7 @@ class BitSequence(DiscreteEnv):
 
             list_of_states.append(self.states_from_tensor(new_tensor))
 
-        list_of_states.append(self.reset((n_trajectories,), sink=True))
+        list_of_states.append(self.reset((batch_size,), sink=True))
         states = BitSequenceStates.stack(list_of_states)
 
         for i in range(self.words_per_seq):
@@ -682,7 +682,7 @@ class BitSequence(DiscreteEnv):
             list_of_actions.append(self.actions_from_tensor(word_tensor.unsqueeze(-1)))
 
         list_of_actions.append(
-            self.Actions.make_exit_actions((n_trajectories,), device=self.device)
+            self.Actions.make_exit_actions((batch_size,), device=self.device)
         )
         actions = self.Actions.stack(list_of_actions)
 
@@ -691,8 +691,8 @@ class BitSequence(DiscreteEnv):
             states,
             actions=actions,
             terminating_idx=(self.words_per_seq + 1)
-            * torch.ones(n_trajectories, dtype=torch.long, device=self.device),
-            log_rewards=torch.zeros(n_trajectories, device=self.device),
+            * torch.ones(batch_size, dtype=torch.long, device=self.device),
+            log_rewards=torch.zeros(batch_size, device=self.device),
         )
 
         return traj

@@ -14,7 +14,6 @@ def get_trajectory_pfs_and_pbs(
     pf: Estimator,
     pb: Estimator | None,
     trajectories: Trajectories,
-    fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
     **policy_kwargs: Any,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -27,7 +26,6 @@ def get_trajectory_pfs_and_pbs(
         pf: Forward policy estimator.
         pb: Backward policy estimator, or ``None`` for trees (PB=1).
         trajectories: Trajectories to evaluate.
-        fill_value: Value used to pad invalid positions.
         recalculate_all_logprobs: If True, recompute PF even if cached.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
@@ -38,14 +36,12 @@ def get_trajectory_pfs_and_pbs(
     log_pf_trajectories = get_trajectory_pfs(
         pf,
         trajectories,
-        fill_value=fill_value,
         recalculate_all_logprobs=recalculate_all_logprobs,
         **policy_kwargs,
     )
     log_pb_trajectories = get_trajectory_pbs(
         pb,
         trajectories,
-        fill_value=fill_value,
         **policy_kwargs,
     )
 
@@ -55,7 +51,6 @@ def get_trajectory_pfs_and_pbs(
 def get_trajectory_pfs(
     pf: Estimator,
     trajectories: Trajectories,
-    fill_value: float = 0.0,
     recalculate_all_logprobs: bool = True,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
@@ -68,7 +63,6 @@ def get_trajectory_pfs(
     Args:
         pf: Forward policy estimator.
         trajectories: Trajectories to evaluate.
-        fill_value: Value used to pad invalid positions.
         recalculate_all_logprobs: If True, recompute PF even if cached. Useful for
             off-policy training.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
@@ -105,7 +99,7 @@ def get_trajectory_pfs(
 
         if not is_vectorized:
             # Per-step path.
-            N = trajectories.n_trajectories
+            N = trajectories.batch_size
             device = trajectories.states.device
 
             if trajectories.states.conditions is not None:
@@ -118,7 +112,7 @@ def get_trajectory_pfs(
             T = trajectories.max_length
             log_pf_trajectories = torch.full(
                 (T, N),
-                fill_value=fill_value,
+                fill_value=0.0,
                 dtype=torch.get_default_dtype(),
                 device=device,
             )
@@ -161,14 +155,6 @@ def get_trajectory_pfs(
                     valid_step_actions.tensor, dist, ctx, step_mask, vectorized=False
                 )
 
-                # Pad back to full batch size.
-                if fill_value != 0.0:
-                    padded = torch.full(
-                        (N,), fill_value, device=device, dtype=step_log_probs.dtype
-                    )
-                    padded[step_mask] = step_log_probs[step_mask]
-                    step_log_probs = padded
-
                 # Store in trajectory-level tensor.
                 log_pf_trajectories[t] = step_log_probs
 
@@ -186,7 +172,7 @@ def get_trajectory_pfs(
             # Vectorized path.
             log_pf_trajectories = torch.full_like(
                 trajectories.actions.tensor[..., 0],
-                fill_value=fill_value,
+                fill_value=0.0,
                 dtype=torch.get_default_dtype(),
             )
 
@@ -228,7 +214,7 @@ def get_trajectory_pfs(
 
     assert log_pf_trajectories.shape == (
         trajectories.max_length,
-        trajectories.n_trajectories,
+        trajectories.batch_size,
     )
 
     return log_pf_trajectories
@@ -237,7 +223,6 @@ def get_trajectory_pfs(
 def get_trajectory_pbs(
     pb: Estimator | None,
     trajectories: Trajectories,
-    fill_value: float = 0.0,
     **policy_kwargs: Any,
 ) -> torch.Tensor:
     """Calculate PB log‑probabilities for trajectories.
@@ -251,7 +236,6 @@ def get_trajectory_pbs(
     Args:
         pb: Backward policy estimator, or ``None`` for trees (PB=1).
         trajectories: Trajectories to evaluate.
-        fill_value: Value used to pad invalid positions.
         **policy_kwargs: Extra kwargs for ``to_probability_distribution``.
 
     Returns:
@@ -265,7 +249,7 @@ def get_trajectory_pbs(
 
     log_pb_trajectories = torch.full_like(
         trajectories.actions.tensor[..., 0],
-        fill_value=fill_value,
+        fill_value=0.0,
         dtype=torch.get_default_dtype(),  # Floating point dtype.
     )
 
@@ -298,7 +282,7 @@ def get_trajectory_pbs(
 
         assert log_pb_trajectories.shape == (
             trajectories.max_length,
-            trajectories.n_trajectories,
+            trajectories.batch_size,
         )
 
         return log_pb_trajectories
@@ -316,7 +300,7 @@ def get_trajectory_pbs(
 
     if not is_vectorized:
         # Per-step pb evaluation (state at t+1, action at t)
-        N = trajectories.n_trajectories
+        N = trajectories.batch_size
         device = trajectories.states.device
 
         if trajectories.states.conditions is not None:
@@ -359,7 +343,7 @@ def get_trajectory_pbs(
                 step_actions, dist, ctx, step_mask, vectorized=False
             )
 
-            padded = torch.full((N,), fill_value, device=device, dtype=step_lp.dtype)
+            padded = torch.full((N,), 0.0, device=device, dtype=step_lp.dtype)
             padded[step_mask] = step_lp[step_mask]
             log_pb_trajectories[t] = padded
 
@@ -387,7 +371,7 @@ def get_trajectory_pbs(
 
     assert log_pb_trajectories.shape == (
         trajectories.max_length,
-        trajectories.n_trajectories,
+        trajectories.batch_size,
     )
 
     return log_pb_trajectories
@@ -509,8 +493,6 @@ def get_transition_pbs(
         ``log_pb`` of shape ``(M,)``.
     """
 
-    # TODO: We support a fill_value for trajectories, but not for transitions.
-    # Should we add it here, or remove it for trajectories?
     log_pb_actions = torch.zeros(
         (transitions.n_transitions,), device=transitions.states.device
     )
