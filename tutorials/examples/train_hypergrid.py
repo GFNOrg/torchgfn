@@ -874,6 +874,7 @@ def main(args) -> dict:  # noqa: C901
                 averaging_strategy=args.averaging_strategy,
                 momentum=args.momentum,
                 age_range=args.age_range,
+                replacement_mode=args.mpi_replacement_mode,
                 group=mpi4py_train_group,
             )
             if args.mpi_sa_mode == "fast":
@@ -886,6 +887,7 @@ def main(args) -> dict:  # noqa: C901
                     averaging_strategy=args.averaging_strategy,
                     momentum=args.momentum,
                     age_range=args.age_range,
+                    replacement_mode=args.mpi_replacement_mode,
                     group=mpi4py_train_group,
                 )
 
@@ -1305,6 +1307,17 @@ if __name__ == "__main__":
         default=(5, 15),
         help="Age range (iterations) for selective averaging policy as tuple (min_age, max_age), e.g., '5,15'",
     )
+    parser.add_argument(
+        "--mpi_replacement_mode",
+        choices=["age", "threshold", "worst_ratio"],
+        default="age",
+        help=(
+            "Replacement trigger for mpi4py selective averaging: "
+            "'age' uses random-age restarts, 'threshold' replaces local metric below "
+            "--performance_tracker_threshold, and 'worst_ratio' replaces the bottom "
+            "--replacement_ratio fraction based on global per-rank metric."
+        ),
+    )
 
     # Environment settings.
     parser.add_argument(
@@ -1585,8 +1598,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--performance_tracker_threshold",
         type=float,
-        default=0.0,
-        help="Threshold for the performance tracker. If None, the performance tracker is not triggered.",
+        default=float('inf'),
+        help="Threshold for the performance tracker. By default, the performance tracker is not triggered.",
     )
     parser.add_argument(
         "--performance_tracker_cooldown",
@@ -1596,6 +1609,10 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    if args.replacement_ratio <= 0.0 or args.replacement_ratio > 1.0:
+        parser.error("--replacement_ratio must be in (0, 1].")
+
     assert (
         args.age_range[1] >= args.age_range[0]
     ), "Invalid age_range: max_age must be ge min_age"
