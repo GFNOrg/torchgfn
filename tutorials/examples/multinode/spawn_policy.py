@@ -799,9 +799,15 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         self, iteration: int, local_metric: float
     ) -> Tuple[bool, Optional[List[float]]]:
         if self.replacement_mode == "age":
-            return self.is_agent_dying(local_metric, self.threshold_metric, check_agent=1), None
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_agent=1),
+                None,
+            )
         if self.replacement_mode == "threshold":
-            return self.is_agent_dying(local_metric, self.threshold_metric, check_agent=0), None
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_agent=0),
+                None,
+            )
         if self.replacement_mode == "worst_ratio":
             return self._is_worst_rank_this_iteration(iteration, local_metric)
         raise ValueError(f"Unknown replacement_mode: {self.replacement_mode}")
@@ -922,9 +928,7 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             "is_replaced": bool(should_replace),
             "num_replacements_so_far": int(self.num_replacements),
             "local_metric": float(local_metric),
-            "replacement_check_every": int(
-                self.average_every
-            ),
+            "replacement_check_every": int(self.average_every),
         }
         if all_metrics is not None and len(all_metrics) > 0:
             averaging_info["global_min_metric"] = float(min(all_metrics))
@@ -980,7 +984,7 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             acc = acc / len(donors)
             avg_state[name] = acc
 
-        self.capture_comm("num_param_tensors_received", tot_comm_ele)
+        self.capture_comm("num_param_tensors_received", int(tot_comm_ele))
         return avg_state
 
     def _average_received_params(
@@ -1176,9 +1180,15 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         self, iteration: int, local_metric: float
     ) -> Tuple[bool, Optional[List[float]]]:
         if self.replacement_mode == "age":
-            return self.is_agent_dying(local_metric, self.threshold_metric, check_policy=1), None
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_policy=1),
+                None,
+            )
         if self.replacement_mode == "threshold":
-            return self.is_agent_dying(local_metric, self.threshold_metric, check_policy=0), None
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_policy=0),
+                None,
+            )
         if self.replacement_mode == "worst_ratio":
             return self._is_worst_rank_this_iteration(iteration, local_metric)
         raise ValueError(f"Unknown replacement_mode: {self.replacement_mode}")
@@ -1333,9 +1343,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
             "is_replaced": bool(should_replace),
             "num_replacements_so_far": int(self.num_replacements),
             "local_metric": float(local_metric),
-            "replacement_check_every": int(
-                self.average_every
-            ),
+            "replacement_check_every": int(self.average_every),
         }
         if all_metrics is not None and len(all_metrics) > 0:
             averaging_info["global_min_metric"] = float(min(all_metrics))

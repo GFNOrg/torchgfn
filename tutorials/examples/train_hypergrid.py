@@ -1696,7 +1696,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--performance_tracker_threshold",
         type=float,
-        default=float('inf'),
+        default=float("inf"),
         help="Threshold for the performance tracker. By default, the performance tracker is not triggered.",
     )
     parser.add_argument(
