@@ -4,9 +4,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, cast
 
-import mpi4py.MPI as MPI
 import torch
 import torch.distributed as dist
+from mpi4py import MPI
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +312,15 @@ class DistributedContext:
                     ag.Free()
             MPI.Finalize()
 
+    def get_train_group(self, backend: str = "mpi"):
+        if backend == "mpi":
+            assert self.dc_mpi4py is not None
+            return self.dc_mpi4py.train_global_group
+        elif backend == "torch":
+            return self.train_global_group
+        else:
+            raise ValueError(f"Unknown backend: {backend}")
+
 
 def initialize_distributed_compute(
     dist_backend: str,
@@ -596,3 +605,69 @@ def gather_distributed_data(
         return torch.cat(results, dim=0)  # Concatenates along the batch dimension.
 
     return None  # For all non-zero ranks.
+
+
+default_backend = "mpi"
+
+
+def send(data, dst_rank, backend=default_backend):
+    if backend == "torch":
+        data = data.to(dtype=torch.uint8).contiguous().cpu()
+        length_tensor = torch.tensor([data.numel()], dtype=torch.int64, device="cpu")
+        dist.send(tensor=length_tensor, dst=dst_rank, tag=0)
+        dist.send(tensor=data, dst=dst_rank, tag=1)
+    elif backend == "mpi":
+        comm = MPI.COMM_WORLD
+        arr = data.detach().cpu().contiguous().numpy()
+        comm.Send(arr, dest=dst_rank)
+    else:
+        raise ValueError(f"Unknown backend: {backend}")
+
+
+def recv(src_rank=None, backend=default_backend):
+    if backend == "torch":
+        length_tensor = torch.zeros(1, dtype=torch.int64, device="cpu")
+        if src_rank is None:
+            src_rank = dist.recv(tensor=length_tensor, tag=0)
+        else:
+            dist.recv(tensor=length_tensor, src=src_rank, tag=0)
+
+        msg_len = int(length_tensor.item())
+
+        # allocate payload buffer
+        data = torch.empty(msg_len, dtype=torch.uint8, device="cpu")
+        dist.recv(tensor=data, src=src_rank, tag=1)
+        return src_rank, data
+
+    elif backend == "mpi":
+        comm = MPI.COMM_WORLD
+        status = MPI.Status()
+        source = MPI.ANY_SOURCE if src_rank is None else src_rank
+        comm.Probe(source=source, tag=0, status=status)
+        source = status.Get_source()
+        count = status.Get_count(MPI.BYTE)
+        buf = torch.ByteTensor(count)
+        comm.Recv(buf.numpy(), source=source, tag=0, status=status)
+        return source, buf
+    else:
+        raise ValueError(f"Unknown backend: {backend}")
+
+
+def barrier(backend=default_backend, group=None):
+    if backend == "torch":
+        group = dist.group.WORLD if group is None else group
+        dist.barrier(group=group)
+    elif backend == "mpi":
+        group = MPI.COMM_WORLD if group is None else group
+        group.Barrier()
+    else:
+        raise ValueError(f"Unknown backend: {backend}")
+
+
+def get_rank(backend=default_backend):
+    if backend == "torch":
+        return dist.get_rank()
+    elif backend == "mpi":
+        return MPI.COMM_WORLD.Get_rank()
+    else:
+        raise ValueError(f"Unknown backend: {backend}")

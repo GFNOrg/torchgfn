@@ -66,7 +66,11 @@ from gfn.gym import HyperGrid
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
 from gfn.utils.common import Timer, set_seed
-from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
+from gfn.utils.distributed import (
+    DistributedContext,
+    barrier,
+    initialize_distributed_compute,
+)
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 
 logger = logging.getLogger(__name__)
@@ -155,6 +159,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
         p_norm_novelty: float = 2.0,
         cdist_max_bytes: int = 268435456,
         ema_decay: float = 0.5,
+        communication_backend: str = "mpi",
     ):
         super().__init__(
             env,
@@ -164,6 +169,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
             diverse_replay_buffer=diverse_replay_buffer,
             capacity=capacity,
             remote_manager_rank=remote_manager_rank,
+            communication_backend=communication_backend,
         )
         self.discovered_modes = set()
         self.env = env
@@ -717,7 +723,7 @@ def main(args) -> dict:  # noqa: C901
     # Initialize distributed compute.
     if args.distributed:
         distributed_context = initialize_distributed_compute(
-            dist_backend=args.dist_backend,
+            dist_backend=args.torch_backend,
             num_remote_buffers=args.num_remote_buffers,
             num_agent_groups=args.num_agent_groups,
         )
@@ -761,6 +767,7 @@ def main(args) -> dict:  # noqa: C901
             num_training_ranks=num_training_ranks,
             diverse_replay_buffer=args.diverse_replay_buffer,
             capacity=args.global_replay_buffer_size,
+            communication_backend=args.dist_lib,
         )  # TODO: If the remote_manager_rank is set, does this produce an infinite loop?
         replay_buffer_manager.run()
         return {}
@@ -856,6 +863,8 @@ def main(args) -> dict:  # noqa: C901
                 p_norm_distance=args.p_norm_distance,
                 remote_manager_rank=distributed_context.assigned_buffer,
                 remote_buffer_freq=1,
+                communication_backend=args.dist_lib,
+                timing=args.timing,
             )
         else:
             replay_buffer = ReplayBuffer(
@@ -864,6 +873,8 @@ def main(args) -> dict:  # noqa: C901
                 prioritized_capacity=False,
                 remote_manager_rank=distributed_context.assigned_buffer,
                 remote_buffer_freq=args.remote_buffer_freq,
+                communication_backend=args.dist_lib,
+                timing=args.timing,
             )
 
     gflownet = gflownet.to(device)
@@ -913,7 +924,10 @@ def main(args) -> dict:  # noqa: C901
         timing, "Pre-processing_barrier", enabled=(args.timing and args.distributed)
     ):
         if args.distributed and args.timing:
-            dist.barrier(group=distributed_context.train_global_group)
+            barrier(
+                group=distributed_context.get_train_group(backend=args.dist_lib),
+                backend=args.dist_lib,
+            )
 
     # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
     averaging_policy_torch = None
@@ -921,7 +935,7 @@ def main(args) -> dict:  # noqa: C901
 
     if args.distributed:
         if args.use_selective_averaging:
-            if args.spawn_backend == "dist":
+            if args.dist_lib == "torch":
                 averaging_policy_torch = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
                     model_builder=_model_builder,
                     average_every=args.average_every,
@@ -931,7 +945,7 @@ def main(args) -> dict:  # noqa: C901
                     threshold=args.performance_tracker_threshold,
                     cooldown=args.performance_tracker_cooldown,
                 )
-            elif args.spawn_backend == "mpi4py":
+            elif args.dist_lib == "mpi":
                 mpi4py_train_group = (
                     distributed_context.dc_mpi4py.train_global_group
                     if distributed_context.dc_mpi4py is not None
@@ -966,11 +980,11 @@ def main(args) -> dict:  # noqa: C901
                 else:
                     raise ValueError(f"Invalid MPI SA mode: {args.mpi_sa_mode}")
         else:
-            if args.spawn_backend == "dist":
+            if args.dist_lib == "torch":
                 averaging_policy_torch = AverageAllPolicy(
                     average_every=args.average_every
                 )
-            elif args.spawn_backend == "mpi4py":
+            elif args.dist_lib == "mpi":
                 averaging_policy_mpi4py = AverageAllPolicympi4py(
                     average_every=args.average_every
                 )
@@ -1061,7 +1075,10 @@ def main(args) -> dict:  # noqa: C901
             timing, "barrier 0", enabled=(args.timing and args.distributed)
         ) as bar0_timer:
             if args.distributed and args.timing:
-                dist.barrier(group=distributed_context.train_global_group)
+                barrier(
+                    group=distributed_context.get_train_group(backend=args.dist_lib),
+                    backend=args.dist_lib,
+                )
 
         # Backpropagation.
         with Timer(timing, "loss_backward", enabled=args.timing) as loss_backward_timer:
@@ -1076,7 +1093,10 @@ def main(args) -> dict:  # noqa: C901
             timing, "barrier 1", enabled=(args.timing and args.distributed)
         ) as bar1_timer:
             if args.distributed and args.timing:
-                dist.barrier(group=distributed_context.train_global_group)
+                barrier(
+                    group=distributed_context.get_train_group(backend=args.dist_lib),
+                    backend=args.dist_lib,
+                )
 
         # Model averaging.
         averaging_info = {}
@@ -1084,8 +1104,7 @@ def main(args) -> dict:  # noqa: C901
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
 
-            if averaging_policy_torch is not None:
-                assert args.spawn_backend == "dist"
+            if averaging_policy_torch is not None and args.dist_lib == "torch":
                 gflownet, optimizer, averaging_info = averaging_policy_torch(
                     iteration=iteration,
                     model=gflownet,
@@ -1096,7 +1115,7 @@ def main(args) -> dict:  # noqa: C901
                     group=distributed_context.train_global_group,
                 )
             elif averaging_policy_mpi4py is not None:
-                assert args.spawn_backend == "mpi4py"
+                assert args.dist_lib == "mpi"
                 assert distributed_context.dc_mpi4py is not None
                 gflownet, optimizer, averaging_info = averaging_policy_mpi4py(
                     iteration=iteration,
@@ -1186,7 +1205,9 @@ def main(args) -> dict:  # noqa: C901
                     if args.distributed:
                         manager_rank = distributed_context.assigned_buffer
                         assert manager_rank is not None
-                        metadata = ReplayBufferManager.get_metadata(manager_rank)
+                        metadata = ReplayBufferManager.get_metadata(
+                            manager_rank, backend=args.dist_lib
+                        )
                         to_log.update(metadata)
                     else:
                         modes_found.update(
@@ -1210,13 +1231,11 @@ def main(args) -> dict:  # noqa: C901
                     wandb.log(to_log, step=iteration)
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
-            if (
-                args.distributed
-                and args.timing
-                and distributed_context.dc_mpi4py is not None
-            ):
-                t_comm = distributed_context.dc_mpi4py.train_global_group
-                t_comm.Barrier()
+            if args.distributed and args.timing:
+                barrier(
+                    group=distributed_context.get_train_group(backend=args.dist_lib),
+                    backend=args.dist_lib,
+                )
 
     logger.info("Finished all iterations")
     total_time = time.time() - time_start
@@ -1226,12 +1245,15 @@ def main(args) -> dict:  # noqa: C901
     timing["total_time"] = [total_time]
 
     if args.distributed:
-        dist.barrier(group=distributed_context.train_global_group)
+        barrier(
+            group=distributed_context.get_train_group(backend=args.dist_lib),
+            backend=args.dist_lib,
+        )
         try:
-            if args.spawn_backend == "dist":
+            if args.dist_lib == "torch":
                 assert averaging_policy_torch is not None
                 averaging_policy_torch.shutdown()
-            elif args.spawn_backend == "mpi4py":
+            elif args.dist_lib == "mpi":
                 assert averaging_policy_mpi4py is not None
                 averaging_policy_mpi4py.shutdown()
         except Exception:
@@ -1245,7 +1267,7 @@ def main(args) -> dict:  # noqa: C901
             if args.distributed:
                 logger.info("-" * 80)
                 logger.info("Distributed run: showing local timings for rank 0 only.")
-            logger.info("=" * 80)
+            logger.info("\n" + "=" * 80)
 
         # Log local timings only (avoid collective communication)
         if (not args.distributed) or (distributed_context.my_rank == 0):
@@ -1255,7 +1277,7 @@ def main(args) -> dict:  # noqa: C901
                 logger.info("%-25s %10.4fs", k, sum(v))
             try:
                 if (
-                    args.spawn_backend == "mpi4py"
+                    args.dist_lib == "mpi"
                     and args.use_selective_averaging
                     and averaging_policy_mpi4py is not None
                 ):
@@ -1263,6 +1285,14 @@ def main(args) -> dict:  # noqa: C901
                     averaging_policy_mpi4py.print_stats()
             except Exception:
                 pass
+
+        # log replay buffer times
+        if distributed_context.my_rank == 0:
+            logger.info("=" * 80)
+            logger.info("\n" + "=" * 80)
+            logger.info("\n Timing information for Replay Buffer:")
+            logger.info(replay_buffer.timing_log())
+            logger.info("\n" + "=" * 80)
 
     # Stop the profiler if it's active.
     if args.profile:
@@ -1284,10 +1314,15 @@ def main(args) -> dict:  # noqa: C901
         and (distributed_context.assigned_buffer is not None)
     ):
         # Send a termination signal to the replay buffer manager.
-        ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
+        ReplayBufferManager.send_termination_signal(
+            distributed_context.assigned_buffer, backend=args.dist_lib
+        )
 
     if args.distributed:
-        dist.barrier(group=distributed_context.train_global_group)
+        barrier(
+            group=distributed_context.get_train_group(backend=args.dist_lib),
+            backend=args.dist_lib,
+        )
         assert distributed_context is not None
         try:
             distributed_context.cleanup()
@@ -1343,10 +1378,17 @@ if __name__ == "__main__":
         help="Global replay buffer size (only if using distributed computation)",
     )
     parser.add_argument(
-        "--dist_backend",
+        "--torch_backend",
         type=str,
         default="gloo",
         help="Distributed backend to use: gloo, ccl or mpi",
+    )
+
+    parser.add_argument(
+        "--dist_lib",
+        choices=["torch", "mpi"],
+        default="torch",
+        help="Communication backend to use for distributed training: torch or mpi",
     )
 
     parser.add_argument(
@@ -1381,13 +1423,6 @@ if __name__ == "__main__":
         type=float,
         default=0.01,
         help="Momentum factor for combining with previous weights (0.0 = no momentum, 1.0 = keep old weights)",
-    )
-    ## for mpi-3 code of selective averaging debug
-    parser.add_argument(
-        "--spawn_backend",
-        choices=["none", "dist", "mpi4py"],
-        default="dist",
-        help="Backend for spawn policy implementation: torch.distributed or mpi4py",
     )
     parser.add_argument(
         "--mpi_sa_mode",
