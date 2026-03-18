@@ -20,6 +20,7 @@ from gfn.utils.handlers import (
     has_conditions_exception_handler,
     no_conditions_exception_handler,
 )
+from gfn.utils.modules import UniformModule
 
 REDUCTION_FUNCTIONS = {
     "mean": torch.mean,
@@ -231,7 +232,7 @@ class PolicyMixin:
             return lp, ctx
 
         # Non-vectorized path strict check. None of these should be -inf after masking.
-        if torch.any(torch.isinf(lp)):
+        if getattr(self, "debug", False) and torch.any(torch.isinf(lp)):
             raise RuntimeError("Log probabilities are inf. This should not happen.")
 
         assert step_mask is not None, "step_mask is required when vectorized=False"
@@ -352,6 +353,7 @@ class Estimator(ABC, nn.Module):
         module: nn.Module,
         preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
+        debug: bool = False,
     ) -> None:
         """Initializes an Estimator with a neural network module and a preprocessor.
 
@@ -361,8 +363,12 @@ class Estimator(ABC, nn.Module):
                 uses `IdentityPreprocessor` with the module's input_dim.
             is_backward: Flag indicating whether this estimator is for backward policy,
                 i.e., is used for predicting probability distributions over parents.
+            debug: If True, enables expensive validation checks (NaN/Inf tensor
+                scans, shape assertions) that are useful for debugging but slow
+                down training.
         """
         nn.Module.__init__(self)
+        self.debug = debug
         self.module = module
         if preprocessor is None:
             assert hasattr(module, "input_dim") and isinstance(module.input_dim, int), (
@@ -461,6 +467,7 @@ class ScalarEstimator(Estimator):
         module: nn.Module,
         preprocessor: Preprocessor | None = None,
         reduction: str = "mean",
+        debug: bool = False,
     ):
         """Initializes a ScalarEstimator.
 
@@ -469,8 +476,9 @@ class ScalarEstimator(Estimator):
             preprocessor: Preprocessor object that transforms states to tensors. If
             None, uses `IdentityPreprocessor` with the module's input_dim.
             reduction: String name of one of the REDUCTION_FUNCTIONS keys.
+            debug: If True, enables expensive validation checks.
         """
-        super().__init__(module, preprocessor, False)
+        super().__init__(module, preprocessor, False, debug=debug)
         assert (
             reduction in REDUCTION_FUNCTIONS
         ), f"reduction function not one of {REDUCTION_FUNCTIONS.keys()}"
@@ -528,6 +536,7 @@ class LogitBasedEstimator(Estimator):
         sf_index: int | None,
         sf_bias: float,
         temperature: float,
+        debug: bool = False,
     ) -> torch.Tensor:
         """Clone and apply mask, bias and temperature to logits."""
         assert temperature > 0.0
@@ -553,7 +562,8 @@ class LogitBasedEstimator(Estimator):
                     x[no_valid, 0] = 0.0
 
         # Assert that each row has at least one finite entry.
-        assert torch.isfinite(x).any(dim=-1).all(), "All -inf row after masking"
+        if debug:
+            assert torch.isfinite(x).any(dim=-1).all(), "All -inf row after masking"
 
         if sf_index is not None and sf_bias != 0.0:
             x[..., sf_index] = x[..., sf_index] - sf_bias
@@ -585,10 +595,14 @@ class LogitBasedEstimator(Estimator):
 
     @staticmethod
     def _mix_with_uniform_in_log_space(
-        lsm: torch.Tensor, masks: torch.Tensor, epsilon: float
+        lsm: torch.Tensor,
+        masks: torch.Tensor,
+        epsilon: float,
+        debug: bool = False,
     ) -> torch.Tensor:
         """Compute log((1-eps) p + eps u) in log space."""
-        assert 0.0 <= epsilon <= 1.0
+        if debug:
+            assert 0.0 <= epsilon <= 1.0
 
         if epsilon == 0.0:
             return lsm
@@ -624,19 +638,27 @@ class LogitBasedEstimator(Estimator):
         sf_bias: float,
         temperature: float,
         epsilon: float,
+        debug: bool = False,
     ) -> torch.Tensor:
         """Return logits to feed a Categorical:
         - If epsilon == 0: masked, biased, temperature-scaled logits.
         - Else: normalized log-probs of the epsilon-greedy mixture (valid as logits).
         """
-        assert not torch.isnan(logits).any(), "Module output logits contain NaNs"
+        if debug:
+            assert not torch.isnan(logits).any(), "Module output logits contain NaNs"
 
         # Prepare logits first (masking, bias, temperature) in the existing dtype
         x = LogitBasedEstimator._prepare_logits(
-            logits, masks, sf_index, sf_bias, temperature
+            logits,
+            masks,
+            sf_index,
+            sf_bias,
+            temperature,
+            debug=debug,
         )
 
-        assert not torch.isnan(x).any(), "Prepared logits contain NaNs"
+        if debug:
+            assert not torch.isnan(x).any(), "Prepared logits contain NaNs"
 
         # Perform numerically sensitive ops in float32 when inputs are low-precision
         orig_dtype = x.dtype
@@ -646,18 +668,25 @@ class LogitBasedEstimator(Estimator):
             else orig_dtype
         )
 
-        assert torch.isfinite(x).any(dim=-1).all(), "All -inf row before log-softmax"
+        if debug:
+            assert torch.isfinite(x).any(dim=-1).all(), "All -inf row before log-softmax"
 
         lsm = torch.log_softmax(x.to(compute_dtype), dim=-1)
-        assert (
-            torch.isfinite(lsm).any(dim=-1).all()
-        ), "Invalid log-probs after log_softmax"
+        if debug:
+            assert (
+                torch.isfinite(lsm).any(dim=-1).all()
+            ), "Invalid log-probs after log_softmax"
 
         if epsilon == 0.0:
             return lsm.to(orig_dtype) if lsm.dtype != orig_dtype else lsm
 
-        mixed = LogitBasedEstimator._mix_with_uniform_in_log_space(lsm, masks, epsilon)
-        assert torch.isfinite(mixed).any(dim=-1).all(), "Invalid log-probs after mixing"
+        mixed = LogitBasedEstimator._mix_with_uniform_in_log_space(
+            lsm, masks, epsilon, debug=debug
+        )
+        if debug:
+            assert (
+                torch.isfinite(mixed).any(dim=-1).all()
+            ), "Invalid log-probs after mixing"
 
         return mixed.to(orig_dtype) if mixed.dtype != orig_dtype else mixed
 
@@ -705,6 +734,7 @@ class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
         n_actions: int,
         preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
+        debug: bool = False,
     ):
         """Initializes a DiscretePolicyEstimator.
 
@@ -714,9 +744,33 @@ class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
             preprocessor: Preprocessor object that transforms states to tensors.
             is_backward: Flag indicating whether this estimator is for backward policy,
                 i.e., is used for predicting probability distributions over parents.
+            debug: If True, enables expensive validation checks.
         """
-        super().__init__(module, preprocessor, is_backward=is_backward)
+        super().__init__(module, preprocessor, is_backward=is_backward, debug=debug)
         self.n_actions = n_actions
+
+    @classmethod
+    def uniform(
+        cls,
+        n_actions: int,
+        preprocessor: Preprocessor | None = None,
+    ) -> "DiscretePolicyEstimator":
+        """Create a uniform backward policy estimator for discrete environments.
+
+        Outputs equal logits for all actions, resulting in a uniform distribution
+        over valid parent actions (masking is still applied).
+
+        Args:
+            n_actions: Total number of actions in the discrete environment.
+            preprocessor: Preprocessor object that transforms states to tensors.
+                Required because the input dimension depends on the environment.
+
+        Returns:
+            A ``DiscretePolicyEstimator`` with ``is_backward=True`` and no
+            learnable parameters.
+        """
+        module = UniformModule(output_dim=n_actions - 1, fill_value=0.0)
+        return cls(module, n_actions, preprocessor=preprocessor, is_backward=True)
 
     @property
     def expected_output_dim(self) -> int:
@@ -763,12 +817,13 @@ class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
         Returns:
             A Categorical distribution over the actions.
         """
-        assert module_output.shape[-1] == self.expected_output_dim, (
-            f"Module output shape {module_output.shape} does not match "
-            f"expected output dimension {self.expected_output_dim}"
-        )
-        assert temperature > 0.0
-        assert 0.0 <= epsilon <= 1.0
+        if self.debug:
+            assert module_output.shape[-1] == self.expected_output_dim, (
+                f"Module output shape {module_output.shape} does not match "
+                f"expected output dimension {self.expected_output_dim}"
+            )
+            assert temperature > 0.0
+            assert 0.0 <= epsilon <= 1.0
 
         logits = LogitBasedEstimator._compute_logits_for_distribution(
             module_output,
@@ -777,9 +832,10 @@ class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
             sf_bias=sf_bias,
             temperature=temperature,
             epsilon=epsilon,
+            debug=self.debug,
         )
 
-        return UnsqueezedCategorical(logits=logits)
+        return UnsqueezedCategorical(logits=logits, debug=self.debug)
 
 
 class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
@@ -811,6 +867,7 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
         n_actions: int,
         preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
+        debug: bool = False,
     ):
         """Initializes a ConditionalDiscretePolicyEstimator.
 
@@ -822,8 +879,9 @@ class ConditionalDiscretePolicyEstimator(DiscretePolicyEstimator):
             preprocessor: Preprocessor object that transforms states to tensors.
             is_backward: Flag indicating whether this estimator is for backward policy,
                 i.e., is used for predicting probability distributions over parents.
+            debug: If True, enables expensive validation checks.
         """
-        super().__init__(state_module, n_actions, preprocessor, is_backward)
+        super().__init__(state_module, n_actions, preprocessor, is_backward, debug=debug)
         self.n_actions = n_actions
         self.condition_module = condition_module
         self.final_module = final_module
@@ -890,6 +948,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         final_module: nn.Module,
         preprocessor: Preprocessor | None = None,
         reduction: str = "mean",
+        debug: bool = False,
     ):
         """Initializes a ConditionalScalarEstimator.
 
@@ -899,6 +958,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
             final_module: The neural network module that combines state and condition.
             preprocessor: Preprocessor object that transforms states to tensors.
             reduction: String name of one of the REDUCTION_FUNCTIONS keys.
+            debug: If True, enables expensive validation checks.
         """
 
         super().__init__(
@@ -908,6 +968,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
             n_actions=1,
             preprocessor=preprocessor,
             is_backward=False,
+            debug=debug,
         )
         assert (
             reduction in REDUCTION_FUNCTIONS
@@ -1026,17 +1087,19 @@ class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
         # Check if no possible edge can be added,
         # and assert that action type cannot be ADD_EDGE
         no_possible_edge_index = torch.isneginf(logits[Ga.EDGE_INDEX_KEY]).all(-1)
-        assert torch.isneginf(
-            logits[Ga.ACTION_TYPE_KEY][no_possible_edge_index, GaType.ADD_EDGE]
-        ).all()
+        if self.debug:
+            assert torch.isneginf(
+                logits[Ga.ACTION_TYPE_KEY][no_possible_edge_index, GaType.ADD_EDGE]
+            ).all()
         logits[Ga.EDGE_INDEX_KEY][no_possible_edge_index] = 0.0
 
         # Check if no possible edge class can be added,
         # and assert that action type cannot be ADD_EDGE
         no_possible_edge_class = torch.isneginf(logits[Ga.EDGE_CLASS_KEY]).all(-1)
-        assert torch.isneginf(
-            logits[Ga.ACTION_TYPE_KEY][no_possible_edge_class, GaType.ADD_EDGE]
-        ).all()
+        if self.debug:
+            assert torch.isneginf(
+                logits[Ga.ACTION_TYPE_KEY][no_possible_edge_class, GaType.ADD_EDGE]
+            ).all()
         logits[Ga.EDGE_CLASS_KEY][no_possible_edge_class] = 0.0
 
         # Check if no possible node can be added; if either class OR index has no
@@ -1056,8 +1119,9 @@ class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
 
         transformed_logits = {}
         for key in logits.keys():
-            assert isinstance(key, str)
-            assert not torch.isnan(logits[key]).any(), f"logits[{key}] contains NaNs"
+            if self.debug:
+                assert isinstance(key, str)
+                assert not torch.isnan(logits[key]).any(), f"logits[{key}] contains NaNs"
 
             # Pad zero-length components to length 1 with an invalid mask so downstream
             # operations have at least one column and distributions can be constructed.
@@ -1085,13 +1149,20 @@ class DiscreteGraphPolicyEstimator(PolicyMixin, LogitBasedEstimator):
                     # ACTION_TYPE_KEY contains the exit action logit.
                     sf_index=GaType.EXIT if key == Ga.ACTION_TYPE_KEY else None,
                     sf_bias=sf_bias if key == Ga.ACTION_TYPE_KEY else 0.0,
-                    temperature=temperature[key],
-                    epsilon=epsilon[key],
+                    temperature=temperature[
+                        key
+                    ],  # pyright: ignore[reportArgumentType, reportIndexIssue]
+                    epsilon=epsilon[
+                        key
+                    ],  # pyright: ignore[reportArgumentType, reportIndexIssue]
+                    debug=self.debug,
                 )
             )
 
         return GraphActionDistribution(
-            logits=TensorDict(transformed_logits), is_backward=self.is_backward
+            logits=TensorDict(transformed_logits),
+            is_backward=self.is_backward,
+            debug=self.debug,
         )
 
     @property
@@ -1145,6 +1216,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         n_actions: int,
         preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
+        debug: bool = False,
     ):
         """Initializes a RecurrentDiscretePolicyEstimator.
 
@@ -1152,6 +1224,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
             module: The neural network module to use.
             n_actions: Total number of actions in the discrete environment.
             preprocessor: Preprocessor object that transforms states to tensors.
+            debug: If True, enables expensive validation checks.
         """
         if preprocessor is None:
             preprocessor = IdentityPreprocessor(output_dim=None)
@@ -1161,6 +1234,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
             n_actions=n_actions,
             preprocessor=preprocessor,
             is_backward=is_backward,
+            debug=debug,
         )
 
     def forward(
@@ -1237,7 +1311,13 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
 class DiffusionPolicyEstimator(PolicyMixin, Estimator):
     """Base class for diffusion policy estimators."""
 
-    def __init__(self, s_dim: int, module: nn.Module, is_backward: bool = False):
+    def __init__(
+        self,
+        s_dim: int,
+        module: nn.Module,
+        is_backward: bool = False,
+        debug: bool = False,
+    ):
         """Initialize the DiffusionPolicyEstimator.
 
         Args:
@@ -1245,12 +1325,14 @@ class DiffusionPolicyEstimator(PolicyMixin, Estimator):
             module: The neural network module to use.
             is_backward: Flag indicating whether this estimator is for backward policy,
                 i.e., is used for predicting probability distributions over parents.
+            debug: If True, enables expensive validation checks.
         """
         self.s_dim = s_dim
         super().__init__(
             module=module,
             preprocessor=None,  # Use the IdentityPreprocessor
             is_backward=is_backward,
+            debug=debug,
         )
 
     @property

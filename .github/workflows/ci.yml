@@ -6,41 +6,37 @@ on:
   pull_request:
 
 jobs:
-  lint-and-test:
+  test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11']
+        python-version: ['3.11', '3.12']
+    container:
+      image: python:${{ matrix.python-version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Install System Dependencies
+        run: |
+          apt-get update
+          apt-get install -y libopenmpi-dev git
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
+      - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install .[all]  # Install all dependencies, including dev
 
-      - name: Print PyTorch Version (Temporary)
-        run: python -c "import torch; print(torch.__version__)"
-
-      - name: Run pre-commit
-        run: pre-commit run --all-files
-
-      - name: Test with pytest (coverage, py3.10 only)
-        if: matrix.python-version == '3.10'
+      - name: Test with pytest (coverage, py3.11 only)
+        if: matrix.python-version == '3.11'
         run: pytest --cov=gfn --cov-report=xml --cov-report=term-missing --junitxml=junit.xml -o junit_family=legacy -x
 
       - name: Test with pytest (no coverage)
-        if: matrix.python-version != '3.10'
+        if: matrix.python-version != '3.11'
         run: pytest -x
 
       - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.10'
+        if: matrix.python-version == '3.11'
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml

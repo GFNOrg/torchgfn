@@ -89,9 +89,7 @@ the following method:
   contains state-dependent forward and backward masks, which define allowable
   forward and backward actions conditioned on the state. Note that in
   calculating these masks, the user can leverage the helper methods
-  `DiscreteStates.set_nonexit_action_masks`,
-  `DiscreteStates.set_exit_masks`, and
-  `DiscreteStates.init_forward_masks`.
+  `DiscreteStates.set_nonexit_action_masks`, and `DiscreteStates.set_exit_masks`.
 
 The code automatically implements the following two class factories, which the
 majority of users will not need to overwrite. However, the user could override

@@ -1,4 +1,4 @@
-import warnings
+import logging
 from typing import Dict, Iterable, Optional, Tuple
 
 import torch
@@ -11,17 +11,17 @@ from gfn.gflownet.base import PFBasedGFlowNet
 from gfn.samplers import Trajectories
 from gfn.states import DiscreteStates
 
+logger = logging.getLogger(__name__)
+
 
 def get_terminating_state_dist(
     env: DiscreteEnv,
     states: DiscreteStates,
 ) -> torch.Tensor:
     """[DEPRECATED] Use `env.get_terminating_state_dist(states)` instead."""
-    warnings.warn(
+    logger.warning(
         "gfn.utils.training.get_terminating_state_dist is deprecated; "
-        "use DiscreteEnv.get_terminating_state_dist(states) instead.",
-        DeprecationWarning,
-        stacklevel=2,
+        "use DiscreteEnv.get_terminating_state_dist(states) instead."
     )
     return env.get_terminating_state_dist(states)
 
@@ -33,10 +33,8 @@ def validate(
     visited_terminating_states: Optional[DiscreteStates] = None,
 ) -> Tuple[Dict[str, float], DiscreteStates | None]:
     """[DEPRECATED] Use `env.validate(gflownet, ...)` instead."""
-    warnings.warn(
-        "gfn.utils.training.validate is deprecated; use DiscreteEnv.validate(...) instead.",
-        DeprecationWarning,
-        stacklevel=2,
+    logger.warning(
+        "gfn.utils.training.validate is deprecated; use DiscreteEnv.validate(...) instead."
     )
     return env.validate(
         gflownet=gflownet,
@@ -92,6 +90,10 @@ def states_actions_tns_to_traj(
     log_rewards = env.log_reward(states[-2])
     states = states[0].stack(states)
     terminating_idx = torch.tensor([len(states_tns) - 1])
+    if conditions is not None:
+        states.conditions = conditions.unsqueeze(1)  # dim 1 for batch dimension
+    else:
+        states.conditions = None
 
     log_probs = None
     estimator_outputs = None
@@ -99,7 +101,6 @@ def states_actions_tns_to_traj(
     trajectory = Trajectories(
         env,
         states,
-        conditions,
         actions,
         log_rewards=log_rewards,
         terminating_idx=terminating_idx,

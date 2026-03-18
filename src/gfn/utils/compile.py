@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Iterable
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 def try_compile_gflownet(
@@ -52,4 +55,4 @@ def try_compile_gflownet(
     formatted = ", ".join(
         f"{name}:{'✓' if success else 'x'}" for name, success in results.items()
     )
-    print(f"[compile] {formatted}")
+    logger.info(f"[compile] {formatted}")
