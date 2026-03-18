@@ -32,7 +32,7 @@ torch_geometric = ">=2.6.1"
 dill = ">=0.3.8"
 
 # dev dependencies.
-black = { version = "24.3", optional = true }
+black = { version = "26.3.1", optional = true }
 flake8 = { version = "7.1.1", optional = true }
 gitmopy = { version = "*", optional = true }
 insegel = { version = "*", optional = true }
