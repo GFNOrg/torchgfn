@@ -184,10 +184,12 @@ def get_trajectory_pfs(
             valid_actions = trajectories.actions[action_mask]
 
             # Vectorized path.
-            log_pf_trajectories = torch.full_like(
-                trajectories.actions.tensor[..., 0],
+            # Allocate log_pf explicitly as floating point to avoid silent int casts.
+            log_pf_trajectories = torch.full(
+                trajectories.actions.tensor[..., 0].shape,
                 fill_value=fill_value,
                 dtype=torch.get_default_dtype(),
+                device=trajectories.states.device,
             )
 
             if len(valid_states) == 0:
@@ -263,10 +265,12 @@ def get_trajectory_pbs(
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
 
-    log_pb_trajectories = torch.full_like(
-        trajectories.actions.tensor[..., 0],
+    # Allocate log_pb explicitly as floating point to avoid silent int casts.
+    log_pb_trajectories = torch.full(
+        trajectories.actions.tensor[..., 0].shape,
         fill_value=fill_value,
-        dtype=torch.get_default_dtype(),  # Floating point dtype.
+        dtype=torch.get_default_dtype(),
+        device=trajectories.states.device,
     )
 
     # Note the different mask for valid states and actions compared to the pf case.
@@ -290,7 +294,9 @@ def get_trajectory_pbs(
     if pb is None:
         # If pb is None, we assume that the gflownet DAG is a tree, and therefore
         # the backward policy probability is always 1 (log probs are 0).
-        valid_log_pb_actions = torch.zeros_like(valid_actions.tensor)
+        valid_log_pb_actions = torch.zeros_like(
+            valid_actions.tensor, dtype=torch.get_default_dtype()
+        )
         valid_log_pb_actions = valid_log_pb_actions.squeeze(-1)  # no padding.
         log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
             log_pb_trajectories.dtype, copy=False

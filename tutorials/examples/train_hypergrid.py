@@ -1591,13 +1591,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="torchgfn",
+        default="",
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
         "--wandb_entity",
         type=str,
-        default="torchgfn",
+        default="",
         help="Name of the wandb entity. If empty, don't use wandb",
     )
     parser.add_argument(

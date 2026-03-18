@@ -5,7 +5,7 @@ GFlowNets can be trained with different losses, each of which requires a differe
 Currently, the implemented losses are:
 
 - Flow Matching: This is the original loss, and is mostly made available for completeness. It is slow to compute this loss, and also hard to optimize, so is generally not recommended for any significantly hard to learn problem.
-- Detailed Balance (and it's modified variant).
+- Detailed Balance (and its modified variant). In forward-looking mode, rewards must be defined on edges; the current implementation treats the edge reward as the difference between the successor and current state rewards, so only enable this when that matches your environment.
 - Trajectory Balance
-- Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/losses/sub_trajectory_balance.py).
+- Sub-Trajectory Balance. By default, each sub-trajectory is weighted geometrically (within the trajectory) depending on its length. This corresponds to the strategy defined [here](https://www.semanticscholar.org/reader/f2c32fe3f7f3e2e9d36d833e32ec55fc93f900f5). Other strategies exist and are implemented [here](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/losses/sub_trajectory_balance.py). When using geometric-based weighting, the 'mean' reduction is not supported; requests for a mean reduction are coerced to a sum (a warning is emitted when debug is enabled).
 - Log Partition Variance loss. Introduced [here](https://arxiv.org/abs/2302.05446)
