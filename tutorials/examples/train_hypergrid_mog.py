@@ -1,4 +1,33 @@
-"""Experimental: train a mixture of GFlowNets on the HyperGrid environment."""
+r"""Experimental: train a Mixture of GFlowNets (MoG) on the HyperGrid environment.
+
+This script trains multiple GFlowNet components in parallel using DDP, where each
+training rank owns one mixture component.  A shared classifier ``f_theta`` learns to
+partition the state space across components so that each component specialises on a
+different region of the reward landscape.
+
+The mixture reward shaping follows:
+
+.. math::
+
+    \tilde{R}_i(x) = R(x) \cdot f_\theta(x)_i
+
+where :math:`f_\theta(x)_i` is the softmax probability that state *x* belongs to
+component *i*.  Each rank trains its own GFlowNet on :math:`\tilde{R}_i`, while
+``f_theta`` is trained as a cross-entropy classifier over component IDs and its
+gradients are all-reduced across ranks so that all ranks share the same partitioner.
+
+Example usage (single-node, 3 components + 1 buffer rank)::
+
+    torchrun --nproc_per_node=4 train_hypergrid_mog.py \
+        --ndim 2 --height 8 --loss TB --batch_size 64
+
+Key features:
+- Mixture of GFlowNets with learned state-space partitioning via ``f_theta``
+- DDP-based parallel training (one component per training rank)
+- Supports FM, TB, DB, SubTB, ZVar, and ModifiedDB losses
+- Optional replay buffers (local and/or remote) with diversity-based prioritization
+- WandB logging, PyTorch profiler support, and mode-tracking heatmaps
+"""
 
 import logging
 import os
@@ -190,7 +219,22 @@ def set_up_gflownet(args, env, preprocessor):
 
 
 def set_up_f_theta_classifier(args, env, preprocessor, n_components):
-    """Returns the f_theta classifier mapping states to mixture-component logits."""
+    """Build the shared ``f_theta`` classifier that partitions states across components.
+
+    The classifier maps preprocessed states to ``n_components`` logits.  After
+    softmax, the *i*-th output gives the probability that a state belongs to
+    component *i*, which is used for mixture reward shaping.
+
+    Args:
+        args: Parsed CLI arguments (controls ``--tabular``, ``--hidden_dim``, etc.).
+        env: The HyperGrid environment.
+        preprocessor: State preprocessor (e.g. :class:`KHotPreprocessor`).
+        n_components: Number of mixture components (equal to the number of
+            training ranks).
+
+    Returns:
+        An ``nn.Module`` producing logits of shape ``(batch, n_components)``.
+    """
     if args.tabular:
         module = Tabular(n_states=env.n_states, output_dim=n_components)
     else:
@@ -204,7 +248,32 @@ def set_up_f_theta_classifier(args, env, preprocessor, n_components):
 
 
 def main(args) -> dict:  # noqa: C901
-    """Trains a GFlowNet on the Hypergrid Environment using DDP."""
+    """Train a Mixture of GFlowNets on the HyperGrid environment using DDP.
+
+    High-level flow:
+
+    1. **DDP initialization** — detect rank/world-size and create a
+       :class:`DistributedContext`.
+    2. **Buffer ranks** — if ``--num_remote_buffers > 0``, the last *N* ranks
+       run as dedicated replay-buffer servers and never enter training.
+    3. **Model setup** — each training rank builds its own GFlowNet component,
+       plus a shared ``f_theta`` classifier for state-space partitioning.
+    4. **Training loop** — each iteration:
+       a. Sample trajectories with the local GFlowNet.
+       b. Shape rewards using ``f_theta`` (multiply by component probability).
+       c. Compute and backprop the GFlowNet loss (local gradients only).
+       d. Train ``f_theta`` via cross-entropy, then all-reduce its gradients
+          so every rank keeps the same partitioner weights.
+       e. Optimizer steps for both the local GFlowNet and the shared ``f_theta``.
+    5. **Validation & logging** — periodically compute L1 distance and log to WandB.
+    6. **Cleanup** — terminate buffer ranks, barrier, return.
+
+    Args:
+        args: Parsed CLI arguments (see ``__main__`` block below).
+
+    Returns:
+        A dict of final training metrics (loss, l1_dist, modes found, etc.).
+    """
 
     if args.half_precision:
         torch.set_default_dtype(torch.bfloat16)
@@ -431,6 +500,10 @@ def main(args) -> dict:  # noqa: C901
         (local_mode_heatmap_side, local_mode_heatmap_side), dtype=torch.float32
     )
 
+    # Training is on-policy only when there are no sources of off-policy
+    # samples: no replay buffer, no epsilon-greedy exploration, no temperature
+    # scaling, and no NoisyNet layers.  When on-policy, log-probs computed
+    # during sampling can be reused instead of being recalculated during loss.
     is_on_policy = (
         (args.replay_buffer_size == 0)
         and (args.epsilon == 0.0)
@@ -495,8 +568,15 @@ def main(args) -> dict:  # noqa: C901
         with Timer(
             timing, "to_training_samples", enabled=args.timing
         ) as to_train_samples_timer:
-            # Mixture reward shaping for the local component:
-            # log \tilde{R}_i(x) = log R(x) + log f_theta(x)_i.
+            # Mixture reward shaping for the local component.
+            # Each rank *i* trains on a shaped reward:
+            #   log ~R_i(x) = log R(x) + log f_theta(x)_i
+            # where f_theta(x)_i is the softmax probability that state x
+            # belongs to component i.  This encourages each component to
+            # focus on the region of state space where f_theta assigns it
+            # high responsibility, while still being proportional to the
+            # true reward R(x).  Gradients are detached (no_grad) because
+            # f_theta is trained separately via cross-entropy below.
             with torch.no_grad():
                 terminating_states = cast(
                     DiscreteStates, trajectories.terminating_states
@@ -538,7 +618,12 @@ def main(args) -> dict:  # noqa: C901
         with Timer(timing, "optimizer", enabled=args.timing) as opt_timer:
             optimizer.step()
 
-        # Train f_theta to predict the component/rank that generated each terminal state.
+        # Train f_theta as a classifier: given a terminal state, predict which
+        # component (rank) generated it.  Each rank labels its own samples with
+        # its component_index, producing a cross-entropy loss.  After backward,
+        # gradients are all-reduced so that f_theta converges to the same
+        # weights on every rank — this is critical because f_theta is used by
+        # all ranks for reward shaping and must stay synchronised.
         with Timer(timing, "f_theta_step", enabled=args.timing) as f_theta_timer:
             f_theta_optimizer.zero_grad()
             terminating_states = cast(DiscreteStates, trajectories.terminating_states)
@@ -552,7 +637,9 @@ def main(args) -> dict:  # noqa: C901
             f_theta_loss = F.cross_entropy(f_theta_logits, targets)
             f_theta_loss.backward()
 
-        # DDP gradient synchronization: all-reduce only f_theta gradients.
+        # All-reduce f_theta gradients across training ranks so every rank
+        # applies the same update.  Note: only f_theta gradients are synced
+        # here — each GFlowNet component's gradients stay local.
         with Timer(timing, "ddp_grad_sync", enabled=args.timing) as ddp_sync_timer:
             for param in f_theta.parameters():
                 if param.grad is not None:
