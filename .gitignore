@@ -191,3 +191,4 @@ models/
 .python-version
 
 .lprof
+.claude/

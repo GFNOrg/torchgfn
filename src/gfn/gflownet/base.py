@@ -1,6 +1,6 @@
 import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Tuple, TypeVar
+from typing import Any, Generic, Tuple, TypeVar, cast
 
 import torch
 import torch.nn as nn
@@ -232,6 +232,14 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
 
         self.pf = pf
         self.pb = pb
+
+        # Propagate debug flag to estimators so that gflownet.debug
+        # acts as a single entry point for enabling all validation checks.
+        if debug:
+            if hasattr(pf, "debug"):
+                pf.debug = True
+            if pb is not None and hasattr(pb, "debug"):
+                pb.debug = True
         self.constant_pb = constant_pb
         self.log_reward_clip_min = log_reward_clip_min
 
@@ -379,12 +387,18 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
 
-        assert log_pf_trajectories is not None
+        # Guard None-checks behind debug to avoid graph breaks in torch.compile;
+        # get_pfs_and_pbs always returns non-None tensors in normal operation.
+        if self.debug:
+            assert log_pf_trajectories is not None
         total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)  # [N]
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)  # [N]
 
-        log_rewards = trajectories.log_rewards
-        assert log_rewards is not None
+        # cast: log_rewards is always set for terminating trajectories;
+        # assert is behind debug to avoid graph breaks in torch.compile.
+        log_rewards = cast(torch.Tensor, trajectories.log_rewards)
+        if self.debug:
+            assert log_rewards is not None
         # Fast path: skip clamp when log_reward_clip_min is -inf to avoid extra work.
         # TODO: Do we need log reward clamping at all?
         if self.log_reward_clip_min != float("-inf"):

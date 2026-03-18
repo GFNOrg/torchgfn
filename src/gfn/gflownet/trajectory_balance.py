@@ -123,10 +123,16 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
         # If the conditions values exist, we pass them to self.logZ
         # (should be a ScalarEstimator or equivalent).
-        if trajectories.conditions is not None:
+        if trajectories.states.conditions is not None:
             with is_callable_exception_handler("logZ", self.logZ):
-                assert isinstance(self.logZ, ScalarEstimator)
-                logZ = self.logZ(trajectories.conditions)  # [N] or [..., 1]
+                # Guard isinstance behind debug: logZ type is fixed at __init__ time,
+                # but isinstance checks cause graph breaks in torch.compile.
+                if self.debug:
+                    assert isinstance(self.logZ, ScalarEstimator)
+                # cast: when conditions exist, logZ is always a ScalarEstimator (set at init).
+                logZ = cast(ScalarEstimator, self.logZ)(
+                    trajectories.states.conditions[0]
+                )  # [N] or [..., 1]
         else:
             logZ = self.logZ  # []
 

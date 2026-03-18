@@ -8,7 +8,12 @@ from gfn.gflownet import FMGFlowNet, TBGFlowNet
 from gfn.gflownet.base import loss_reduce
 from gfn.gflownet.sub_trajectory_balance import SubTBGFlowNet
 from gfn.gym import Box, HyperGrid
-from gfn.gym.helpers.box_utils import BoxPBEstimator, BoxPBMLP, BoxPFEstimator, BoxPFMLP
+from gfn.gym.helpers.box_utils import (
+    BoxCartesianPBEstimator,
+    BoxCartesianPBMLP,
+    BoxCartesianPFEstimator,
+    BoxCartesianPFMLP,
+)
 from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
@@ -20,19 +25,25 @@ from gfn.utils.modules import MLP
 
 
 def test_trajectory_based_gflownet_generic():
-    pf_module = BoxPFMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
+    n_components = 3
+    pf_module = BoxCartesianPFMLP(
+        hidden_dim=32, n_hidden_layers=3, n_components=n_components
     )
-    pb_module = BoxPBMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, trunk=pf_module.trunk
+    pb_module = BoxCartesianPBMLP(
+        hidden_dim=32,
+        n_hidden_layers=3,
+        n_components=n_components,
+        trunk=pf_module.trunk,
     )
 
     env = Box()
 
-    pf_estimator = BoxPFEstimator(
-        env=env, module=pf_module, n_components=1, n_components_s0=1
+    pf_estimator = BoxCartesianPFEstimator(
+        env=env, module=pf_module, n_components=n_components
     )
-    pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
+    pb_estimator = BoxCartesianPBEstimator(
+        env=env, module=pb_module, n_components=n_components
+    )
 
     gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     mock_trajectories = Trajectories(env)
@@ -66,19 +77,25 @@ def test_flow_matching_gflownet_generic():
 
 
 def test_pytorch_inheritance():
-    pf_module = BoxPFMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, n_components_s0=1
+    n_components = 3
+    pf_module = BoxCartesianPFMLP(
+        hidden_dim=32, n_hidden_layers=3, n_components=n_components
     )
-    pb_module = BoxPBMLP(
-        hidden_dim=32, n_hidden_layers=2, n_components=1, trunk=pf_module.trunk
+    pb_module = BoxCartesianPBMLP(
+        hidden_dim=32,
+        n_hidden_layers=3,
+        n_components=n_components,
+        trunk=pf_module.trunk,
     )
 
     env = Box()
 
-    pf_estimator = BoxPFEstimator(
-        env=env, module=pf_module, n_components=1, n_components_s0=1
+    pf_estimator = BoxCartesianPFEstimator(
+        env=env, module=pf_module, n_components=n_components
     )
-    pb_estimator = BoxPBEstimator(env=env, module=pb_module, n_components=1)
+    pb_estimator = BoxCartesianPBEstimator(
+        env=env, module=pb_module, n_components=n_components
+    )
 
     tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
     assert hasattr(
@@ -112,14 +129,14 @@ def test_flow_matching_vectorized_matches_original(seed):
     trajectories = gflownet.sample_trajectories(env, n=6)
     states_container = gflownet.to_training_samples(trajectories)
     states = states_container.intermediary_states
-    conditions = states_container.intermediary_conditions
+    conditions = states.conditions  # conditions live inside States after refactor
 
     if len(states) == 0:
         # If the sample produced only terminal states, resample with more trajectories.
         trajectories = gflownet.sample_trajectories(env, n=12)
         states_container = gflownet.to_training_samples(trajectories)
         states = states_container.intermediary_states
-        conditions = states_container.intermediary_conditions
+        conditions = states.conditions  # conditions live inside States after refactor
 
     assert len(states) > 0
 
@@ -188,9 +205,8 @@ def test_flow_matching_vectorized_matches_original(seed):
     loss_original = flow_matching_loss_original(
         gflownet, env, states, conditions, reduction="mean"
     )
-    loss_vectorized = gflownet.flow_matching_loss(
-        env, states, conditions, reduction="mean"
-    )
+    # conditions now live inside states; no separate conditions arg needed.
+    loss_vectorized = gflownet.flow_matching_loss(env, states, reduction="mean")
 
     torch.testing.assert_close(loss_vectorized, loss_original)
 

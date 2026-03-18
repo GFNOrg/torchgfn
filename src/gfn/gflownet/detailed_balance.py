@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, cast
 
 import torch
 
@@ -121,6 +121,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self.logF = logF
         self.forward_looking = forward_looking
 
+        if debug and hasattr(logF, "debug"):
+            logF.debug = True
+
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns a dictionary of named parameters containing 'logF' in their name.
 
@@ -195,7 +198,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         states = transitions.states
         actions = transitions.actions
         conditions = (
-            transitions.conditions
+            transitions.states.conditions
         )  # reuse locally to avoid repeated attribute lookups
         next_states = (
             transitions.next_states
@@ -228,9 +231,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         is_terminating = transitions.is_terminating
         is_intermediate = ~is_terminating
 
-        # Assign log_F_s_next for terminating transitions directly from clamped rewards.
-        log_rewards = transitions.log_rewards
-        assert log_rewards is not None
+        # cast: log_rewards is always populated for valid transitions;
+        # assert is behind debug to avoid graph breaks in torch.compile.
+        log_rewards = cast(torch.Tensor, transitions.log_rewards)
+        if self.debug:
+            assert log_rewards is not None
         log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
         log_F_s_next[is_terminating] = log_rewards[is_terminating]
 
@@ -288,7 +293,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         preds = log_pf + log_F_s
         targets = log_pb + log_F_s_next
         scores = preds - targets
-        assert scores.shape == (transitions.n_transitions,)
+        if self.debug:
+            assert scores.shape == (transitions.n_transitions,)
         return scores
 
     def loss(
@@ -406,7 +412,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             return torch.tensor(0.0, device=transitions.device)
 
         conditions = (
-            transitions.conditions
+            transitions.states.conditions
         )  # reuse locally to avoid repeated attribute lookups
         mask = ~transitions.next_states.is_sink_state
         states = transitions.states[mask]
@@ -436,8 +442,11 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         pf_dist = self.pf.to_probability_distribution(states, pf_outputs)
 
         if transitions.has_log_probs and not recalculate_all_logprobs:
-            valid_log_pf_actions = transitions[mask].log_probs
-            assert valid_log_pf_actions is not None
+            # cast: log_probs is guaranteed non-None when has_log_probs is True;
+            # assert is behind debug to avoid graph breaks in torch.compile.
+            valid_log_pf_actions = cast(torch.Tensor, transitions[mask].log_probs)
+            if self.debug:
+                assert valid_log_pf_actions is not None
         else:
             # Evaluate the log PF of the actions sampled off policy.
             valid_log_pf_actions = pf_dist.log_prob(actions.tensor)

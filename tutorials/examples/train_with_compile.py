@@ -323,12 +323,14 @@ def parse_args() -> argparse.Namespace:
         "--hypergrid-height", type=int, default=HYPERGRID_DEFAULTS["height"]
     )
     parser.add_argument("--hidden-dim", type=int, default=256, help="MLP hidden dim.")
-    parser.add_argument("--n-hidden", type=int, default=2, help="#hidden layers.")
+    parser.add_argument(
+        "--n-hidden", type=int, default=3, help="#hidden layers incl. input projection."
+    )
 
     # Line environment knobs
     parser.add_argument("--line-n-steps", type=int, default=5)
     parser.add_argument("--line-hidden-dim", type=int, default=64)
-    parser.add_argument("--line-n-hidden", type=int, default=2)
+    parser.add_argument("--line-n-hidden", type=int, default=3)
     parser.add_argument("--line-std-min", type=float, default=0.1)
     parser.add_argument("--line-std-max", type=float, default=1.0)
 
@@ -342,7 +344,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bitseq-num-layers", type=int, default=2)
     parser.add_argument("--bitseq-dropout", type=float, default=0.0)
     parser.add_argument("--bitseq-mlp-hidden-dim", type=int, default=128)
-    parser.add_argument("--bitseq-mlp-n-hidden", type=int, default=2)
+    parser.add_argument("--bitseq-mlp-n-hidden", type=int, default=3)
 
     # Diffusion knobs
     parser.add_argument("--diffusion-target", type=str, default="gmm2")
@@ -816,7 +818,7 @@ def _build_diffusion_components(
             input_dim=env.state_shape[-1],
             output_dim=1,
             hidden_dim=args.diffusion_hidden_dim,
-            n_hidden_layers=args.diffusion_joint_layers,
+            n_hidden_layers=args.diffusion_joint_layers + 1,
         )
         preproc = IdentityPreprocessor(output_dim=env.state_shape[-1])
         logF = ScalarEstimator(module=logF_module, preprocessor=preproc)
@@ -931,7 +933,7 @@ def _build_graph_ring_components(
             directed=args.ring_directed,
             embedding_dim=args.ring_embedding_dim,
             n_outputs=1,
-            n_hidden_layers=2,
+            n_hidden_layers=3,
         )
         logF = ScalarEstimator(module=logF_module)
 

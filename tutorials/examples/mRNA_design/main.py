@@ -172,7 +172,10 @@ if __name__ == "__main__":
         "--hidden_dim", type=int, default=256, help="MLP hidden layer dimension"
     )
     parser.add_argument(
-        "--n_hidden", type=int, default=2, help="Number of MLP hidden layers"
+        "--n_hidden",
+        type=int,
+        default=3,
+        help="Number of MLP hidden layers incl. input projection",
     )
     parser.add_argument(
         "--tied", action="store_true", help="Tie PF and PB network trunks"

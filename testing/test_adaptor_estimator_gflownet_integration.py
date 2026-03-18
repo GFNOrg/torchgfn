@@ -53,13 +53,13 @@ def _make_nonrecurrent_pf_pb(env: BitSequence, device: torch.device):
     preprocessor = IdentityPreprocessor(output_dim=input_dim)
 
     pf_module = MLP(
-        input_dim=input_dim, output_dim=env.n_actions, hidden_dim=32, n_hidden_layers=1
+        input_dim=input_dim, output_dim=env.n_actions, hidden_dim=32, n_hidden_layers=2
     ).to(device)
     pb_module = MLP(
         input_dim=input_dim,
         output_dim=env.n_actions - 1,
         hidden_dim=32,
-        n_hidden_layers=1,
+        n_hidden_layers=2,
     ).to(device)
     pf = DiscretePolicyEstimator(
         module=pf_module,
@@ -135,7 +135,7 @@ def test_db_gflownet_rejects_recurrent_pf_and_adapter():
             input_dim=env.words_per_seq,
             output_dim=1,
             hidden_dim=16,
-            n_hidden_layers=1,
+            n_hidden_layers=2,
         ).to(device)
     )
     with pytest.raises(TypeError, match="does not support recurrent PF"):
@@ -181,7 +181,7 @@ def test_pb_mlp_trunk_sharing_parity_on_transitions():
         input_dim=env.words_per_seq,
         output_dim=env.n_actions - 1,
         hidden_dim=32,
-        n_hidden_layers=1,
+        n_hidden_layers=2,
         trunk=pf.module.trunk,  # type: ignore[attr-defined]
     ).to(device)
     pb_shared = DiscretePolicyEstimator(
@@ -193,7 +193,7 @@ def test_pb_mlp_trunk_sharing_parity_on_transitions():
         input_dim=env.words_per_seq,
         output_dim=env.n_actions - 1,
         hidden_dim=32,
-        n_hidden_layers=1,
+        n_hidden_layers=2,
     ).to(device)
     pb_indep_module.load_state_dict(pb_shared_module.state_dict())
     pb_indep = DiscretePolicyEstimator(

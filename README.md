@@ -8,6 +8,9 @@
     <a>
 	    <img src='https://img.shields.io/badge/code%20style-black-black' />
 	</a>
+    <a href='https://codecov.io/gh/gfnorg/torchgfn'>
+        <img src='https://codecov.io/gh/gfnorg/torchgfn/branch/master/graph/badge.svg' alt='Coverage Status' />
+    </a>
 </p>
 
 <p align="center">

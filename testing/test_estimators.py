@@ -363,12 +363,9 @@ def test_discrete_policy_estimator_integration():
     # Create test states
     batch_size = 8
     states_tensor = torch.randint(0, env.height, (batch_size, env.ndim))
-    forward_masks = torch.ones(batch_size, env.n_actions, dtype=torch.bool)
-    backward_masks = torch.ones(batch_size, env.n_actions - 1, dtype=torch.bool)
 
     # Create states using environment's States class
-    states = env.States(states_tensor, forward_masks, backward_masks)
-    env.update_masks(states)
+    states = env.States(states_tensor)
 
     # Test different parameter combinations
     test_params = [
