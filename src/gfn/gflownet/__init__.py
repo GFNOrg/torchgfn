@@ -4,6 +4,8 @@ from .flow_matching import FMGFlowNet
 from .sub_trajectory_balance import SubTBGFlowNet
 from .trajectory_balance import (
     LogPartitionVarianceGFlowNet,
+    RelativeLogPartitionVarianceGFlowNet,
+    RelativeTBBase,
     RelativeTrajectoryBalanceGFlowNet,
     TBGFlowNet,
 )
@@ -17,6 +19,8 @@ __all__ = [
     "FMGFlowNet",
     "SubTBGFlowNet",
     "LogPartitionVarianceGFlowNet",
+    "RelativeLogPartitionVarianceGFlowNet",
+    "RelativeTBBase",
     "RelativeTrajectoryBalanceGFlowNet",
     "TBGFlowNet",
 ]

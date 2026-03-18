@@ -200,16 +200,28 @@ class MLEDiffusion(GFlowNet):
             base_std = self.sigma * (dt * (t_curr - dt) / t_curr).sqrt() * not_s0
 
             # Learned corrections (PB): mean_corr, optional log-std corr.
-            mean_corr = pb_out[..., :dim] * self.pb.pb_scale_range
+            # At the initial state (t ≈ dt, so t-dt ≈ 0) the Brownian bridge
+            # is pinned to the origin: base_mean and base_std are already
+            # zeroed via not_s0.  PB corrections must also be zeroed here,
+            # otherwise the bridge endpoint drifts away from 0 when PB is
+            # learned, breaking the pinning constraint.
+            mean_corr = pb_out[..., :dim] * self.pb.pb_scale_range * not_s0
             if self.pb.n_variance_outputs > 0:
                 log_std_corr = pb_out[..., [-1]] * self.pb.pb_scale_range
-                corr_std = torch.exp(log_std_corr)
+                corr_std = torch.exp(log_std_corr) * not_s0
             else:
                 corr_std = torch.zeros_like(base_std)
 
             bwd_std = (base_std**2 + corr_std**2).sqrt()
             noise = torch.randn_like(s_curr, device=device, dtype=dtype)
-            s_prev = base_mean + mean_corr + bwd_std * noise
+            # The PB module outputs corrections in **action** (displacement) space,
+            # where action = s_curr - s_prev.  The estimator's convention is:
+            #   action ~ N(base_action_mean + mean_corr, bwd_std)
+            #   s_prev = s_curr - action
+            # So E[s_prev] = s_curr*(1-dt/t) - mean_corr.  Since base_mean is
+            # already in state space (= s_curr*(1-dt/t)), we must subtract
+            # mean_corr here, not add it.
+            s_prev = base_mean - mean_corr + bwd_std * noise
 
             # Forward log-prob under PF for the observed increment (s_prev -> s_curr).
             model_inp = torch.cat([s_prev, t_fwd], dim=1)

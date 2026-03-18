@@ -147,7 +147,86 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         return loss
 
 
-class RelativeTrajectoryBalanceGFlowNet(TrajectoryBasedGFlowNet):
+class RelativeTBBase(TrajectoryBasedGFlowNet):
+    r"""Shared base for Relative Trajectory Balance variants.
+
+    Manages the prior forward policy and ``beta`` scaling.  Subclasses only
+    need to implement :meth:`loss` (deciding how to handle ``logZ`` and
+    reduction).
+    """
+
+    def __init__(
+        self,
+        pf: Estimator,
+        prior_pf: Estimator,
+        *,
+        beta: float = 1.0,
+        log_reward_clip_min: float = -float("inf"),
+        debug: bool = False,
+    ):
+        super().__init__(
+            pf=pf,
+            pb=None,
+            constant_pb=True,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
+        )
+        # Store the prior as a plain attribute (not an nn.Module submodule)
+        # so that its parameters don't leak into self.parameters() /
+        # self.pf_pb_named_parameters().  The prior is frozen and evaluated
+        # under torch.no_grad() in loss(); registering it would silently
+        # include its weights in optimizer state dicts and checkpoints.
+        object.__setattr__(self, "_prior_pf", prior_pf)
+        self.register_buffer("beta", torch.tensor(beta))
+
+    @property
+    def prior_pf(self) -> Estimator:
+        """The fixed prior forward policy (not registered as a submodule)."""
+        return self._prior_pf  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Shared score computation
+    # ------------------------------------------------------------------
+
+    def _compute_rtb_scores(
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool = True,
+    ) -> torch.Tensor:
+        """RTB residuals: ``log_pf_post - log_pf_prior - beta * log_rewards``.
+
+        Returns:
+            Shape ``(N,)`` per-trajectory scores.
+        """
+        if self.debug:
+            warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
+
+        # Posterior log-probs (T, N) → sum to (N,).
+        log_pf_post = self.trajectory_log_probs_forward(
+            trajectories,
+            recalculate_all_logprobs=recalculate_all_logprobs,
+        ).sum(dim=0)
+
+        # Prior log-probs (T, N) → sum to (N,), detached.
+        with torch.no_grad():
+            log_pf_prior = get_trajectory_pfs(
+                self.prior_pf,
+                trajectories,
+                fill_value=0.0,
+                recalculate_all_logprobs=True,
+            ).sum(dim=0)
+
+        log_rewards = trajectories.log_rewards
+        if self.debug:
+            assert log_rewards is not None
+        if math.isfinite(self.log_reward_clip_min):
+            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
+
+        return log_pf_post - log_pf_prior - self.beta * log_rewards  # type: ignore
+
+
+class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
     r"""GFlowNet for the Relative Trajectory Balance (RTB) loss.
 
     This objective matches a posterior sampler to a prior diffusion (or other
@@ -189,14 +268,12 @@ class RelativeTrajectoryBalanceGFlowNet(TrajectoryBasedGFlowNet):
         """
         super().__init__(
             pf=pf,
-            pb=None,
-            constant_pb=True,
+            prior_pf=prior_pf,
+            beta=beta,
             log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
         )
-        self.prior_pf = prior_pf
-        self.register_buffer("beta", torch.tensor(beta))
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
-        self.debug = debug  # TODO: to be passed to base classes.
 
     def logz_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns named parameters containing 'logZ'."""
@@ -214,48 +291,24 @@ class RelativeTrajectoryBalanceGFlowNet(TrajectoryBasedGFlowNet):
         reduction: str = "mean",
     ) -> torch.Tensor:
         """Computes the RTB loss on a batch of trajectories."""
-        del env  # unused
-        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
-
-        # Posterior log-probs.
-        log_pf_post = self.trajectory_log_probs_forward(
-            trajectories,
-            recalculate_all_logprobs=recalculate_all_logprobs,
-        )
-        log_pf_post = log_pf_post.sum(dim=0)  # Sum along trajectory length.
-
-        # Prior log-probs along the same trajectories.
-        # The prior is fixed; evaluate it without tracking gradients to keep its
-        # parameters out of the RTB optimization graph.
-        with torch.no_grad():
-            log_pf_prior = get_trajectory_pfs(
-                self.prior_pf,
-                trajectories,
-                fill_value=0.0,
-                recalculate_all_logprobs=True,
-            )
-            log_pf_prior = log_pf_prior.sum(dim=0)  # Sum along trajectory length.
-
-        # Get the rewards.
-        log_rewards = trajectories.log_rewards
-        if self.debug:
-            assert log_rewards is not None
-        if math.isfinite(self.log_reward_clip_min):
-            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
+        scores = self._compute_rtb_scores(env, trajectories, recalculate_all_logprobs)
 
         # Get logZ.
         if trajectories.states.conditions is not None:
             with is_callable_exception_handler("logZ", self.logZ):
-                assert isinstance(self.logZ, ScalarEstimator)
-                logZ = self.logZ(trajectories.states.conditions)
+                if self.debug:
+                    assert isinstance(self.logZ, ScalarEstimator)
+                logZ = cast(ScalarEstimator, self.logZ)(
+                    trajectories.states.conditions[0]
+                )
         else:
             logZ = self.logZ
         logZ = cast(torch.Tensor, logZ).squeeze()
 
-        scores = 0.5 * (log_pf_post + logZ - log_pf_prior - self.beta * log_rewards).pow(2)  # type: ignore
+        scores = 0.5 * (scores + logZ).pow(2)
 
-        loss = loss_reduce(scores, reduction)  # Reduce across batch dimension.
-        if torch.isnan(loss).any():
+        loss = loss_reduce(scores, reduction)
+        if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is nan")
 
         return loss
@@ -309,5 +362,68 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is NaN.")
+
+        return loss
+
+
+class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
+    r"""RTB variant that eliminates the learned logZ via variance minimization.
+
+    Analogous to how :class:`LogPartitionVarianceGFlowNet` relates to
+    :class:`TBGFlowNet`, this class mean-centers the RTB residuals within each
+    batch so that no explicit ``logZ`` parameter is needed.
+
+    The loss minimizes
+
+    .. math::
+
+        \operatorname{Var}_{\tau}\!\bigl[\log p_\phi(\tau)
+              - \log p_\theta(\tau) - \beta\,\log r(x_T)\bigr],
+
+    which equals the RTB loss evaluated at the batch-optimal
+    :math:`\log Z^* = -\overline{s}` (the negative batch mean of scores).
+    """
+
+    def __init__(
+        self,
+        pf: Estimator,
+        prior_pf: Estimator,
+        *,
+        beta: float = 1.0,
+        log_reward_clip_min: float = -float("inf"),
+        debug: bool = False,
+    ):
+        """Initializes a Relative LPV GFlowNet.
+
+        Args:
+            pf: Posterior forward policy estimator :math:`p_\\phi`.
+            prior_pf: Fixed prior forward policy estimator :math:`p_\\theta`.
+            beta: Scaling applied to the terminal log-reward.
+            log_reward_clip_min: If finite, clips terminal log-rewards.
+            debug: If True, enables extra checks at the cost of execution speed.
+        """
+        super().__init__(
+            pf=pf,
+            prior_pf=prior_pf,
+            beta=beta,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
+        )
+
+    def loss(
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
+    ) -> torch.Tensor:
+        """Computes the Relative LPV loss on a batch of trajectories."""
+        scores = self._compute_rtb_scores(env, trajectories, recalculate_all_logprobs)
+        scores = scores - scores.mean()
+        scores = 0.5 * scores.pow(2)
+
+        loss = loss_reduce(scores, reduction)
+        if self.debug and torch.isnan(loss).any():
+            raise ValueError("loss is nan")
 
         return loss
