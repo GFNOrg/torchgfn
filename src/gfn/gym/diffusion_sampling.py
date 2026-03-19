@@ -133,7 +133,7 @@ class BaseTarget(ABC):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
-        linspace_n_steps: int = 100,
+        grid_width_n_points: int = 100,
         max_n_samples: int = 1000,
     ) -> None:
         """Visualize the target.
@@ -142,7 +142,8 @@ class BaseTarget(ABC):
             samples: The samples to visualize.
             show: Whether to show the plot.
             prefix: The prefix for the plot file name.
-            linspace_n_steps: The number of steps in the linspace.
+            grid_width_n_points: The number of points along each axis of the
+                visualization grid.
             max_n_samples: The maximum number of samples to visualize.
         """
         raise NotImplementedError
@@ -315,7 +316,7 @@ class SimpleGaussianMixture(BaseTarget):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
-        linspace_n_steps: int = 100,
+        grid_width_n_points: int = 100,
         max_n_samples: int = 500,
     ) -> None:
         """Visualize the distribution.
@@ -324,7 +325,8 @@ class SimpleGaussianMixture(BaseTarget):
             samples: The samples to visualize.
             show: Whether to show the plot.
             prefix: The prefix for the plot file name.
-            linspace_n_steps: The number of steps in the linspace.
+            grid_width_n_points: The number of points along each axis of the
+                visualization grid.
             max_n_samples: The maximum number of samples to visualize.
         """
         assert self.plot_border is not None, "Visualization requires a plot border."
@@ -341,13 +343,13 @@ class SimpleGaussianMixture(BaseTarget):
             torch.linspace(
                 self.plot_border[0],
                 self.plot_border[1],
-                linspace_n_steps,
+                grid_width_n_points,
                 device=self.device,
             ),
             torch.linspace(
                 self.plot_border[2],
                 self.plot_border[3],
-                linspace_n_steps,
+                grid_width_n_points,
                 device=self.device,
             ),
         )
