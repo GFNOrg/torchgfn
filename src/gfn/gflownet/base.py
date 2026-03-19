@@ -8,6 +8,7 @@ import torch.nn as nn
 from gfn.containers import Container, Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator
+from gfn.gflownet.losses import RegressionLoss, SquaredLoss
 from gfn.samplers import Sampler
 from gfn.states import States
 from gfn.utils.prob_calculations import (
@@ -51,15 +52,24 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
     log_reward_clip_min = float("-inf")  # Default off.
 
-    def __init__(self, debug: bool = False) -> None:
+    def __init__(
+        self,
+        debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
+    ) -> None:
         """Initialize shared GFlowNet state.
 
         Args:
             debug: If True, keep runtime safety checks and warnings active. Set False
                 in compiled hot paths to avoid graph breaks; use True in tests/debugging.
+            loss_fn: Regression loss applied to balance condition residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss` (standard
+                ``t²``, corresponding to reverse KL). See
+                :mod:`gfn.gflownet.losses` for alternatives.
         """
         super().__init__()
         self.debug = debug
+        self.loss_fn = loss_fn or SquaredLoss()
 
     @abstractmethod
     def sample_trajectories(
@@ -195,6 +205,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         constant_pb: bool = False,
         log_reward_clip_min: float = float("-inf"),
         debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
@@ -208,9 +219,11 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
                 special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
             debug: If True, keep runtime safety checks active; disable in compiled runs.
+            loss_fn: Regression loss applied to balance condition residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
 
         """
-        super().__init__(debug=debug)
+        super().__init__(debug=debug, loss_fn=loss_fn)
         # Technical note: pb may be constant for a variety of edge cases, for example,
         # if all terminal states can be reached with exactly the same number of
         # trajectories, and we assume a uniform backward policy, then we can omit the pb

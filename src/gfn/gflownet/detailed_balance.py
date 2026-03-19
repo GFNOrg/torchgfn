@@ -7,6 +7,7 @@ from gfn.containers import Trajectories, Transitions
 from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import PFBasedGFlowNet, loss_reduce
+from gfn.gflownet.losses import RegressionLoss
 from gfn.states import States
 from gfn.utils.handlers import (
     has_conditions_exception_handler,
@@ -76,6 +77,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         constant_pb: bool = False,
         log_reward_clip_min: float = -float("inf"),
         debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ) -> None:
         """Initializes a DBGFlowNet instance.
 
@@ -95,6 +97,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
             debug: If True, keep runtime safety checks active; disable in compiled runs.
+            loss_fn: Regression loss applied to balance residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
 
         """
         super().__init__(
@@ -103,6 +107,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             constant_pb=constant_pb,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
+            loss_fn=loss_fn,
         )
 
         # Disallow recurrent PF for transition-based DB
@@ -327,7 +332,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             transitions,
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
-        scores = scores**2
+        scores = self.loss_fn(scores)
         loss = loss_reduce(scores, reduction)
 
         if self.debug and torch.isnan(loss).any():
@@ -527,7 +532,7 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
             transitions,
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
-        scores = scores**2
+        scores = self.loss_fn(scores)
         return loss_reduce(scores, reduction)
 
     def to_training_samples(self, trajectories: Trajectories) -> Transitions:

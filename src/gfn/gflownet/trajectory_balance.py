@@ -13,6 +13,7 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
+from gfn.gflownet.losses import RegressionLoss
 from gfn.utils.handlers import (
     is_callable_exception_handler,
     warn_about_recalculating_logprobs,
@@ -52,6 +53,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         constant_pb: bool = False,
         log_reward_clip_min: float = -float("inf"),
         debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ):
         """Initializes a TBGFlowNet instance.
 
@@ -67,6 +69,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
                 is an Estimator except under this special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
             debug: If True, keep runtime safety checks active; disable in compiled runs.
+            loss_fn: Regression loss applied to balance residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
         """
         super().__init__(
             pf,
@@ -74,6 +78,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             constant_pb=constant_pb,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
+            loss_fn=loss_fn,
         )
 
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
@@ -139,7 +144,7 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             logZ = self.logZ  # []
 
         logZ = cast(torch.Tensor, logZ).squeeze()  # [] or [N]
-        scores = torch.square(scores + logZ)  # [N]
+        scores = self.loss_fn(scores + logZ)  # [N]
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is nan")
@@ -163,6 +168,7 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
         beta: float = 1.0,
         log_reward_clip_min: float = -float("inf"),
         debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ):
         super().__init__(
             pf=pf,
@@ -170,6 +176,7 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
             constant_pb=True,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
+            loss_fn=loss_fn,
         )
         # Store the prior as a plain attribute (not an nn.Module submodule)
         # so that its parameters don't leak into self.parameters() /
@@ -253,6 +260,7 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
         beta: float = 1.0,
         log_reward_clip_min: float = -float("inf"),
         debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ):
         """Initializes an RTB GFlowNet.
 
@@ -265,6 +273,8 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
             beta: Optional scaling applied to the terminal log-reward.
             log_reward_clip_min: If finite, clips terminal log-rewards.
             debug: if True, enables extra checks at the cost of execution speed.
+            loss_fn: Regression loss applied to balance residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
         """
         super().__init__(
             pf=pf,
@@ -272,6 +282,7 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
             beta=beta,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
+            loss_fn=loss_fn,
         )
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
 
@@ -305,7 +316,10 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
             logZ = self.logZ
         logZ = cast(torch.Tensor, logZ).squeeze()
 
-        scores = 0.5 * (scores + logZ).pow(2)
+        # The 0.5 factor makes the gradient equal to the residual itself
+        # (d/dt [0.5·g(t)] = g'(t)/2; for g=t², this gives t instead of 2t),
+        # matching the convention in Venkatraman et al. (2024).
+        scores = 0.5 * self.loss_fn(scores + logZ)
 
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():
@@ -358,7 +372,7 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
         scores = scores.sub_(scores.mean())  # [N], in-place mean-centering.
-        scores = torch.square(scores)  # [N]
+        scores = self.loss_fn(scores)  # [N]
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():
             raise ValueError("loss is NaN.")
@@ -392,6 +406,7 @@ class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
         beta: float = 1.0,
         log_reward_clip_min: float = -float("inf"),
         debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ):
         """Initializes a Relative LPV GFlowNet.
 
@@ -401,6 +416,8 @@ class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
             beta: Scaling applied to the terminal log-reward.
             log_reward_clip_min: If finite, clips terminal log-rewards.
             debug: If True, enables extra checks at the cost of execution speed.
+            loss_fn: Regression loss applied to balance residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
         """
         super().__init__(
             pf=pf,
@@ -408,6 +425,7 @@ class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
             beta=beta,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
+            loss_fn=loss_fn,
         )
 
     def loss(
@@ -420,7 +438,9 @@ class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
         """Computes the Relative LPV loss on a batch of trajectories."""
         scores = self._compute_rtb_scores(env, trajectories, recalculate_all_logprobs)
         scores = scores - scores.mean()
-        scores = 0.5 * scores.pow(2)
+        # The 0.5 factor makes the gradient equal to the residual itself;
+        # see RelativeTrajectoryBalanceGFlowNet.loss() for details.
+        scores = 0.5 * self.loss_fn(scores)
 
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():

@@ -8,6 +8,7 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
+from gfn.gflownet.losses import RegressionLoss
 from gfn.utils.handlers import (
     has_conditions_exception_handler,
     no_conditions_exception_handler,
@@ -84,6 +85,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         forward_looking: bool = False,
         constant_pb: bool = False,
         debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -102,6 +104,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
             debug: If True, keep runtime safety checks active; disable in compiled runs.
+            loss_fn: Regression loss applied to balance residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
 
         """
         super().__init__(
@@ -110,6 +114,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             constant_pb=constant_pb,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
+            loss_fn=loss_fn,
         )
         assert any(
             isinstance(logF, cls)
@@ -600,7 +605,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             if math.isfinite(self.log_reward_clip_min):
                 log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
             tb_scores = logF_s0 + total_log_pf - total_log_pb - log_rewards
-            return loss_reduce(tb_scores.pow(2), reduction)
+            return loss_reduce(self.loss_fn(tb_scores), reduction)
 
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
@@ -612,7 +617,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         if self.weighting == "DB":
             # Longer trajectories contribute more to the loss.
             # TODO: is this correct with `loss_reduce`?
-            final_scores = scores[0][~flattening_masks[0]].pow(2)
+            final_scores = self.loss_fn(scores[0][~flattening_masks[0]])
             return loss_reduce(final_scores, reduction)
 
         elif self.weighting == "geometric":
@@ -627,7 +632,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             # sub-trajectories of length k.
             per_length_losses = torch.stack(
                 [
-                    scores[~flattening_mask].pow(2).mean()
+                    self.loss_fn(scores[~flattening_mask]).mean()
                     for scores, flattening_mask in zip(scores, flattening_masks)
                 ]
             )
@@ -662,7 +667,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 flat_contributions.sum() - 1.0
             ).abs() < 1e-5, f"{flat_contributions.sum()}"
 
-        final_scores = flat_contributions * all_scores[~flattening_mask].pow(2)
+        final_scores = flat_contributions * self.loss_fn(all_scores[~flattening_mask])
 
         # TODO: default was sum, should we allow mean?
         if reduction == "mean":

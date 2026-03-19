@@ -10,6 +10,7 @@ from gfn.estimators import (
     PolicyMixin,
 )
 from gfn.gflownet.base import GFlowNet, loss_reduce
+from gfn.gflownet.losses import RegressionLoss
 from gfn.samplers import Sampler
 from gfn.states import DiscreteStates
 from gfn.utils.handlers import (
@@ -42,7 +43,11 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
     """
 
     def __init__(
-        self, logF: DiscretePolicyEstimator, alpha: float = 1.0, debug: bool = False
+        self,
+        logF: DiscretePolicyEstimator,
+        alpha: float = 1.0,
+        debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ):
         """Initializes a FMGFlowNet instance.
 
@@ -51,8 +56,10 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
                 estimating the log flow of the edges (states -> next_states).
             alpha: A scalar weight for the reward matching loss.
             debug: If True, keep runtime safety checks active; disable in compiled runs.
+            loss_fn: Regression loss applied to balance residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
         """
-        super().__init__(debug=debug)
+        super().__init__(debug=debug, loss_fn=loss_fn)
         assert isinstance(
             logF, PolicyMixin
         ), "logF must use the default PolicyMixin interface"
@@ -216,7 +223,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
         log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
-        scores = (log_incoming_flows - log_outgoing_flows).pow(2)
+        scores = self.loss_fn(log_incoming_flows - log_outgoing_flows)
 
         return loss_reduce(scores, reduction)
 
@@ -254,7 +261,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         # Handle the boundary condition (for all x, F(X->S_f) = R(x)).
         terminating_log_edge_flows = log_edge_flows[:, -1]
-        scores = (terminating_log_edge_flows - log_rewards).pow(2)
+        scores = self.loss_fn(terminating_log_edge_flows - log_rewards)
 
         return loss_reduce(scores, reduction)
 
