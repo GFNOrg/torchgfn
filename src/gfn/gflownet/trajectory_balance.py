@@ -195,6 +195,22 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
     # Shared score computation
     # ------------------------------------------------------------------
 
+    def get_scores(
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool = True,
+    ) -> torch.Tensor:
+        """RTB residuals (without logZ): ``log_pf_post - log_pf_prior - beta * log_R``.
+
+        This is the public interface to the RTB balance residuals, analogous to
+        :meth:`TrajectoryBasedGFlowNet.get_scores` for standard TB.
+
+        Returns:
+            Shape ``(N,)`` per-trajectory scores.
+        """
+        return self._compute_rtb_scores(env, trajectories, recalculate_all_logprobs)
+
     def _compute_rtb_scores(
         self,
         env: Env,
@@ -323,6 +339,180 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
             raise ValueError("loss is nan")
 
         return loss
+
+
+class TrustPCLGFlowNet(RelativeTrajectoryBalanceGFlowNet):
+    r"""Trust-PCL view of Relative Trajectory Balance.
+
+    Deleu et al. (2025) proved that RTB is mathematically equivalent to
+    Trust-PCL, an off-policy RL method with KL regularization toward a
+    reference policy.  This class provides an **RL-native interface** to
+    the same algorithm, using reinforcement learning terminology.
+
+    The equivalence (Proposition 3.1 of Deleu et al.):
+
+    .. math::
+
+        \mathcal{L}_{\text{Trust-PCL}}(\phi, \psi)
+            = \alpha^2 \,\mathcal{L}_{\text{RTB}}(\phi, \psi)
+
+    where :math:`\alpha = 1/\beta` is the Trust-PCL temperature.
+
+    **Parameter correspondence:**
+
+    +---------------------+------------------------------+---------------------------+
+    | Concept             | RTB name                     | Trust-PCL name            |
+    +=====================+==============================+===========================+
+    | Temperature          | ``beta``                     | ``alpha = 1/beta``        |
+    +---------------------+------------------------------+---------------------------+
+    | Learned scalar       | ``logZ``                     | ``v_soft_s0 = alpha*logZ``|
+    +---------------------+------------------------------+---------------------------+
+    | Trainable model      | ``pf`` (posterior)           | ``policy``                |
+    +---------------------+------------------------------+---------------------------+
+    | Fixed reference      | ``prior_pf``                 | ``reference_policy``      |
+    +---------------------+------------------------------+---------------------------+
+
+    **Interpretation of the learned scalar:**
+
+    In RTB, ``logZ`` estimates the log-partition function
+    :math:`\log \int p_\theta(x)\,r(x)\,dx`.  In Trust-PCL, the same
+    quantity is the **soft value function** at the initial state:
+    :math:`V^{\text{soft}}_\psi(s_0) = \alpha \cdot \log Z_\psi`.
+    This connects GFlowNet training to entropy-regularized RL, where the
+    soft value satisfies the soft Bellman equation.
+
+    **Why this class exists:**
+
+    The underlying computation is identical to
+    :class:`RelativeTrajectoryBalanceGFlowNet` (the loss is just scaled by
+    :math:`\alpha^2`).  This class exists to:
+
+    1. Provide an RL-native constructor (``policy``, ``reference_policy``,
+       ``alpha``, ``init_v_soft_s0``) for researchers familiar with
+       Trust-PCL / SAC / entropy-regularized RL.
+    2. Expose :attr:`alpha` and :attr:`v_soft_s0` properties for
+       interpretability and monitoring.
+    3. Serve as a pedagogical bridge between the GFlowNet and RL communities.
+
+    References:
+        Deleu et al. "Relative Trajectory Balance is equivalent to
+        Trust-PCL" (2025, arXiv:2509.01632).
+
+        Nachum et al. "Trust-PCL: An Off-Policy Trust Region Method for
+        Continuous Control" (NeurIPS 2017, arXiv:1707.01891).
+
+        Venkatraman et al. "Amortizing intractable inference in diffusion
+        models for vision, language, and control" (NeurIPS 2024,
+        arXiv:2405.20971).
+    """
+
+    def __init__(
+        self,
+        policy: Estimator,
+        reference_policy: Estimator,
+        *,
+        alpha: float = 1.0,
+        init_v_soft_s0: float = 0.0,
+        logZ: nn.Parameter | ScalarEstimator | None = None,
+        log_reward_clip_min: float = -float("inf"),
+        debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
+    ):
+        """Initializes a Trust-PCL GFlowNet.
+
+        Args:
+            policy: The trainable policy :math:`\\pi_\\phi` (= RTB posterior).
+            reference_policy: The fixed reference policy :math:`\\pi_{\\text{ref}}`
+                (= RTB prior). Not trained; evaluated under ``torch.no_grad()``.
+            alpha: Trust-PCL temperature. Controls the strength of KL
+                regularization toward the reference policy. Corresponds to
+                ``1/beta`` in RTB.  Higher alpha → more regularization
+                (policy stays closer to reference).
+            init_v_soft_s0: Initial value for the soft value function at
+                :math:`s_0`.  Converted to ``logZ = v_soft_s0 / alpha``
+                internally.
+            logZ: Optional explicit logZ parameter (overrides init_v_soft_s0
+                if provided). For advanced use / conditional settings.
+            log_reward_clip_min: If finite, clips terminal log-rewards.
+            debug: If True, enables extra runtime checks.
+            loss_fn: Regression loss applied to balance residuals.
+                Defaults to :class:`~gfn.gflownet.losses.HalfSquaredLoss`.
+        """
+        beta = 1.0 / alpha
+        init_logZ = (
+            init_v_soft_s0 * beta
+        )  # v_soft = alpha * logZ → logZ = v / alpha = v * beta
+        super().__init__(
+            pf=policy,
+            prior_pf=reference_policy,
+            beta=beta,
+            init_logZ=init_logZ,
+            logZ=logZ,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
+            loss_fn=loss_fn,
+        )
+
+    @property
+    def alpha(self) -> torch.Tensor:
+        r"""Trust-PCL temperature: :math:`\alpha = 1/\beta`.
+
+        Controls the strength of KL regularization toward the reference
+        policy. At convergence, the learned policy satisfies:
+
+        .. math::
+
+            \pi_\phi(a|s) \propto \pi_{\text{ref}}(a|s)
+            \exp\!\bigl(Q^{\text{soft}}(s,a) / \alpha\bigr)
+
+        Higher alpha → policy stays closer to the reference (more
+        regularization). Lower alpha → policy deviates more toward
+        reward-maximizing behavior.
+        """
+        return 1.0 / cast(torch.Tensor, self.beta)
+
+    @property
+    def v_soft_s0(self) -> torch.Tensor:
+        r"""Soft value function at the initial state: :math:`V^{\text{soft}}_\psi(s_0) = \alpha \cdot \log Z_\psi`.
+
+        This is the expected return under the optimal entropy-regularized
+        policy, starting from :math:`s_0`:
+
+        .. math::
+
+            V^{\text{soft}}(s_0) = \mathbb{E}_{\pi_\phi}\!\left[
+                \sum_t r(s_t, a_t)
+                + \alpha \sum_t \log \frac{\pi_{\text{ref}}(a_t|s_t)}
+                                          {\pi_\phi(a_t|s_t)}
+            \right]
+
+        Monitoring this value during training shows how the expected
+        (regularized) return evolves.  At convergence it equals
+        :math:`\alpha \log \int p_\\theta(x)\,r(x)\,dx`.
+        """
+        logZ = self.logZ
+        if isinstance(logZ, ScalarEstimator):
+            raise ValueError(
+                "v_soft_s0 is not available for conditional logZ without "
+                "conditions. Use alpha * logZ(conditions) directly."
+            )
+        return self.alpha * cast(torch.Tensor, logZ).detach()
+
+    def loss(
+        self,
+        env: Env,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool = True,
+        reduction: str = "mean",
+    ) -> torch.Tensor:
+        r"""Computes the Trust-PCL loss: :math:`\alpha^2 \cdot \mathcal{L}_{\text{RTB}}`.
+
+        The scaling by :math:`\alpha^2` is the only difference from
+        :meth:`RelativeTrajectoryBalanceGFlowNet.loss`.  It ensures
+        gradient magnitudes match the Trust-PCL formulation.
+        """
+        rtb_loss = super().loss(env, trajectories, recalculate_all_logprobs, reduction)
+        return self.alpha**2 * rtb_loss
 
 
 class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):

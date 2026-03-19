@@ -15,6 +15,7 @@ from .trajectory_balance import (
     RelativeTBBase,
     RelativeTrajectoryBalanceGFlowNet,
     TBGFlowNet,
+    TrustPCLGFlowNet,
 )
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "RelativeTBBase",
     "RelativeTrajectoryBalanceGFlowNet",
     "TBGFlowNet",
+    "TrustPCLGFlowNet",
     "RegressionLoss",
     "SquaredLoss",
     "HalfSquaredLoss",
