@@ -1447,7 +1447,7 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
             A IsotropicGaussian distribution (distribution of the next states)
         """
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
-        # s_curr = states.tensor[:, :-1]
+        # s_curr is not needed; drift comes entirely from module_output.
         t_curr = states.tensor[:, [-1]]
 
         # Check if the NEXT step would reach terminal time, not if we're already there.
@@ -1473,8 +1473,9 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
             log_std = var_part.mean(dim=-1, keepdim=True)
             fwd_std = torch.exp(log_std) * math.sqrt(self.dt)
         else:
-            fwd_std = torch.tensor(self.sigma * self.dt**0.5, device=drift.device)
-            fwd_std = fwd_std.repeat(drift.shape[0], 1)
+            fwd_std = torch.full(
+                (drift.shape[0], 1), self.sigma * self.dt**0.5, device=drift.device
+            )
 
         # Match reference behavior: scale diffusion noise (not drift) by t_scale if present.
         t_scale_factor = getattr(self.module, "t_scale", 1.0)
