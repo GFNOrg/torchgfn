@@ -13,7 +13,7 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
-from gfn.gflownet.losses import RegressionLoss
+from gfn.gflownet.losses import HalfSquaredLoss, RegressionLoss
 from gfn.utils.handlers import (
     is_callable_exception_handler,
     warn_about_recalculating_logprobs,
@@ -176,7 +176,7 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
             constant_pb=True,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
-            loss_fn=loss_fn,
+            loss_fn=loss_fn or HalfSquaredLoss(),
         )
         # Store the prior as a plain attribute (not an nn.Module submodule)
         # so that its parameters don't leak into self.parameters() /
@@ -316,10 +316,7 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
             logZ = self.logZ
         logZ = cast(torch.Tensor, logZ).squeeze()
 
-        # The 0.5 factor makes the gradient equal to the residual itself
-        # (d/dt [0.5·g(t)] = g'(t)/2; for g=t², this gives t instead of 2t),
-        # matching the convention in Venkatraman et al. (2024).
-        scores = 0.5 * self.loss_fn(scores + logZ)
+        scores = self.loss_fn(scores + logZ)
 
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():
@@ -438,9 +435,7 @@ class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
         """Computes the Relative LPV loss on a batch of trajectories."""
         scores = self._compute_rtb_scores(env, trajectories, recalculate_all_logprobs)
         scores = scores - scores.mean()
-        # The 0.5 factor makes the gradient equal to the residual itself;
-        # see RelativeTrajectoryBalanceGFlowNet.loss() for details.
-        scores = 0.5 * self.loss_fn(scores)
+        scores = self.loss_fn(scores)
 
         loss = loss_reduce(scores, reduction)
         if self.debug and torch.isnan(loss).any():

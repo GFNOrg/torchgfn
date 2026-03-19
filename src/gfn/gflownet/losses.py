@@ -69,12 +69,29 @@ class SquaredLoss(RegressionLoss):
     placing probability mass where the target has none, but does not penalize
     missing modes.  This can lead to mode collapse in multi-modal targets.
 
-    This is the default loss for all GFlowNet classes and reproduces the
-    standard behavior from the literature.
+    This is the default loss for TB, DB, SubTB, LPV, and FM classes,
+    reproducing the standard behavior from the literature.
     """
 
     def __call__(self, residuals: torch.Tensor) -> torch.Tensor:
         return residuals.pow(2)
+
+
+class HalfSquaredLoss(RegressionLoss):
+    r"""Half squared loss: :math:`g(t) = \tfrac{1}{2} t^2`.
+
+    The :math:`\tfrac{1}{2}` factor ensures the gradient equals the residual
+    itself: :math:`g'(t) = t` rather than :math:`2t`.  This is the standard
+    least-squares convention (minimizing :math:`\tfrac{1}{2}\|r\|^2` so the
+    normal equations have no factor of 2), and matches the RTB formulation
+    in Venkatraman et al. (2024).
+
+    This is the default loss for :class:`RelativeTrajectoryBalanceGFlowNet`
+    and :class:`RelativeLogPartitionVarianceGFlowNet`.
+    """
+
+    def __call__(self, residuals: torch.Tensor) -> torch.Tensor:
+        return 0.5 * residuals.pow(2)
 
 
 class ShiftedCoshLoss(RegressionLoss):

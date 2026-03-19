@@ -1,7 +1,13 @@
 from .base import GFlowNet, PFBasedGFlowNet, TrajectoryBasedGFlowNet
 from .detailed_balance import DBGFlowNet, ModifiedDBGFlowNet
 from .flow_matching import FMGFlowNet
-from .losses import LinexLoss, RegressionLoss, ShiftedCoshLoss, SquaredLoss
+from .losses import (
+    HalfSquaredLoss,
+    LinexLoss,
+    RegressionLoss,
+    ShiftedCoshLoss,
+    SquaredLoss,
+)
 from .sub_trajectory_balance import SubTBGFlowNet
 from .trajectory_balance import (
     LogPartitionVarianceGFlowNet,
@@ -26,6 +32,7 @@ __all__ = [
     "TBGFlowNet",
     "RegressionLoss",
     "SquaredLoss",
+    "HalfSquaredLoss",
     "ShiftedCoshLoss",
     "LinexLoss",
 ]
