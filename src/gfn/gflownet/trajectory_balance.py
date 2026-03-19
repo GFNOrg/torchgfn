@@ -176,7 +176,7 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
             constant_pb=True,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
-            loss_fn=loss_fn or HalfSquaredLoss(),
+            loss_fn=loss_fn,
         )
         # Store the prior as a plain attribute (not an nn.Module submodule)
         # so that its parameters don't leak into self.parameters() /
@@ -274,7 +274,7 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
             log_reward_clip_min: If finite, clips terminal log-rewards.
             debug: if True, enables extra checks at the cost of execution speed.
             loss_fn: Regression loss applied to balance residuals.
-                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
+                Defaults to :class:`~gfn.gflownet.losses.HalfSquaredLoss`.
         """
         super().__init__(
             pf=pf,
@@ -282,7 +282,7 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
             beta=beta,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
-            loss_fn=loss_fn,
+            loss_fn=loss_fn or HalfSquaredLoss(),
         )
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
 
@@ -414,7 +414,7 @@ class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
             log_reward_clip_min: If finite, clips terminal log-rewards.
             debug: If True, enables extra checks at the cost of execution speed.
             loss_fn: Regression loss applied to balance residuals.
-                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
+                Defaults to :class:`~gfn.gflownet.losses.HalfSquaredLoss`.
         """
         super().__init__(
             pf=pf,
@@ -422,7 +422,7 @@ class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
             beta=beta,
             log_reward_clip_min=log_reward_clip_min,
             debug=debug,
-            loss_fn=loss_fn,
+            loss_fn=loss_fn or HalfSquaredLoss(),
         )
 
     def loss(
