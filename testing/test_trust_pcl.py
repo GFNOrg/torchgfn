@@ -38,6 +38,8 @@ def _make_hypergrid_estimators():
         preprocessor=preproc,
         is_backward=False,
     )
+    for p in pf_prior.parameters():
+        p.requires_grad_(False)
     return env, pf_post, pf_prior
 
 
@@ -126,6 +128,8 @@ def test_trust_pcl_loss_equals_alpha_sq_rtb():
         loss_tpcl = gfn_tpcl.loss(env, trajs, recalculate_all_logprobs=True)
 
     expected = alpha**2 * loss_rtb
+    # atol=1e-5 accommodates float32 accumulation error (~1e-7 per op)
+    # across the ~100 multiply-adds in the loss computation.
     assert torch.allclose(
         expected, loss_tpcl, atol=1e-5
     ), f"Expected {expected.item()}, got {loss_tpcl.item()}"
@@ -192,7 +196,7 @@ def test_get_scores_public_api():
     trajs = sampler.sample_trajectories(env, n=8, save_logprobs=True)
 
     with torch.no_grad():
-        scores_public = gfn.get_scores(env, trajs, recalculate_all_logprobs=True)
+        scores_public = gfn.get_scores(trajs, recalculate_all_logprobs=True, env=env)
         scores_private = gfn._compute_rtb_scores(
             env, trajs, recalculate_all_logprobs=True
         )

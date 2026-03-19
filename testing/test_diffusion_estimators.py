@@ -3,6 +3,7 @@ import math
 import pytest
 import torch
 
+from gfn.constants import DIFFUSION_TERMINAL_TIME_EPS
 from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
 from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.samplers import Sampler
@@ -138,7 +139,7 @@ def test_pinned_brownian_forward_exit_condition_matches_steps():
     )
 
     dt = pf.dt
-    eps = dt * 1e-2  # _DIFFUSION_TERMINAL_TIME_EPS
+    eps = dt * DIFFUSION_TERMINAL_TIME_EPS
     times = torch.tensor(
         [
             0.0,  # initial

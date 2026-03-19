@@ -331,9 +331,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def get_scores(
         self,
-        env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
+        env: Env | None = None,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         r"""Computes sub-trajectory balance scores for all submitted trajectories.
 
@@ -368,6 +368,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories, log_pb_trajectories
         )
 
+        assert env is not None, "SubTBGFlowNet.get_scores requires env"
         log_state_flows = self.calculate_log_state_flows(
             env, trajectories, log_pf_trajectories
         )
@@ -609,7 +610,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
-            env, trajectories, recalculate_all_logprobs=recalculate_all_logprobs
+            trajectories, recalculate_all_logprobs=recalculate_all_logprobs, env=env
         )
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)
@@ -654,12 +655,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             "ModifiedDB": self.get_modified_db_contributions,
             "geometric_within": self.get_geometric_within_contributions,
         }
-        # Use dict.get + debug guard instead of try/except KeyError to avoid
-        # exception handling in the hot path, which causes graph breaks in torch.compile.
+        # Validate weighting unconditionally — this runs once per loss() call,
+        # not per-element, so it doesn't affect torch.compile hot paths.
         contributions_fn = weight_functions.get(self.weighting)
-        if self.debug and contributions_fn is None:
+        if contributions_fn is None:
             raise ValueError(f"Unknown weighting method {self.weighting}")
-        contributions = contributions_fn(trajectories)  # type: ignore[misc]
+        contributions = contributions_fn(trajectories)
 
         flat_contributions = contributions[~flattening_mask]
         if self.debug:

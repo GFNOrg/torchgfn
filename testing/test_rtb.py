@@ -34,6 +34,8 @@ def _make_hypergrid_estimators():
         preprocessor=preproc,
         is_backward=False,
     )
+    for p in pf_prior.parameters():
+        p.requires_grad_(False)
     return env, pf_post, pf_prior
 
 
@@ -171,6 +173,7 @@ def test_rel_lpv_matches_rtb_at_optimal_logz():
         optimal_logZ = -scores.mean()
         rtb_at_optimal = (0.5 * (scores + optimal_logZ).pow(2)).mean()
 
+        # atol=1e-5 accommodates float32 accumulation across the loss.
         lpv_loss = gfn_lpv.loss(env, trajectories, recalculate_all_logprobs=True)
 
     assert torch.allclose(rtb_at_optimal, lpv_loss, atol=1e-5)

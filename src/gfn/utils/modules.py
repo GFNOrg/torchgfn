@@ -1625,7 +1625,11 @@ class DiffusionPISTimeEncoding(nn.Module):
             nn.Linear(hidden_dim, t_emb_dim),
         )
         self.register_buffer(
-            "pe", torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None]
+            # Frequency range [0.1, 100] spans slow-varying to fast-varying
+            # harmonics, following the PIS/DIS time-encoding convention
+            # (Zhang & Chen 2021, arXiv:2111.15141).
+            "pe",
+            torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None],
         )
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
@@ -1689,7 +1693,7 @@ class DiffusionPISJointPolicy(nn.Module):
         return self.model(s_emb + t_emb)
 
 
-class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward policy
+class DiffusionPISGradNetForward(nn.Module):
     """PISGradNet for diffusion sampling.
 
     This architecture was first introduced in Path Integral Sampler (PIS) (https://arxiv.org/abs/2111.15141)

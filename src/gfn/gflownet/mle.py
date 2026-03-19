@@ -52,6 +52,7 @@ except Exception:  # pragma: no cover
         return fn
 
 
+from gfn.constants import DIFFUSION_TERMINAL_TIME_EPS
 from gfn.env import Env
 from gfn.estimators import (
     PinnedBrownianMotionBackward,
@@ -61,11 +62,6 @@ from gfn.gflownet.base import GFlowNet, loss_reduce
 from gfn.samplers import Sampler
 from gfn.states import States
 from gfn.utils.modules import DiffusionFixedBackwardModule
-
-# Relative tolerance for detecting initial/terminal states in diffusion trajectories.
-# Must be synchronized with TERMINAL_TIME_EPS in gfn.gym.diffusion_sampling and
-# _DIFFUSION_TERMINAL_TIME_EPS in gfn.estimators.
-_DIFFUSION_TERMINAL_TIME_EPS = 1e-2
 
 
 class MLEDiffusion(GFlowNet):
@@ -162,10 +158,9 @@ class MLEDiffusion(GFlowNet):
         assert dim == self.s_dim, f"Expected s_dim={self.s_dim}, got {dim}"
         dt = self.dt
 
-        # Tolerance for detecting initial state (t ≈ 0). Uses the module-level constant
-        # which must stay synchronized with TERMINAL_TIME_EPS in diffusion_sampling.py
-        # and _DIFFUSION_TERMINAL_TIME_EPS in estimators.py.
-        eps_s0 = dt * _DIFFUSION_TERMINAL_TIME_EPS
+        # Tolerance for detecting initial state (t ≈ 0). Uses the shared
+        # constant from gfn.constants, consistent across all modules.
+        eps_s0 = dt * DIFFUSION_TERMINAL_TIME_EPS
 
         sqrt_dt_t_scale = math.sqrt(dt * self.t_scale)
         base_std_fixed = self.sigma * sqrt_dt_t_scale

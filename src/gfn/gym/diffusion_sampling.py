@@ -1,8 +1,8 @@
 import logging
 import math
-import os
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Any, cast
 
 import matplotlib.pyplot as plt
@@ -12,6 +12,7 @@ import torch.distributions as D
 from scipy.stats import wishart
 
 from gfn.actions import Actions
+from gfn.constants import DIFFUSION_TERMINAL_TIME_EPS as TERMINAL_TIME_EPS
 from gfn.env import Env
 from gfn.gym.helpers.diffusion_utils import viz_2d_slice
 from gfn.states import States
@@ -21,17 +22,6 @@ logger = logging.getLogger(__name__)
 
 # Lightweight typing alias for the target registry entries.
 TargetEntry = tuple[type["BaseTarget"], dict[str, Any]]
-
-# Relative tolerance (scaled by dt) for detecting initial/terminal states in diffusion
-# trajectories. This ensures consistent boundary detection across the environment,
-# estimators, and probability calculations. The tolerance is applied as:
-#   - Initial state: t < dt * TERMINAL_TIME_EPS
-#   - Terminal state: t >= 1.0 - dt * TERMINAL_TIME_EPS
-#   - Exit action trigger: t + dt >= 1.0 - dt * TERMINAL_TIME_EPS (next step reaches terminal)
-TERMINAL_TIME_EPS = 1e-2
-
-# Default output directory for saving visualizations
-OUTPUT_DIR = "output"
 
 
 ###############################
@@ -133,6 +123,7 @@ class BaseTarget(ABC):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
+        output_dir: str | Path | None = None,
         grid_width_n_points: int = 100,
         max_n_samples: int = 1000,
     ) -> None:
@@ -142,6 +133,9 @@ class BaseTarget(ABC):
             samples: The samples to visualize.
             show: Whether to show the plot.
             prefix: The prefix for the plot file name.
+            output_dir: Directory to save the plot to. Required when
+                ``show=False``; when *None* and ``show=False`` the figure is
+                silently discarded.
             grid_width_n_points: The number of points along each axis of the
                 visualization grid.
             max_n_samples: The maximum number of samples to visualize.
@@ -316,6 +310,7 @@ class SimpleGaussianMixture(BaseTarget):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
+        output_dir: str | Path | None = None,
         grid_width_n_points: int = 100,
         max_n_samples: int = 500,
     ) -> None:
@@ -325,6 +320,7 @@ class SimpleGaussianMixture(BaseTarget):
             samples: The samples to visualize.
             show: Whether to show the plot.
             prefix: The prefix for the plot file name.
+            output_dir: Directory to save the plot to.
             grid_width_n_points: The number of points along each axis of the
                 visualization grid.
             max_n_samples: The maximum number of samples to visualize.
@@ -414,9 +410,10 @@ class SimpleGaussianMixture(BaseTarget):
 
         if show:
             plt.show()
-        else:
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            plt.savefig(f"{OUTPUT_DIR}/{prefix}simple_gmm.png")
+        elif output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            plt.savefig(output_dir / f"{prefix}simple_gmm.png")
 
         plt.close()
 
@@ -468,6 +465,7 @@ class Grid25GaussianMixture(BaseTarget):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
+        output_dir: str | Path | None = None,
         grid_width_n_points: int = 100,
         max_n_samples: int = 1000,
     ) -> None:
@@ -486,9 +484,10 @@ class Grid25GaussianMixture(BaseTarget):
         plt.tight_layout()
         if show:
             plt.show()
-        else:
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            fig.savefig(f"{OUTPUT_DIR}/{prefix}gmm25.png")
+        elif output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            fig.savefig(output_dir / f"{prefix}gmm25.png")
         plt.close()
 
 
@@ -554,6 +553,7 @@ class Posterior9of25GaussianMixture(BaseTarget):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
+        output_dir: str | Path | None = None,
         grid_width_n_points: int = 100,
         max_n_samples: int = 1000,
     ) -> None:
@@ -572,9 +572,10 @@ class Posterior9of25GaussianMixture(BaseTarget):
         plt.tight_layout()
         if show:
             plt.show()
-        else:
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            fig.savefig(f"{OUTPUT_DIR}/{prefix}posterior9of25.png")
+        elif output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            fig.savefig(output_dir / f"{prefix}posterior9of25.png")
         plt.close()
 
 
@@ -654,6 +655,7 @@ class Funnel(BaseTarget):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
+        output_dir: str | Path | None = None,
         grid_width_n_points: int = 100,
         max_n_samples: int = 500,
     ) -> None:
@@ -677,9 +679,10 @@ class Funnel(BaseTarget):
         plt.tight_layout()
         if show:
             plt.show()
-        else:
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            fig.savefig(f"{OUTPUT_DIR}/{prefix}funnel.png")
+        elif output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            fig.savefig(output_dir / f"{prefix}funnel.png")
 
         plt.close()
 
@@ -815,6 +818,7 @@ class ManyWell(BaseTarget):
         samples: torch.Tensor | None = None,
         show: bool = False,
         prefix: str = "",
+        output_dir: str | Path | None = None,
         grid_width_n_points: int = 100,
         max_n_samples: int = 500,
     ) -> None:
@@ -837,9 +841,10 @@ class ManyWell(BaseTarget):
         plt.tight_layout()
         if show:
             plt.show()
-        else:
-            os.makedirs(OUTPUT_DIR, exist_ok=True)
-            fig.savefig(f"{OUTPUT_DIR}/{prefix}manywell.png")
+        elif output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            fig.savefig(output_dir / f"{prefix}manywell.png")
 
         plt.close()
 

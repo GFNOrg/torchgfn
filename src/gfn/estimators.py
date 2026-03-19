@@ -9,6 +9,7 @@ from tensordict import TensorDict
 from torch.distributions import Categorical, Distribution
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.constants import DIFFUSION_TERMINAL_TIME_EPS
 from gfn.preprocessors import IdentityPreprocessor, Preprocessor
 from gfn.states import DiscreteStates, States
 from gfn.utils.distributions import (
@@ -27,12 +28,6 @@ REDUCTION_FUNCTIONS = {
     "sum": torch.sum,
     "prod": torch.prod,
 }
-
-# Relative tolerance for detecting terminal time in diffusion estimators.
-# Must match TERMINAL_TIME_EPS in gfn.gym.diffusion_sampling to ensure consistent
-# exit action detection between the estimator and environment. TODO: we should handle this
-# centrally somewhere.
-_DIFFUSION_TERMINAL_TIME_EPS = 1e-2
 
 
 class RolloutContext:
@@ -1436,12 +1431,11 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
                 (*batch_shape, s_dim).
             **policy_kwargs: Keyword arguments to modify the distribution. Supported
                 keys:
-                - exploration_std: Optional callable or float controlling extra
-                  exploration noise on top of the base diffusion std. The callable
-                  should accept an integer step index and return a non-negative
-                  standard deviation in state space. When provided, the extra noise
-                  is combined in variance-space (logaddexp) with the base diffusion
-                  variance; non-positive exploration is ignored.
+                - exploration_std: Optional float or Tensor controlling extra
+                  exploration noise on top of the base diffusion std. When
+                  provided, the extra noise is combined in variance-space
+                  (logaddexp) with the base diffusion variance; non-positive
+                  values are ignored.
 
         Returns:
             A IsotropicGaussian distribution (distribution of the next states)
@@ -1454,7 +1448,7 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         # This matches the exit condition in DiffusionSampling.step() and ensures the
         # sampled action is marked as an exit action (-inf) so trajectory masks align
         # correctly in get_trajectory_pbs.
-        eps = self.dt * _DIFFUSION_TERMINAL_TIME_EPS
+        eps = self.dt * DIFFUSION_TERMINAL_TIME_EPS
         is_final_step = (t_curr + self.dt) >= (1.0 - eps)
 
         module_output = torch.where(
@@ -1492,6 +1486,8 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         # Combine base diffusion variance σ_base^2 with exploration variance σ_expl^2:
         # σ_combined = sqrt(σ_base^2 + σ_expl^2). torch.compile friendly.
         base_log_var = 2 * fwd_std.log()  # log(σ_base^2)
+        # 1e-12 clamp prevents log(0) when exploration_std is exactly zero;
+        # the torch.where below ensures fwd_std is unchanged in that case.
         extra_log_var = 2 * exploration_std_t.clamp(min=1e-12).log()  # log(σ_expl^2)
         extra_log_var_tensor = extra_log_var.expand_as(base_log_var)
         combined_log_var = torch.logaddexp(base_log_var, extra_log_var_tensor)
@@ -1522,7 +1518,9 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
             sigma: The diffusion coefficient parameter for the pinned Brownian motion.
             num_discretization_steps: The number of discretization steps.
             n_variance_outputs: Number of variance outputs (0=fixed, 1=learned corr).
-            pb_scale_range: Scaling applied to learned corrections (tanh-bounded).
+            pb_scale_range: Scaling factor applied to learned mean and variance
+                corrections. Bounds effective corrections to [-pb_scale_range,
+                +pb_scale_range] when module outputs are in [-1, 1].
         """
         super().__init__(s_dim=s_dim, module=pb_module, is_backward=True)
 
@@ -1551,7 +1549,7 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
     def to_probability_distribution(
         self,
         states: States,
-        module_output: torch.Tensor,  # TODO: support learnable backward mean and var
+        module_output: torch.Tensor,
         **policy_kwargs: Any,
         # TODO: add epsilon-noisy exploration
     ) -> IsotropicGaussian:
@@ -1581,13 +1579,17 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         # At t=dt these naturally give base_mean=s_curr (deterministic return to origin)
         # and base_std=0. Clamp t_curr away from zero to avoid division by zero; at t=0
         # the backward policy is never evaluated (s0 is excluded by get_trajectory_pbs).
+        # Clamp t away from zero to prevent division-by-zero in the Brownian
+        # bridge formula.  The threshold dt*1e-4 is chosen to be well below dt
+        # (so it never triggers for valid t >= dt) while staying above float32
+        # denormal range (~1e-38).
         t_safe = t_curr.clamp(min=self.dt * 1e-4)
         base_mean = s_curr * self.dt / t_safe
         base_std = (
             self.sigma * (self.dt * (t_safe - self.dt).clamp(min=0.0) / t_safe).sqrt()
         )
 
-        # Optional learned corrections (tanh-bounded); when n_variance_outputs==0, only mean corr.
+        # Optional learned corrections scaled by pb_scale_range; when n_variance_outputs==0, only mean corr.
         mean_corr = module_output[..., : self.s_dim] * self.pb_scale_range
         if self.n_variance_outputs > 0 and module_output.shape[-1] >= self.s_dim + 1:
             log_std_corr = module_output[..., [-1]] * self.pb_scale_range

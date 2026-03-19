@@ -4,6 +4,7 @@ and the [Log Partition Variance loss](https://arxiv.org/abs/2302.05446).
 """
 
 import math
+from logging import warning
 from typing import cast
 
 import torch
@@ -83,21 +84,8 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
 
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
 
-    def logz_named_parameters(self) -> dict[str, torch.Tensor]:
-        """Returns a dictionary of named parameters containing 'logZ' in their name.
-
-        Returns:
-            A dictionary of named parameters containing 'logZ' in their name.
-        """
-        return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}
-
-    def logz_parameters(self) -> list[torch.Tensor]:
-        """Returns a list of parameters containing 'logZ' in their name.
-
-        Returns:
-            A list of parameters containing 'logZ' in their name.
-        """
-        return [v for k, v in dict(self.named_parameters()).items() if "logZ" in k]
+    # logz_named_parameters() and logz_parameters() are inherited from
+    # TrajectoryBasedGFlowNet — they filter self.named_parameters() for 'logZ'.
 
     def loss(
         self,
@@ -170,6 +158,18 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
         debug: bool = False,
         loss_fn: RegressionLoss | None = None,
     ):
+        """Initializes the shared RTB base.
+
+        Args:
+            pf: Posterior forward policy estimator (trainable).
+            prior_pf: Fixed prior forward policy estimator.  All parameters
+                must have ``requires_grad=False``; the constructor enforces
+                this and raises if any are trainable.
+            beta: Reward scaling factor.
+            log_reward_clip_min: If finite, clips terminal log-rewards.
+            debug: If True, enables extra runtime checks.
+            loss_fn: Regression loss applied to balance residuals.
+        """
         super().__init__(
             pf=pf,
             pb=None,
@@ -178,12 +178,34 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
             debug=debug,
             loss_fn=loss_fn,
         )
+
+        # Enforce that the prior is frozen.  A trainable prior would silently
+        # receive gradients through the RTB loss (despite torch.no_grad() on
+        # the forward pass) if its parameters were accidentally shared.
+        trainable = [n for n, p in prior_pf.named_parameters() if p.requires_grad]
+        if trainable:
+            raise ValueError(
+                f"prior_pf has {len(trainable)} trainable parameter(s) "
+                f"(first: {trainable[0]!r}).  Freeze all prior parameters with "
+                f"`for p in prior_pf.parameters(): p.requires_grad_(False)` "
+                f"before constructing the RTB objective."
+            )
+
         # Store the prior as a plain attribute (not an nn.Module submodule)
         # so that its parameters don't leak into self.parameters() /
         # self.pf_pb_named_parameters().  The prior is frozen and evaluated
-        # under torch.no_grad() in loss(); registering it would silently
-        # include its weights in optimizer state dicts and checkpoints.
+        # under torch.no_grad() in _compute_rtb_scores(); registering it as a
+        # submodule would silently include its weights in optimizer state dicts
+        # and checkpoints.
         object.__setattr__(self, "_prior_pf", prior_pf)
+        if beta == 0.0:
+            import warnings
+
+            warnings.warn(
+                "beta=0 makes the RTB loss insensitive to rewards. "
+                "This is valid but unusual — verify this is intended.",
+                stacklevel=2,
+            )
         self.register_buffer("beta", torch.tensor(beta))
 
     @property
@@ -197,9 +219,9 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
 
     def get_scores(
         self,
-        env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
+        env: Env | None = None,
     ) -> torch.Tensor:
         """RTB residuals (without logZ): ``log_pf_post - log_pf_prior - beta * log_R``.
 
@@ -213,7 +235,7 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
 
     def _compute_rtb_scores(
         self,
-        env: Env,
+        env: Env | None,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
@@ -232,6 +254,8 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
         ).sum(dim=0)
 
         # Prior log-probs (T, N) → sum to (N,), detached.
+        # Always recalculate: the prior is frozen so there are no cached
+        # logprobs to reuse, and we need fresh evaluations under the prior.
         with torch.no_grad():
             log_pf_prior = get_trajectory_pfs(
                 self.prior_pf,
@@ -240,13 +264,13 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
                 recalculate_all_logprobs=True,
             ).sum(dim=0)
 
-        log_rewards = trajectories.log_rewards
         if self.debug:
-            assert log_rewards is not None
+            assert trajectories.log_rewards is not None
+        log_rewards = cast(torch.Tensor, trajectories.log_rewards)
         if math.isfinite(self.log_reward_clip_min):
-            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)  # type: ignore
+            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
-        return log_pf_post - log_pf_prior - self.beta * log_rewards  # type: ignore
+        return log_pf_post - log_pf_prior - cast(torch.Tensor, self.beta) * log_rewards
 
 
 class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
@@ -302,13 +326,8 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
         )
         self.logZ = logZ or nn.Parameter(torch.tensor(init_logZ))
 
-    def logz_named_parameters(self) -> dict[str, torch.Tensor]:
-        """Returns named parameters containing 'logZ'."""
-        return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}
-
-    def logz_parameters(self) -> list[torch.Tensor]:
-        """Returns parameters containing 'logZ'."""
-        return [v for k, v in dict(self.named_parameters()).items() if "logZ" in k]
+    # logz_named_parameters() and logz_parameters() are inherited from
+    # TrajectoryBasedGFlowNet — they filter self.named_parameters() for 'logZ'.
 
     def loss(
         self,
@@ -423,25 +442,46 @@ class TrustPCLGFlowNet(RelativeTrajectoryBalanceGFlowNet):
         Args:
             policy: The trainable policy :math:`\\pi_\\phi` (= RTB posterior).
             reference_policy: The fixed reference policy :math:`\\pi_{\\text{ref}}`
-                (= RTB prior). Not trained; evaluated under ``torch.no_grad()``.
-            alpha: Trust-PCL temperature. Controls the strength of KL
-                regularization toward the reference policy. Corresponds to
-                ``1/beta`` in RTB.  Higher alpha → more regularization
+                (= RTB prior).  Must have all parameters frozen
+                (``requires_grad=False``); evaluated under ``torch.no_grad()``.
+            alpha: Trust-PCL temperature (must be > 0). Controls the strength
+                of KL regularization toward the reference policy. Corresponds
+                to ``1/beta`` in RTB.  Higher alpha → more regularization
                 (policy stays closer to reference).
             init_v_soft_s0: Initial value for the soft value function at
                 :math:`s_0`.  Converted to ``logZ = v_soft_s0 / alpha``
-                internally.
-            logZ: Optional explicit logZ parameter (overrides init_v_soft_s0
-                if provided). For advanced use / conditional settings.
+                internally.  Mutually exclusive with ``logZ``.
+            logZ: Explicit logZ parameter for advanced use (e.g. conditional
+                generation with a :class:`ScalarEstimator`).  Mutually
+                exclusive with ``init_v_soft_s0``.
             log_reward_clip_min: If finite, clips terminal log-rewards.
             debug: If True, enables extra runtime checks.
             loss_fn: Regression loss applied to balance residuals.
                 Defaults to :class:`~gfn.gflownet.losses.HalfSquaredLoss`.
+
+        Raises:
+            ValueError: If ``alpha <= 0`` or if both ``logZ`` and a non-default
+                ``init_v_soft_s0`` are provided.
         """
+        if alpha <= 0:
+            raise ValueError(f"alpha must be > 0, got {alpha}")
+        if logZ is not None and init_v_soft_s0 != 0.0:
+            raise ValueError(
+                "logZ and init_v_soft_s0 are mutually exclusive. "
+                "Pass logZ directly for conditional generation or advanced use; "
+                "otherwise set init_v_soft_s0 and let the constructor derive logZ."
+            )
         beta = 1.0 / alpha
         init_logZ = (
             init_v_soft_s0 * beta
         )  # v_soft = alpha * logZ → logZ = v / alpha = v * beta
+
+        if not isinstance(logZ, type(None)) and init_logZ != 0.0:
+            # If logZ is explicitly provided, we ignore init_v_soft_s0 and use logZ directly.
+            warning.warn(
+                "TrustPCLGFlowNet's init_v_soft_s0 is ignored because logZ is explicitly provided. Ensure this is intentional."
+            )
+
         super().__init__(
             pf=policy,
             prior_pf=reference_policy,
@@ -486,6 +526,10 @@ class TrustPCLGFlowNet(RelativeTrajectoryBalanceGFlowNet):
                                           {\pi_\phi(a_t|s_t)}
             \right]
 
+        The KL regularization term :math:`\alpha \log(\pi_{\text{ref}} / \pi_\phi)`
+        in the sum emerges from the ratio of prior to posterior log-probabilities
+        in the RTB balance condition.
+
         Monitoring this value during training shows how the expected
         (regularized) return evolves.  At convergence it equals
         :math:`\alpha \log \int p_\\theta(x)\,r(x)\,dx`.
@@ -493,9 +537,12 @@ class TrustPCLGFlowNet(RelativeTrajectoryBalanceGFlowNet):
         logZ = self.logZ
         if isinstance(logZ, ScalarEstimator):
             raise ValueError(
-                "v_soft_s0 is not available for conditional logZ without "
-                "conditions. Use alpha * logZ(conditions) directly."
+                "v_soft_s0 cannot be computed when logZ is a ScalarEstimator "
+                "(conditional logZ). Compute alpha * logZ(conditions) manually "
+                "via self.alpha and self.logZ."
             )
+        # Detach so that accessing v_soft_s0 for monitoring does not
+        # accidentally create a gradient path through logZ.
         return self.alpha * cast(torch.Tensor, logZ).detach()
 
     def loss(

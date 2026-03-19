@@ -19,6 +19,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import torch
 from tqdm import tqdm
+from tutorials.examples import EXAMPLES_OUTPUTS
 
 from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
 from gfn.gflownet import RelativeTrajectoryBalanceGFlowNet
@@ -36,11 +37,13 @@ from gfn.utils.modules import (
 
 def resolve_output_paths(args: argparse.Namespace) -> argparse.Namespace:
     """Resolve all output paths relative to this script's directory."""
-    script_dir = Path(__file__).resolve().parent
-    output_dir = Path(args.output_dir)
-    if not output_dir.is_absolute():
-        output_dir = script_dir / output_dir
-    output_dir = output_dir.expanduser().resolve()
+    if args.output_dir is not None:
+        output_dir = Path(args.output_dir).expanduser().resolve()
+        if not output_dir.is_absolute():
+            script_dir = Path(__file__).resolve().parent
+            output_dir = script_dir / output_dir
+    else:
+        output_dir = EXAMPLES_OUTPUTS
     output_dir.mkdir(parents=True, exist_ok=True)
 
     args.output_dir = output_dir
@@ -535,7 +538,7 @@ if __name__ == "__main__":
         (("--log_interval",), {"type": int, "default": 100}),
         (("--eval_n",), {"type": int, "default": 500}),
         (("--vis_n",), {"type": int, "default": 2000, "help": "Samples for final plot"}),
-        (("--output_dir",), {"type": str, "default": "output", "help": "relative output dir"}),
+        (("--output_dir",), {"type": str, "default": None, "help": "output dir (default: EXAMPLES_OUTPUTS)"}),
     ]
 
     add_arg_group(parser, system_args)

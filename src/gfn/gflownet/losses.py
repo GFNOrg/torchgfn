@@ -60,6 +60,12 @@ class RegressionLoss(ABC):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"
 
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other)
+
+    def __hash__(self) -> int:
+        return hash(type(self))
+
 
 class SquaredLoss(RegressionLoss):
     r"""Standard squared loss: :math:`g(t) = t^2`.
@@ -165,3 +171,9 @@ class LinexLoss(RegressionLoss):
 
     def __repr__(self) -> str:
         return f"LinexLoss(alpha={self.alpha})"
+
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other) and self.alpha == other.alpha  # type: ignore[attr-defined]
+
+    def __hash__(self) -> int:
+        return hash((type(self), self.alpha))

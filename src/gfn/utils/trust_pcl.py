@@ -63,8 +63,11 @@ Rearranging with :math:`V^{\text{soft}}_\psi(s_0) = \alpha \log Z_\psi`:
     = 0
 
 This is exactly the Trust-PCL consistency condition (Nachum et al. 2017,
-Equation 3), where the KL regularization term emerges naturally from the
-ratio of prior to posterior log-probabilities.
+Equation 3).  The KL regularization term
+:math:`\alpha \sum_t \log(\pi_{\text{ref}} / \pi_\phi)` emerges naturally
+from the ratio of prior to posterior trajectory log-probabilities in the
+original RTB equation — no separate KL penalty is added; it is an intrinsic
+consequence of the balance condition.
 
 References:
     Deleu et al. "Relative Trajectory Balance is equivalent to Trust-PCL"

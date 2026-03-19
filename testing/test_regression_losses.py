@@ -200,6 +200,8 @@ def test_rtb_with_shifted_cosh():
         preprocessor=preproc,
         is_backward=False,
     )
+    for p in pf_prior.parameters():
+        p.requires_grad_(False)
 
     gfn = RelativeTrajectoryBalanceGFlowNet(
         pf=pf_post,

@@ -17,6 +17,29 @@ from gfn.utils.handlers import (
 from gfn.utils.prob_calculations import get_transition_pfs_and_pbs
 
 
+def _call_estimator_with_conditions(
+    estimator: Estimator,
+    name: str,
+    states: States,
+    conditions: torch.Tensor | None,
+) -> torch.Tensor:
+    """Call an estimator with or without conditions, using the appropriate handler.
+
+    This centralises the repeated if/else pattern for condition-aware estimator
+    calls.  The exception handlers add diagnostic context (estimator name and
+    type) if a TypeError is raised due to a conditions mismatch.
+
+    The function is deliberately thin (no branching beyond the conditions
+    check) so that it does not introduce extra graph breaks for torch.compile.
+    """
+    if conditions is not None:
+        with has_conditions_exception_handler(name, estimator):
+            return estimator(states, conditions)
+    else:
+        with no_conditions_exception_handler(name, estimator):
+            return estimator(states)
+
+
 def check_compatibility(
     states: States, actions: Actions, transitions: Transitions
 ) -> None:
@@ -221,14 +244,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         # Compute log_pf and log_pb
         log_pf, log_pb = self.get_pfs_and_pbs(transitions, recalculate_all_logprobs)
 
-        # Compute log_F_s
-        # LogF is potentially a conditional computation.
-        if conditions is not None:
-            with has_conditions_exception_handler("logF", self.logF):
-                log_F_s = self.logF(states, conditions).squeeze(-1)
-        else:
-            with no_conditions_exception_handler("logF", self.logF):
-                log_F_s = self.logF(states).squeeze(-1)
+        # Compute log_F_s (LogF is potentially a conditional computation).
+        log_F_s = _call_estimator_with_conditions(
+            self.logF, "logF", states, conditions
+        ).squeeze(-1)
 
         # Compute log_F_s_next
         # Preallocate once and fill; write terminating rewards first to avoid an extra zero fill.
@@ -248,16 +267,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         if torch.any(is_intermediate):
             interm_idx = is_intermediate.nonzero(as_tuple=True)[0]
             interm_next_states = next_states[interm_idx]
-            # log_F is potentially a conditional computation.
-            if conditions is not None:
-                with has_conditions_exception_handler("logF", self.logF):
-                    log_F_s_next[interm_idx] = self.logF(
-                        interm_next_states,
-                        conditions[interm_idx],
-                    ).squeeze(-1)
-            else:
-                with no_conditions_exception_handler("logF", self.logF):
-                    log_F_s_next[interm_idx] = self.logF(interm_next_states).squeeze(-1)
+            interm_conditions = (
+                conditions[interm_idx] if conditions is not None else None
+            )
+            log_F_s_next[interm_idx] = _call_estimator_with_conditions(
+                self.logF, "logF", interm_next_states, interm_conditions
+            ).squeeze(-1)
 
         # Apply forward-looking if applicable
         if self.forward_looking:
@@ -434,12 +449,10 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
 
         # Single pf forward for current states; reuse the resulting distribution for both
         # taken-action log-probs and exit-action log-probs to avoid extra forwards.
-        if conditions is not None:
-            with has_conditions_exception_handler("pf", self.pf):
-                pf_outputs = self.pf(states, conditions[mask])
-        else:
-            with no_conditions_exception_handler("pf", self.pf):
-                pf_outputs = self.pf(states)
+        masked_conditions = conditions[mask] if conditions is not None else None
+        pf_outputs = _call_estimator_with_conditions(
+            self.pf, "pf", states, masked_conditions
+        )
 
         if len(states) == 0:
             return torch.tensor(0.0, device=transitions.device)
@@ -464,13 +477,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         # Reuse the exit_action tensor and create the next-state distribution once; this
         # avoids an additional forward or repeated log_prob calls.
         if len(valid_next_states) > 0:
-            if conditions is not None:
-                with has_conditions_exception_handler("pf", self.pf):
-                    pf_next_outputs = self.pf(valid_next_states, conditions[mask])
-            else:
-                with no_conditions_exception_handler("pf", self.pf):
-                    pf_next_outputs = self.pf(valid_next_states)
-
+            pf_next_outputs = _call_estimator_with_conditions(
+                self.pf, "pf", valid_next_states, masked_conditions
+            )
             pf_next_dist = self.pf.to_probability_distribution(
                 valid_next_states, pf_next_outputs
             )
@@ -482,12 +491,9 @@ class ModifiedDBGFlowNet(PFBasedGFlowNet[Transitions]):
         non_exit_actions = actions[~actions.is_exit]
 
         if self.pb is not None:
-            if conditions is not None:
-                with has_conditions_exception_handler("pb", self.pb):
-                    module_output = self.pb(valid_next_states, conditions[mask])
-            else:
-                with no_conditions_exception_handler("pb", self.pb):
-                    module_output = self.pb(valid_next_states)
+            module_output = _call_estimator_with_conditions(
+                self.pb, "pb", valid_next_states, masked_conditions
+            )
 
             valid_log_pb_actions = self.pb.to_probability_distribution(
                 valid_next_states, module_output

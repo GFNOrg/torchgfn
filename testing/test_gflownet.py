@@ -354,7 +354,7 @@ def test_subtb_get_scores_vectorized_matches_original(seed: int):
         model, env, trajectories, recalculate_all_logprobs=True
     )
     vec_scores, vec_masks = model.get_scores(
-        env, trajectories, recalculate_all_logprobs=True
+        trajectories, recalculate_all_logprobs=True, env=env
     )  # type: ignore
 
     vec_scores_t, vec_masks_t = normalize_scores_masks(

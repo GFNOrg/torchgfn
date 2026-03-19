@@ -14,7 +14,6 @@ Key differences from the full version:
 """
 
 import argparse
-import os
 from typing import cast
 
 import matplotlib.pyplot as plt
@@ -22,6 +21,7 @@ import pandas as pd
 import seaborn as sns
 import torch
 from tqdm import tqdm
+from tutorials.examples import EXAMPLES_OUTPUTS
 
 from gfn.containers import ReplayBuffer
 from gfn.containers.trajectories import Trajectories
@@ -477,8 +477,8 @@ def main(args):
 
         plt.tight_layout()
 
-        home_dir = os.path.expanduser("~")
-        output_path = os.path.join(home_dir, "exploration_comparison.png")
+        EXAMPLES_OUTPUTS.mkdir(parents=True, exist_ok=True)
+        output_path = EXAMPLES_OUTPUTS / "exploration_comparison.png"
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close()
 

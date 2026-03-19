@@ -13,8 +13,8 @@ import math
 import pytest
 import torch
 
+from gfn.constants import DIFFUSION_TERMINAL_TIME_EPS
 from gfn.estimators import (
-    _DIFFUSION_TERMINAL_TIME_EPS,
     PinnedBrownianMotionBackward,
     PinnedBrownianMotionForward,
 )
@@ -73,7 +73,7 @@ def _make_env_and_pf(
 
 def test_estimator_eps_matches_environment_eps():
     """If these drift apart the estimator and env disagree on terminal time."""
-    assert _DIFFUSION_TERMINAL_TIME_EPS == TERMINAL_TIME_EPS
+    assert DIFFUSION_TERMINAL_TIME_EPS == TERMINAL_TIME_EPS
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +217,7 @@ def test_no_premature_exit_near_boundary():
     num_steps = 10
     env, pf = _make_env_and_pf(num_steps=num_steps)
     dt = pf.dt
-    eps = dt * _DIFFUSION_TERMINAL_TIME_EPS
+    eps = dt * DIFFUSION_TERMINAL_TIME_EPS
     s_dim = 2
 
     # t = (N-2)*dt: one full step before the exit step. This must NOT exit.
