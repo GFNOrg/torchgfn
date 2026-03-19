@@ -953,19 +953,16 @@ class DiffusionSampling(Env):
 
             @property
             def is_sink_state(self) -> torch.Tensor:
-                """Return True when time is effectively 1.0 or the sink padding.
+                """Return True only for actual sink/padding states (non-finite time).
 
-                We treat two cases as sink:
-                - Physical terminal time: t >= 1.0 - eps.
-                - Padding/exit sink states produced by `make_sink_states`, which use
-                  non-finite sentinel values (e.g., -inf). Using non-finite check keeps
-                  masks aligned for padded rows.
+                States at physical terminal time (t >= 1.0 - eps) are NOT sinks —
+                they are valid states from which the EXIT action is taken. Only the
+                sf padding (non-finite time, produced by make_sink_states via _step)
+                is a true sink. Classifying t=1.0 as sink would break mask alignment
+                in get_trajectory_pfs when evaluating reversed backward trajectories,
+                where the t=1.0 state is a real state co-located with the EXIT action.
                 """
-                time = self.tensor[..., -1]
-                eps = env.dt * TERMINAL_TIME_EPS
-                is_terminal_time = time >= (1.0 - eps)
-                is_padding_sink = ~torch.isfinite(time)
-                return is_terminal_time | is_padding_sink
+                return ~torch.isfinite(self.tensor[..., -1])
 
         return DiffusionSamplingStates
 

@@ -1456,9 +1456,6 @@ class PinnedBrownianMotionForward(DiffusionPolicyEstimator):  # TODO: support OU
         # correctly in get_trajectory_pbs.
         eps = self.dt * _DIFFUSION_TERMINAL_TIME_EPS
         is_final_step = (t_curr + self.dt) >= (1.0 - eps)
-        # TODO: The old code followed this convention (below). I believe the change
-        #       is slightly more correct, but I'd like to check this during review.
-        # (1.0 - t_curr) < self.dt * 1e-2  # Triggers when t_curr ≈ 1.0
 
         module_output = torch.where(
             is_final_step,
@@ -1575,23 +1572,19 @@ class PinnedBrownianMotionBackward(DiffusionPolicyEstimator):  # TODO: support O
         """
         assert len(states.batch_shape) == 1, "States must have a batch_shape of length 1"
         s_curr = states.tensor[:, :-1]
-        t_curr = states.tensor[:, [-1]]  # shape: (*batch_shape,)
+        t_curr = states.tensor[:, [-1]]  # shape: (B, 1)
 
-        is_s0 = (t_curr - self.dt) < self.dt * 1e-2  # s0 case; when t_curr - dt is 0.0
-        # Analytic Brownian bridge base
-        # Brownian bridge mean toward 0 at t=0:
-        # E[s_{t-dt} | s_t] = s_t * (1 - dt / t) and collapses to 0 at the start.
-        # Here, we calculate the *action* which moves the state in expectation toward 0
-        # at t=0, so we scale s_curr by our distance to t=0.
-        base_mean = torch.where(
-            is_s0,
-            torch.zeros_like(s_curr),
-            s_curr * self.dt / t_curr,  # s_curr (B, s_dim), t_curr (B, 1), dt scalar.
-        )
-        base_std = torch.where(
-            is_s0,
-            torch.zeros_like(t_curr),
-            self.sigma * (self.dt * (t_curr - self.dt) / t_curr).sqrt(),
+        # Analytic Brownian bridge pinned at s=0, t=0.
+        # The backward action is a = s_t - s_{t-dt}, applied as s_{t-dt} = s_t - a.
+        # E[a] = s_t * dt / t;  Std[a] = σ * sqrt(dt * (t - dt) / t)
+        #
+        # At t=dt these naturally give base_mean=s_curr (deterministic return to origin)
+        # and base_std=0. Clamp t_curr away from zero to avoid division by zero; at t=0
+        # the backward policy is never evaluated (s0 is excluded by get_trajectory_pbs).
+        t_safe = t_curr.clamp(min=self.dt * 1e-4)
+        base_mean = s_curr * self.dt / t_safe
+        base_std = (
+            self.sigma * (self.dt * (t_safe - self.dt).clamp(min=0.0) / t_safe).sqrt()
         )
 
         # Optional learned corrections (tanh-bounded); when n_variance_outputs==0, only mean corr.
