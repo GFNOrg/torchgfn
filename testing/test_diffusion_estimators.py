@@ -1,5 +1,6 @@
 import math
 
+import pytest
 import torch
 
 from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
@@ -66,10 +67,12 @@ def test_diffusion_pis_gradnet_backward_scales_and_clamps_outputs():
     log_std = out[..., -1]
 
     assert out.shape == (1, s_dim + 1)
-    assert torch.all(torch.abs(drift) <= pb_scale_range + 1e-6)
+    # Module now outputs tanh-bounded values WITHOUT pb_scale_range scaling;
+    # the estimator (PinnedBrownianMotionBackward) applies pb_scale_range.
+    assert torch.all(torch.abs(drift) <= 1.0 + 1e-6)
     assert torch.allclose(
         drift[0, 0],
-        torch.tanh(torch.tensor(3.0)) * pb_scale_range,
+        torch.tanh(torch.tensor(3.0)),
         atol=1e-4,
     )
     # Log-std correction is tanh-bounded then clamped to log_var_range.
@@ -156,9 +159,18 @@ def test_pinned_brownian_forward_exit_condition_matches_steps():
     assert torch.equal(exit_mask, expected)
 
 
-def test_pinned_brownian_forward_combines_exploration_variance():
+@pytest.mark.parametrize(
+    "sigma, num_steps, exploration_std",
+    [
+        (1.0, 5, 0.4),
+        (2.0, 4, 0.1),
+        (0.5, 8, 0.8),
+    ],
+)
+def test_pinned_brownian_forward_combines_exploration_variance(
+    sigma, num_steps, exploration_std
+):
     s_dim = 2
-    num_steps = 5
     env = DiffusionSampling(
         target_str="gmm2",
         target_kwargs={"seed": 1},
@@ -173,14 +185,13 @@ def test_pinned_brownian_forward_combines_exploration_variance():
     pf = PinnedBrownianMotionForward(
         s_dim=s_dim,
         pf_module=pf_module,
-        sigma=1.0,
+        sigma=sigma,
         num_discretization_steps=num_steps,
         n_variance_outputs=1,
     )
 
     states = env.states_from_tensor(torch.tensor([[0.0, 0.0, 0.0]], dtype=torch.float32))
-    base_std = math.sqrt(pf.dt)  # log_std=0 -> exp(0) * sqrt(dt)
-    exploration_std = 0.4
+    base_std = math.sqrt(pf.dt)  # n_variance_outputs>0: exp(0) * sqrt(dt), sigma unused
     dist = pf.to_probability_distribution(
         states, pf(states), exploration_std=exploration_std
     )
@@ -189,11 +200,19 @@ def test_pinned_brownian_forward_combines_exploration_variance():
     assert torch.allclose(dist.scale, torch.full_like(dist.scale, expected), atol=1e-6)
 
 
-def test_pinned_brownian_backward_applies_corrections_and_quadrature():
+@pytest.mark.parametrize(
+    "pb_scale_range, sigma, num_steps, t_curr",
+    [
+        (0.2, 1.5, 4, 0.5),
+        (0.5, 1.0, 4, 0.5),
+        (0.1, 2.0, 8, 0.25),
+        (0.3, 0.5, 6, 0.75),
+    ],
+)
+def test_pinned_brownian_backward_applies_corrections_and_quadrature(
+    pb_scale_range, sigma, num_steps, t_curr
+):
     s_dim = 2
-    num_steps = 4
-    pb_scale_range = 0.2
-    sigma = 1.5
     env = DiffusionSampling(
         target_str="gmm2",
         target_kwargs={"seed": 2},
@@ -214,7 +233,6 @@ def test_pinned_brownian_backward_applies_corrections_and_quadrature():
         pb_scale_range=pb_scale_range,
     )
 
-    t_curr = 0.5
     states = env.states_from_tensor(
         torch.tensor([[0.5, -0.25, t_curr]], dtype=torch.float32)
     )
@@ -225,8 +243,10 @@ def test_pinned_brownian_backward_applies_corrections_and_quadrature():
     base_mean = s_curr * dt / t_curr
     base_std = sigma * math.sqrt(dt * (t_curr - dt) / t_curr)
 
-    expected_mean = base_mean + torch.tensor([[1.0, -1.0]], dtype=torch.float32)
-    expected_std = math.sqrt(base_std**2 + math.exp(pb_scale_range) ** 2)
+    # Constant module outputs [5.0, -5.0, 1.0]; estimator scales by pb_scale_range.
+    raw_drift = torch.tensor([[5.0, -5.0]], dtype=torch.float32)
+    expected_mean = base_mean + raw_drift * pb_scale_range
+    expected_std = math.sqrt(base_std**2 + math.exp(1.0 * pb_scale_range) ** 2)
 
     assert torch.allclose(dist.loc, expected_mean, atol=1e-6)
     assert torch.allclose(

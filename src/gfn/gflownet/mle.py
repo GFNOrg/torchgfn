@@ -57,7 +57,7 @@ from gfn.estimators import (
     PinnedBrownianMotionBackward,
     PinnedBrownianMotionForward,
 )
-from gfn.gflownet.base import GFlowNet
+from gfn.gflownet.base import GFlowNet, loss_reduce
 from gfn.samplers import Sampler
 from gfn.states import States
 from gfn.utils.modules import DiffusionFixedBackwardModule
@@ -253,8 +253,7 @@ class MLEDiffusion(GFlowNet):
         if self.debug and torch.isnan(logpf_sum).any():
             raise ValueError("NaNs in logpf_sum during MLE loss.")
 
-        # TODO: Use included loss reduction helpers.
-        loss = -(logpf_sum.mean() if self.reduction == "mean" else logpf_sum.sum())
+        loss = -loss_reduce(logpf_sum, self.reduction)
         if self.debug:
             self._assert_no_nan(logpf_sum)
         return loss

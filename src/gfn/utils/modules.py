@@ -1907,10 +1907,12 @@ class DiffusionPISGradNetBackward(nn.Module):
         if self.clipping:
             out = torch.clamp(out, -self.gfn_clip, self.gfn_clip)
 
-        # Tanh-scale to stay near Brownian bridge; last dim (if present) is log-std corr.
-        drift_corr = torch.tanh(out[..., : self.s_dim]) * self.pb_scale_range
+        # Tanh-bound outputs to [-1, 1]; the estimator
+        # (PinnedBrownianMotionBackward.to_probability_distribution) applies the
+        # actual pb_scale_range scaling, so we must NOT scale here.
+        drift_corr = torch.tanh(out[..., : self.s_dim])
         if self.learn_variance and out.shape[-1] == self.s_dim + 1:
-            log_std_corr = torch.tanh(out[..., [-1]]) * self.pb_scale_range
+            log_std_corr = torch.tanh(out[..., [-1]])
             log_std_corr = torch.clamp(
                 log_std_corr, -self.log_var_range, self.log_var_range
             )
