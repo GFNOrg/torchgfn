@@ -23,6 +23,7 @@ During validation:
 Example usage:
 python train_conditional.py --ndim 2 --height 8 --epsilon 0.1
 """
+
 from argparse import ArgumentParser
 from typing import cast
 

@@ -489,7 +489,7 @@ def test_reverse_backward_trajectories(
     "env_name", ["HyperGrid", "DiscreteEBM", "Box", "ConditionalHyperGrid"]
 )
 def test_local_search_for_loop_equivalence(
-    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "ConditionalHyperGrid"]
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "ConditionalHyperGrid"],
 ):
     """
     Ensures that the vectorized `LocalSearchSampler.local_search` matches
@@ -779,7 +779,7 @@ class _SeqStates:
 
 @pytest.mark.parametrize("rnn_type", ["lstm", "gru"])
 def test_integration_recurrent_sequence_model_with_adapter(
-    rnn_type: Literal["lstm", "gru"]
+    rnn_type: Literal["lstm", "gru"],
 ) -> None:
     device = torch.device("cpu")
     batch_size = 3
@@ -839,7 +839,7 @@ def test_integration_recurrent_sequence_model_with_adapter(
 
 @pytest.mark.parametrize("positional_embedding", ["learned", "sinusoidal"])
 def test_integration_transformer_sequence_model_with_adapter(
-    positional_embedding: Literal["learned", "sinusoidal"]
+    positional_embedding: Literal["learned", "sinusoidal"],
 ) -> None:
     device = torch.device("cpu")
     batch_size = 2
