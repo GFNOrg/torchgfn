@@ -371,6 +371,8 @@ class HyperGrid(DiscreteEnv):
         # Treat "modes" as states whose per-dimension factor is near its theoretical
         # maximum f_max = 2 / sqrt(2*pi). We allow a tunable closeness factor `mode_gamma`
         # (default 0.8). The product structure implies a threshold of (gamma*f_max)^ndim.
+        # On coarse grids the discrete samples may not reach this threshold, which
+        # correctly causes validate_modes to fail — the grid is too coarse for modes.
         if isinstance(self.reward_fn, CosineReward):
             r0 = float(self.reward_fn_kwargs.get("R0", 0.1))
             r1 = float(self.reward_fn_kwargs.get("R1", 0.5))
