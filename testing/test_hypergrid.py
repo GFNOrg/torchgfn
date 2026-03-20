@@ -108,13 +108,13 @@ def test_multiplicative_coprime_reward_values_small():
 
 
 @pytest.mark.parametrize(
-    "reward_name,kwargs",
+    "reward_name,kwargs,height",
     [
-        ("original", dict(R0=0.1, R1=0.5, R2=2.0)),
-        ("cosine", dict(R0=0.1, R1=0.5)),
-        ("sparse", {}),
-        ("deceptive", dict(R0=1e-5, R1=0.1, R2=2.0)),
-        ("bitwise_xor", get_reward_presets("bitwise_xor", 3, 16)["easy"]),
+        ("original", dict(R0=0.1, R1=0.5, R2=2.0), 16),
+        ("cosine", dict(R0=0.1, R1=0.5), 32),
+        ("sparse", {}, 16),
+        ("deceptive", dict(R0=1e-5, R1=0.1, R2=2.0), 16),
+        ("bitwise_xor", get_reward_presets("bitwise_xor", 3, 16)["easy"], 16),
         (
             "multiplicative_coprime",
             dict(
@@ -124,15 +124,16 @@ def test_multiplicative_coprime_reward_values_small():
                 exponent_caps=[1],
                 active_dims=[0, 1],
             ),
+            16,
         ),
     ],
 )
-def test_mode_counts_small_exact(reward_name, kwargs):
+def test_mode_counts_small_exact(reward_name, kwargs, height):
     env = _make_env(
         reward_name,
         kwargs,
         ndim=3,
-        height=16,
+        height=height,
         store_all_states=True,
         validate_modes=True,
         mode_stats="exact",
@@ -262,11 +263,13 @@ def test_validate_modes_succeeds_deceptive():
 
 
 def test_validate_modes_succeeds_cosine():
+    # Cosine's cos(50·ax) oscillates rapidly; height >= 32 needed for the
+    # discrete grid to resolve peaks above the gamma=0.8 theoretical threshold.
     env = _make_env(
         "cosine",
         dict(R0=0.1, R1=0.5, mode_gamma=0.8),
         ndim=2,
-        height=16,
+        height=32,
         validate_modes=True,
     )
     assert env.n_actions == env.ndim + 1
@@ -307,8 +310,8 @@ def test_validate_modes_succeeds_multiplicative_coprime():
     [
         ("original", lambda D, H: get_reward_presets("original", D, H)["easy"], 2, 16),
         ("original", lambda D, H: get_reward_presets("original", D, H)["medium"], 3, 16),
-        ("cosine", lambda D, H: get_reward_presets("cosine", D, H)["easy"], 2, 16),
-        ("cosine", lambda D, H: get_reward_presets("cosine", D, H)["medium"], 3, 16),
+        ("cosine", lambda D, H: get_reward_presets("cosine", D, H)["easy"], 2, 32),
+        ("cosine", lambda D, H: get_reward_presets("cosine", D, H)["medium"], 3, 32),
         ("sparse", lambda D, H: get_reward_presets("sparse", D, H)["easy"], 2, 6),
         ("deceptive", lambda D, H: get_reward_presets("deceptive", D, H)["easy"], 2, 16),
         (
