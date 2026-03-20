@@ -35,6 +35,8 @@ try:  # pragma: no cover - older PyTorch versions may lack torch._dynamo
 except Exception:  # pragma: no cover
     _torch_dynamo = None
 
+from tutorials.examples import EXAMPLES_OUTPUTS
+
 from gfn.actions import GraphActions
 from gfn.env import Env
 from gfn.estimators import (
@@ -296,7 +298,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--benchmark-output",
         type=str,
-        default=str(Path.home() / "compile_benchmark.png"),
+        default=str(EXAMPLES_OUTPUTS / "compile_benchmark.png"),
         help="Path to save the optional benchmark plot.",
     )
     parser.add_argument("--skip-plot", action="store_true", help="Disable plotting.")

@@ -12,9 +12,11 @@ Reference: https://github.com/GFNOrg/gfn-diffusion
 
 import argparse
 import math
+from pathlib import Path
 
 import torch
 from tqdm import tqdm
+from tutorials.examples import EXAMPLES_OUTPUTS
 
 from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
 from gfn.gflownet import PFBasedGFlowNet, TBGFlowNet
@@ -202,10 +204,14 @@ def main(args):
                 with torch.no_grad():
                     samples_states = gflownet.sample_terminating_states(env, args.vis_n)
                     xs = samples_states.tensor[:, :-1]
+                    output_dir = (
+                        Path(args.output_dir) if args.output_dir else EXAMPLES_OUTPUTS
+                    )
                     env.target.visualize(
                         samples=xs,
                         prefix=f"it{it}_",
                         show=False,
+                        output_dir=output_dir,
                     )  # type: ignore[attr-defined]
 
         pbar.set_postfix({"loss": float(loss.item())})
@@ -261,6 +267,9 @@ if __name__ == "__main__":
     parser.add_argument("--vis_interval", type=int, default=200)
     parser.add_argument("--vis_n", type=int, default=2000)
     parser.add_argument("--visualize", action="store_true")
+    parser.add_argument(
+        "--output_dir", type=str, default=None, help="Output directory for plots"
+    )
 
     args = parser.parse_args()
 

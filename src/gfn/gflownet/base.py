@@ -1,3 +1,4 @@
+import math
 import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Tuple, TypeVar, cast
@@ -8,9 +9,14 @@ import torch.nn as nn
 from gfn.containers import Container, Trajectories
 from gfn.env import Env
 from gfn.estimators import Estimator
+from gfn.gflownet.losses import RegressionLoss, SquaredLoss
 from gfn.samplers import Sampler
 from gfn.states import States
-from gfn.utils.prob_calculations import get_trajectory_pfs_and_pbs
+from gfn.utils.prob_calculations import (
+    get_trajectory_pbs,
+    get_trajectory_pfs,
+    get_trajectory_pfs_and_pbs,
+)
 
 TrainingSampleType = TypeVar("TrainingSampleType", bound=Container)
 
@@ -47,15 +53,24 @@ class GFlowNet(ABC, nn.Module, Generic[TrainingSampleType]):
 
     log_reward_clip_min = float("-inf")  # Default off.
 
-    def __init__(self, debug: bool = False) -> None:
+    def __init__(
+        self,
+        debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
+    ) -> None:
         """Initialize shared GFlowNet state.
 
         Args:
             debug: If True, keep runtime safety checks and warnings active. Set False
                 in compiled hot paths to avoid graph breaks; use True in tests/debugging.
+            loss_fn: Regression loss applied to balance condition residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss` (standard
+                ``t²``, corresponding to reverse KL). See
+                :mod:`gfn.gflownet.losses` for alternatives.
         """
         super().__init__()
         self.debug = debug
+        self.loss_fn = loss_fn or SquaredLoss()
 
     @abstractmethod
     def sample_trajectories(
@@ -191,6 +206,7 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
         constant_pb: bool = False,
         log_reward_clip_min: float = float("-inf"),
         debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ) -> None:
         """Initializes a PFBasedGFlowNet instance.
 
@@ -204,9 +220,11 @@ class PFBasedGFlowNet(GFlowNet[TrainingSampleType], ABC):
                 special case.
             log_reward_clip_min: If finite, clips log rewards to this value.
             debug: If True, keep runtime safety checks active; disable in compiled runs.
+            loss_fn: Regression loss applied to balance condition residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
 
         """
-        super().__init__(debug=debug)
+        super().__init__(debug=debug, loss_fn=loss_fn)
         # Technical note: pb may be constant for a variety of edge cases, for example,
         # if all terminal states can be reached with exactly the same number of
         # trajectories, and we assume a uniform backward policy, then we can omit the pb
@@ -366,10 +384,55 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
             recalculate_all_logprobs,
         )
 
+    def trajectory_log_probs_forward(
+        self,
+        trajectories: Trajectories,
+        fill_value: float = 0.0,
+        recalculate_all_logprobs: bool = True,
+    ) -> torch.Tensor:
+        """Evaluates forward logprobs only for each trajectory in the batch."""
+        return get_trajectory_pfs(
+            self.pf,
+            trajectories,
+            fill_value=fill_value,
+            recalculate_all_logprobs=recalculate_all_logprobs,
+        )
+
+    def trajectory_log_probs_backward(
+        self,
+        trajectories: Trajectories,
+        fill_value: float = 0.0,
+    ) -> torch.Tensor:
+        """Evaluates backward logprobs only for each trajectory in the batch."""
+        return get_trajectory_pbs(
+            self.pb,
+            trajectories,
+            fill_value=fill_value,
+        )
+
+    def logz_named_parameters(self) -> dict[str, torch.Tensor]:
+        """Returns named parameters containing 'logZ' in their name.
+
+        Works for any subclass that registers a logZ parameter (e.g.
+        :class:`TBGFlowNet`, :class:`RelativeTrajectoryBalanceGFlowNet`).
+        Returns an empty dict for subclasses without logZ.
+        """
+        return {k: v for k, v in dict(self.named_parameters()).items() if "logZ" in k}
+
+    def logz_parameters(self) -> list[torch.Tensor]:
+        """Returns parameters containing 'logZ' in their name.
+
+        Works for any subclass that registers a logZ parameter (e.g.
+        :class:`TBGFlowNet`, :class:`RelativeTrajectoryBalanceGFlowNet`).
+        Returns an empty list for subclasses without logZ.
+        """
+        return [v for k, v in dict(self.named_parameters()).items() if "logZ" in k]
+
     def get_scores(
         self,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
+        env: Env | None = None,
     ) -> torch.Tensor:
         r"""Calculates scores for a batch of trajectories.
 
@@ -379,6 +442,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
         Args:
             trajectories: The Trajectories object to evaluate.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            env: The environment (unused in base TB, but required by some
+                subclasses such as RTB and SubTB).
 
         Returns:
             A tensor of shape (n_trajectories,) containing the scores for each trajectory.
@@ -399,9 +464,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
         log_rewards = cast(torch.Tensor, trajectories.log_rewards)
         if self.debug:
             assert log_rewards is not None
-        # Fast path: skip clamp when log_reward_clip_min is -inf to avoid extra work.
-        # TODO: Do we need log reward clamping at all?
-        if self.log_reward_clip_min != float("-inf"):
+        # Fast path: skip clamp when log_reward_clip_min is disabled (default).
+        if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
         # Keep runtime safety checks under `debug` to avoid graph breaks in torch.compile.

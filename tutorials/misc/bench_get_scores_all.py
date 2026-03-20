@@ -856,7 +856,7 @@ def _run_subtb(
 
         # correctness (once, not timed)
         orig_scores, _ = _subtb_original_get_scores(model, env_obj, trajectories)
-        curr_scores, _ = model.get_scores(env_obj, trajectories)  # type: ignore[arg-type]
+        curr_scores, _ = model.get_scores(trajectories, env=env_obj)  # type: ignore[arg-type]
         max_abs = max(
             (orig - curr).abs().max().item()
             for orig, curr in zip(orig_scores, curr_scores)
@@ -876,7 +876,7 @@ def _run_subtb(
                 compile_enabled=compile_enabled,
             )
             t_curr, t_currc = _run_with_compile_variants(
-                eager_fn=lambda: model.get_scores(env_obj, trajectories),  # type: ignore[arg-type]
+                eager_fn=lambda: model.get_scores(trajectories, env=env_obj),  # type: ignore[arg-type]
                 compile_enabled=compile_enabled,
             )
             orig_times.append(t_orig)
