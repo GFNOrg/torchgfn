@@ -15,6 +15,7 @@ from typing import List, Literal, Tuple
 import torch
 
 from gfn.actions import Actions
+from gfn.constants import EPS_INDEX_CMP, EPS_REWARD_CMP
 from gfn.env import DiscreteEnv
 from gfn.states import DiscreteStates
 
@@ -24,17 +25,6 @@ if platform.system() == "Windows":
     multiprocessing.set_start_method("spawn", force=True)
 else:
     multiprocessing.set_start_method("fork", force=True)
-
-
-# Numerical tolerances used by quick mode-existence checks in this module.
-#
-# - EPS_REWARD_CMP: tolerance for comparing scalar rewards to thresholds. It
-#   guards against small floating-point rounding errors when checking
-#   inequalities like r >= thr.
-# - EPS_INDEX_CMP: tolerance for floating-point-to-index boundary calculations,
-#   used when turning fractional bands into integer indices.
-EPS_REWARD_CMP = 1e-12
-EPS_INDEX_CMP = 1e-9
 
 
 def lcm(a, b):
@@ -121,7 +111,6 @@ class HyperGrid(DiscreteEnv):
         """
         if height <= 4:
             logger.warning("+ Warning: height <= 4 can lead to unsolvable environments.")
-
 
         reward_functions = {
             "original": OriginalReward,
@@ -1587,9 +1576,9 @@ class ConditionalMultiScaleReward(GridReward):
         self.num_levels: int = 0
         h = height
         while h > 1:
-            assert h % self.base == 0, (
-                f"height={height} must be a power of base={self.base}"
-            )
+            assert (
+                h % self.base == 0
+            ), f"height={height} must be a power of base={self.base}"
             h //= self.base
             self.num_levels += 1
         assert self.num_levels > 0
@@ -1600,9 +1589,9 @@ class ConditionalMultiScaleReward(GridReward):
         )
 
         self.filter_width: int = int(kwargs.get("filter_width", self.base // 2))
-        assert 1 <= self.filter_width <= self.base, (
-            f"filter_width={self.filter_width} must be in [1, {self.base}]"
-        )
+        assert (
+            1 <= self.filter_width <= self.base
+        ), f"filter_width={self.filter_width} must be in [1, {self.base}]"
 
         self.seed: int = int(kwargs.get("seed", 42))
 
@@ -1614,9 +1603,7 @@ class ConditionalMultiScaleReward(GridReward):
             if t == 0:
                 self.shift_coeffs.append([])  # tier 1 has no prior digits
             else:
-                coeffs = torch.randint(
-                    0, self.base, (t,), generator=rng
-                ).tolist()
+                coeffs = torch.randint(0, self.base, (t,), generator=rng).tolist()
                 self.shift_coeffs.append(coeffs)
 
         # Cross-dimensional modular constraints (optional)
@@ -1640,9 +1627,7 @@ class ConditionalMultiScaleReward(GridReward):
             active_dims = list(range(ndim))
         self.active_dims: list[int] = list(map(int, active_dims))
 
-    def _extract_digits(
-        self, x: torch.Tensor, num_levels: int
-    ) -> list[torch.Tensor]:
+    def _extract_digits(self, x: torch.Tensor, num_levels: int) -> list[torch.Tensor]:
         """Extract base-B digits from x.
 
         Args:
@@ -1679,9 +1664,7 @@ class ConditionalMultiScaleReward(GridReward):
         num_tiers = len(self.tier_weights)
         digits = self._extract_digits(x, num_tiers)
 
-        valid_up_to_t = torch.ones(
-            x.shape[:-1], device=x.device, dtype=torch.bool
-        )
+        valid_up_to_t = torch.ones(x.shape[:-1], device=x.device, dtype=torch.bool)
         for t, w in enumerate(self.tier_weights):
             # Compute shift: sigma_t(i) = sum_{k<t} a_{t,k} * d_k(i)  mod B
             if t == 0:
@@ -1731,8 +1714,8 @@ class ConditionalMultiScaleReward(GridReward):
         f = self.filter_width
 
         # Per-dim: (f)^T valid constrained digit combos × B^(L-T) free digits
-        choices_per_coord = (f ** T) * (B ** (L - T))
-        modes = choices_per_coord ** d
+        choices_per_coord = (f**T) * (B ** (L - T))
+        modes = choices_per_coord**d
 
         # Cross-dim divisors
         for t in range(T):
@@ -1748,7 +1731,7 @@ class ConditionalMultiScaleReward(GridReward):
         Z = R0 * H^d + sum_t w_t * modes_t
         """
         d = len(self.active_dims)
-        Z = self.R0 * (self.height ** d)
+        Z = self.R0 * (self.height**d)
         for t in range(len(self.tier_weights)):
             Z += self.tier_weights[t] * self.analytic_mode_count(tier=t + 1)
         return log(Z) if Z > 0 else float("-inf")
@@ -1915,6 +1898,7 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
       - challenging: 4 tiers, 8 active dims, cross-dim -> ~65K modes at tier 4
       - impossible:  4 tiers, 12 active dims, cross-dim -> ~4K modes at tier 4
     """
+
     def dims(k: int) -> list[int]:
         k = min(max(1, k), ndim)
         return list(range(k))

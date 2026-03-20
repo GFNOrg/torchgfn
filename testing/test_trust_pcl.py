@@ -24,7 +24,7 @@ from gfn.utils.trust_pcl import rtb_to_trust_pcl_params, trust_pcl_to_rtb_params
 
 def _make_hypergrid_estimators():
     """Build simple forward policies for HyperGrid prior/posterior."""
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     preproc = KHotPreprocessor(env.height, env.ndim)
     assert isinstance(preproc.output_dim, int)
     pf_post = DiscretePolicyEstimator(

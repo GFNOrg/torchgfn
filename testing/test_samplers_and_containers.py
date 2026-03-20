@@ -184,7 +184,7 @@ def get_env_and_estimators(
         )
 
     elif env_name == "ConditionalHyperGrid":
-        env = ConditionalHyperGrid(ndim=2, height=4)
+        env = ConditionalHyperGrid(ndim=2, height=4, validate_modes=False)
         preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
 
         assert isinstance(preprocessor.output_dim, int)
@@ -602,7 +602,7 @@ def test_replay_buffer(
 
 
 def test_states_actions_tns_to_traj():
-    env = HyperGrid(2, 4)
+    env = HyperGrid(2, 4, validate_modes=False)
     states = torch.tensor([[0, 0], [0, 1], [0, 2], [-1, -1]])
     actions = torch.tensor([1, 1, 2])
     trajs = states_actions_tns_to_traj(states, actions, env)
@@ -901,3 +901,73 @@ def test_integration_transformer_sequence_model_with_adapter(
     assert stacked_logprobs.shape[0] == 1
     assert stacked_estimator_outputs is not None
     assert stacked_estimator_outputs.shape[0] == 1
+
+
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
+def test_trajectories_getitem(
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+):
+    try:
+        _ = trajectory_sampling_with_return(
+            env_name,
+            preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
+            batch_size=5,
+            delta=0.1,
+            n_components=1,
+            n_components_s0=1,
+        )
+    except Exception as e:
+        raise ValueError(f"Error while testing {env_name}") from e
+
+
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
+def test_trajectories_extend(
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+):
+    trajectories, *_ = trajectory_sampling_with_return(
+        env_name,
+        preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
+        batch_size=5,
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
+    )
+    try:
+        trajectories.extend(trajectories[[1, 0]])
+    except Exception as e:
+        raise ValueError(f"Error while testing {env_name}") from e
+
+
+@pytest.mark.parametrize(
+    "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
+)
+def test_to_transition(
+    env_name: Literal["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"],
+):
+    """Ensures that ``Trajectories.to_transitions`` works as expected."""
+    trajectories, bwd_trajectories, pf_estimator, _ = trajectory_sampling_with_return(
+        env_name,
+        preprocessor_name="Identity",
+        batch_size=5,
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
+    )
+
+    try:
+        _ = trajectories.to_transitions()
+
+        bwd_trajectories = Trajectories.reverse_backward_trajectories(bwd_trajectories)
+        backward_traj_pfs = get_trajectory_pfs(
+            pf=pf_estimator,
+            trajectories=bwd_trajectories,
+            recalculate_all_logprobs=False,
+        )
+        bwd_trajectories.log_probs = backward_traj_pfs
+        _ = bwd_trajectories.to_transitions()
+    except Exception as e:
+        raise ValueError(f"Error while testing {env_name}") from e
