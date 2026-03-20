@@ -84,7 +84,7 @@ def _bit_sequence_setup(device: torch.device):
 
 
 def _hypergrid_setup(device: torch.device):
-    env = HyperGrid(ndim=2, height=4, device=device)
+    env = HyperGrid(ndim=2, height=4, device=device, validate_modes=False)
     states = env.reset(batch_shape=1)
     action_tensor = torch.zeros((1, 1), dtype=torch.long, device=device)
     return env, states.tensor, action_tensor
