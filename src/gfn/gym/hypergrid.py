@@ -591,21 +591,28 @@ class HyperGrid(DiscreteEnv):
         Hm1 = self.height - 1
         if Hm1 <= 0:
             return False
-        lows = []
-        highs = []
-        # Convert fractional bounds to integer index ranges with a small tolerance.
-        lows.append(int((0.1 + EPS_INDEX_CMP) * Hm1) + 1)
-        highs.append(int((0.2 - EPS_INDEX_CMP) * Hm1))
-        lows.append(int((0.8 + EPS_INDEX_CMP) * Hm1) + 1)
-        highs.append(int((0.9 - EPS_INDEX_CMP) * Hm1))
-        candidate_idxs: list[int] = []
-        for lo, hi in zip(lows, highs):
+
+        # The band condition |x/(H-1) - 0.5| in (0.3, 0.4) maps to two
+        # symmetric raw-coordinate intervals in normalized [0,1]:
+        #   lower band: [0.1, 0.2]   (center-left)
+        #   upper band: [0.8, 0.9]   (center-right)
+        # Convert each to integer index ranges. The +1 after int() is a ceiling
+        # to find the first index strictly inside the open boundary.
+        lower_band_lo = int((0.1 + EPS_INDEX_CMP) * Hm1) + 1
+        lower_band_hi = int((0.2 - EPS_INDEX_CMP) * Hm1)
+        upper_band_lo = int((0.8 + EPS_INDEX_CMP) * Hm1) + 1
+        upper_band_hi = int((0.9 - EPS_INDEX_CMP) * Hm1)
+
+        # Pick the first feasible index from either band.
+        candidate_idx = None
+        for lo, hi in [(lower_band_lo, lower_band_hi), (upper_band_lo, upper_band_hi)]:
             if lo <= hi:
-                candidate_idxs.append(lo)
-        if not candidate_idxs:
+                candidate_idx = lo
+                break
+        if candidate_idx is None:
             return False
-        i = candidate_idxs[0]
-        x = torch.full((self.ndim,), i, dtype=torch.long)
+
+        x = torch.full((self.ndim,), candidate_idx, dtype=torch.long)
         r = float(self.reward_fn(x.unsqueeze(0))[0])
         return r >= thr - EPS_REWARD_CMP
 
@@ -625,15 +632,23 @@ class HyperGrid(DiscreteEnv):
         R1 = float(self.reward_fn.kwargs.get("R1", 0.5))
         gamma = float(self.reward_fn.kwargs.get("mode_gamma", 0.8))
         Hm1 = max(1, self.height - 1)
+
+        # Evaluate the per-dimension factor at every discrete grid index.
         idx = torch.arange(0, self.height, dtype=torch.get_default_dtype())
         ax = (idx / Hm1 - 0.5).abs()
         pdf = (1.0 / sqrt(2 * pi)) * torch.exp(-0.5 * (5 * ax) ** 2)
-        per_dim = (torch.cos(50 * ax) + 1.0) * pdf
-        m = float(per_dim.max())
-        # Compute a gamma-scaled target using the theoretical per-dimension peak.
-        per_dim_peak = 2.0 / sqrt(2 * pi)
-        target = R0 + (gamma * per_dim_peak) ** self.ndim * R1
-        rmax = R0 + (m**self.ndim) * R1
+        per_dim_values = (torch.cos(50 * ax) + 1.0) * pdf
+        max_per_dim_factor = float(per_dim_values.max())
+
+        # The theoretical continuous peak is 2/sqrt(2*pi) (~0.798).
+        # The gamma-scaled target requires the grid to resolve oscillations
+        # well enough that max_per_dim_factor^D exceeds (gamma * peak)^D.
+        theoretical_peak = 2.0 / sqrt(2 * pi)
+        target = R0 + (gamma * theoretical_peak) ** self.ndim * R1
+        rmax = R0 + (max_per_dim_factor ** self.ndim) * R1
+
+        # Must exceed both the gamma-scaled target (grid resolves peaks)
+        # and the caller's threshold (mode definition is satisfiable).
         return rmax >= target - EPS_REWARD_CMP and rmax >= thr - EPS_REWARD_CMP
 
     def _exists_sparse(self, thr: float) -> bool:
@@ -646,7 +661,11 @@ class HyperGrid(DiscreteEnv):
         """
         probe = torch.zeros(self.ndim, dtype=torch.long)
         r = float(self.reward_fn(probe.unsqueeze(0))[0])
-        return (self.height >= 2 and self.ndim >= 1) and (r <= thr or r + 1.0 >= thr)
+        # SparseReward gives ~1+eps to exact targets and ~eps to non-targets.
+        # The zero vector may or may not be a target. We check: either it
+        # already exceeds the threshold, or the maximum possible reward
+        # (r + 1.0, the target spike) would exceed it.
+        return (self.height >= 2 and self.ndim >= 1) and (r >= thr or r + 1.0 >= thr)
 
     def _exists_bitwise_xor(self, thr: float) -> bool:
         """Feasibility and constructive check for ``BitwiseXORReward``.
@@ -678,43 +697,53 @@ class HyperGrid(DiscreteEnv):
     def _exists_multiplicative_coprime(self, thr: float) -> bool:
         """Number-theoretic constructive check for ``MultiplicativeCoprimeReward``.
 
-        Outline:
-        - If a target LCM is specified for the last tier, factor it over the
-          allowed primes and ensure exponents do not exceed caps and are
-          representable as grid coordinates (< H).
-        - Place prime powers on designated active dimensions and ensure required
-          coprime relations hold between specified pairs.
-        - If the constructed state fits within the grid, evaluate it and compare
-          to the threshold with tolerance.
+        Constructs a candidate state by factoring the target LCM (if any) over
+        the allowed primes, assigning each prime power to a separate active
+        dimension, and verifying coprimality and grid-bound constraints.
         """
         primes: list[int] = [int(p) for p in self.reward_fn.primes]
         caps: list[int] = [int(c) for c in self.reward_fn.exponent_caps]
         active = list(self.reward_fn.active_dims)
-        copairs = self.reward_fn.coprime_pairs or []
-        cap = int(caps[-1])
+        coprime_pairs = self.reward_fn.coprime_pairs or []
+        max_exponent = int(caps[-1])
         target_lcms = self.reward_fn.target_lcms
         target = None if target_lcms is None else target_lcms[-1]
+
+        # Start with all-ones (valid for prime-support: 1 has zero exponents).
         x = torch.ones(self.ndim, dtype=torch.long)
+
         if target is not None:
             target = int(target)
-            need: list[tuple[int, int]] = []
-            tmp = target
+
+            # Factor target LCM over the allowed primes.
+            required_prime_powers: list[tuple[int, int]] = []
+            unfactored_remainder = target
             for p in primes:
-                e = 0
-                while tmp % p == 0:
-                    tmp //= p
-                    e += 1
-                if e > 0:
-                    if e > cap or (p**e) > (self.height - 1):
+                exp = 0
+                while unfactored_remainder % p == 0:
+                    unfactored_remainder //= p
+                    exp += 1
+                if exp > 0:
+                    if exp > max_exponent or (p**exp) > (self.height - 1):
                         return False
-                    need.append((p, e))
-            if tmp != 1 or len(need) > len(active):
+                    required_prime_powers.append((p, exp))
+
+            # All prime factors must come from the allowed set.
+            if unfactored_remainder != 1:
                 return False
-            for (p, e), dim in zip(need, active):
-                x[dim] = p**e
-            for i, j in copairs:
+            # Need at most one dimension per distinct prime power.
+            if len(required_prime_powers) > len(active):
+                return False
+
+            # Assign each prime power to a separate active dimension.
+            for (p, exp), dim in zip(required_prime_powers, active):
+                x[dim] = p**exp
+
+            # Verify that dimension pairs designated as coprime have gcd == 1.
+            for i, j in coprime_pairs:
                 if torch.gcd(x[active[i]], x[active[j]]).item() != 1:
                     return False
+
         if int(x.max()) >= self.height:
             return False
         r = float(self.reward_fn(x.unsqueeze(0))[0])
@@ -738,50 +767,59 @@ class HyperGrid(DiscreteEnv):
     def _solve_gf2_has_solution(A: torch.Tensor, c: torch.Tensor) -> bool:
         """Return True if A x = c over GF(2) has at least one solution.
 
-        Performs Gaussian elimination modulo 2 without constructing a specific solution.
+        Performs Gaussian elimination modulo 2 (XOR arithmetic) without
+        constructing a specific solution. A row that reduces to all-zero
+        coefficients with a non-zero RHS (``0 = 1``) indicates inconsistency.
         """
         if A.numel() == 0:
-            # No constraints
             return True
+
+        # Reduce to GF(2): keep only the least-significant bit.
         A = A.clone().detach().to(dtype=torch.uint8, device=torch.device("cpu")) & 1
         c = c.clone().detach().to(dtype=torch.uint8, device=torch.device("cpu")) & 1
-        k, m = A.shape
-        row = 0
-        for col in range(m):
-            # Find pivot
-            piv = None
-            for r in range(row, k):
-                if A[r, col]:
-                    piv = r
+
+        n_equations, n_variables = A.shape
+        pivot_row = 0
+        for col in range(n_variables):
+            # Find a row at or below pivot_row with a 1 in this column.
+            pivot_candidate = None
+            for row_idx in range(pivot_row, n_equations):
+                if A[row_idx, col]:
+                    pivot_candidate = row_idx
                     break
-            if piv is None:
-                continue
-            # Swap
-            if piv != row:
-                A[[row, piv]] = A[[piv, row]]
-                c[[row, piv]] = c[[piv, row]]
-            # Eliminate below
-            for r in range(row + 1, k):
-                if A[r, col]:
-                    A[r, :] ^= A[row, :]
-                    c[r] ^= c[row]
-            row += 1
-            if row == k:
+            if pivot_candidate is None:
+                continue  # No pivot in this column; move to the next.
+
+            # Swap the pivot candidate into the pivot position.
+            if pivot_candidate != pivot_row:
+                A[[pivot_row, pivot_candidate]] = A[[pivot_candidate, pivot_row]]
+                c[[pivot_row, pivot_candidate]] = c[[pivot_candidate, pivot_row]]
+
+            # Eliminate all rows below the pivot via XOR (addition in GF(2)).
+            for row_idx in range(pivot_row + 1, n_equations):
+                if A[row_idx, col]:
+                    A[row_idx, :] ^= A[pivot_row, :]
+                    c[row_idx] ^= c[pivot_row]
+
+            pivot_row += 1
+            if pivot_row == n_equations:
                 break
-        # Check for inconsistency: 0 = 1 rows
-        for r in range(k):
-            if not A[r, :].any() and c[r]:
+
+        # A row with all-zero coefficients but c=1 means 0=1 (inconsistent).
+        for row_idx in range(n_equations):
+            if not A[row_idx, :].any() and c[row_idx]:
                 return False
         return True
 
     def _enumerate_all_states_tensor(self, batch_size: int = 20_000):
-        """Enumerates all states_tensor of the complete hypergrid.
+        """Enumerate all grid states, optionally storing them and computing log Z.
+
+        Iterates over the full Cartesian product ``{0, ..., H-1}^D`` in batches
+        (via multiprocessing) to avoid materializing all ``H^D`` states at once.
 
         Args:
-            batch_size: The batch size to use for the calculation.
+            batch_size: Number of states per batch.
         """
-
-        # Check if we really need to enumerate
         need_to_enumerate = (
             self.store_all_states and self._all_states_tensor is None
         ) or (self.calculate_partition and self._log_partition is None)
@@ -789,21 +827,19 @@ class HyperGrid(DiscreteEnv):
         if need_to_enumerate:
             start_time = time()
             all_states_tensor = []
-            total_rewards = 0.0
+            reward_sum = 0.0
 
-            for batch in self._generate_combinations_in_batches(
-                self.ndim,
-                self.height - 1,  # Handles 0 indexing.
-                batch_size,
+            # max_val = height - 1 because coordinates are 0-indexed.
+            for batch_tuples in self._generate_combinations_in_batches(
+                self.ndim, self.height - 1, batch_size
             ):
-                batch_tensor = torch.LongTensor(list(batch))
+                batch_tensor = torch.LongTensor(list(batch_tuples))
                 if self.store_all_states:
                     all_states_tensor.append(batch_tensor)
                 if self.calculate_partition:
-                    # Operates on raw tensors due to multiprocessing.
-                    total_rewards += self.reward_fn(batch_tensor).sum().item()
-            end_time = time()
+                    reward_sum += self.reward_fn(batch_tensor).sum().item()
 
+            end_time = time()
             logger.info(
                 "Enumerated all states in {} minutes".format(
                     (end_time - start_time) / 60.0,
@@ -814,15 +850,18 @@ class HyperGrid(DiscreteEnv):
                 self._all_states_tensor = torch.cat(all_states_tensor, dim=0)
 
             if self.calculate_partition:
-                self._log_partition = log(total_rewards)
+                self._log_partition = log(reward_sum)
 
     def _calculate_log_partition(self, batch_size: int = 20_000):
-        """Calculates the log partition of the complete hypergrid.
+        """Compute log Z = log(sum of rewards over all states).
+
+        If all states are already stored, computes directly. Otherwise
+        enumerates via batched multiprocessing (same strategy as
+        ``_enumerate_all_states_tensor``).
 
         Args:
-            batch_size: The batch size to use for the calculation.
+            batch_size: Number of states per batch.
         """
-
         if self._log_partition is None and self.calculate_partition:
             if self._all_states_tensor is not None:
                 self._log_partition = (
@@ -830,42 +869,31 @@ class HyperGrid(DiscreteEnv):
                 )
                 return
 
-            # The # of possible combinations (with repetition) of
-            # numbers, where each
-            # number can be any integer from 0 to
-            # (inclusive), is given by:
-            # n = (k + 1) ** n -- note that k in our case is height-1, as it represents
-            # a python index.
-            max_height_idx = self.height - 1  # Handles 0 indexing.
-            n_expected = (max_height_idx + 1) ** self.ndim
+            # Total states = height^ndim. We verify this count after enumeration.
+            max_val = self.height - 1  # Coordinates are 0-indexed.
+            n_expected = (max_val + 1) ** self.ndim
             n_found = 0
             start_time = time()
-            total_reward = 0
+            reward_sum = 0.0
 
-            for batch in self._generate_combinations_in_batches(
-                self.ndim,
-                max_height_idx,
-                batch_size,
+            for batch_tuples in self._generate_combinations_in_batches(
+                self.ndim, max_val, batch_size
             ):
-                batch = torch.LongTensor(list(batch))
-                rewards = self.reward_fn(
-                    batch
-                )  # Operates on raw tensors due to multiprocessing.
-                total_reward += rewards.sum().item()  # Accumulate.
-                n_found += batch.shape[0]
+                batch_tensor = torch.LongTensor(list(batch_tuples))
+                rewards = self.reward_fn(batch_tensor)
+                reward_sum += rewards.sum().item()
+                n_found += batch_tensor.shape[0]
 
             assert n_expected == n_found, "failed to compute reward of all indices!"
             end_time = time()
-            total_log_reward = log(total_reward)
+            self._log_partition = log(reward_sum)
 
             logger.info(
                 "log_partition = {}, calculated in {} minutes".format(
-                    total_log_reward,
+                    self._log_partition,
                     (end_time - start_time) / 60.0,
                 )
             )
-
-            self._log_partition = total_log_reward
 
     def true_dist(self, condition=None) -> torch.Tensor | None:  # condition is ignored
         """Returns the pmf over all states in the hypergrid."""
@@ -920,24 +948,39 @@ class HyperGrid(DiscreteEnv):
         """Returns all terminating states of the environment."""
         return self.all_states
 
-    def _worker(self, task):
-        """Executes a single call to `generate_combinations_chunk`."""
-        numbers, n, start, end = task
-        # Generate combinations with replacement for the specified range.
-        # islice accesses a subset of the full iterator - each job does unique work.
-        return itertools.islice(itertools.product(numbers, repeat=n), start, end)
+    def _worker(self, task: tuple) -> itertools.islice:
+        """Return a slice of the Cartesian product for one batch.
 
-    def _generate_combinations_in_batches(self, n, k, batch_size):
-        """Uses Pool to collect subsets of the results of itertools.product in parallel."""
-        numbers = list(range(k + 1))
+        Args:
+            task: (values, ndim, start_idx, end_idx) where values is the list
+                  of coordinate values, ndim is the number of dimensions, and
+                  [start_idx, end_idx) is the range within the full product.
+        """
+        values, ndim, start_idx, end_idx = task
+        return itertools.islice(
+            itertools.product(values, repeat=ndim), start_idx, end_idx
+        )
 
-        # Number of possible combinations (with repetition) of
-        # numbers, where each
-        # number can be any integer from 0 to
-        # (inclusive).
-        total_combinations = (k + 1) ** n
+    def _generate_combinations_in_batches(
+        self, ndim: int, max_val: int, batch_size: int
+    ):
+        """Yield batches of the Cartesian product {0, ..., max_val}^ndim.
+
+        Uses multiprocessing to avoid materializing the full product
+        (size ``(max_val+1)^ndim``) in memory.
+
+        Args:
+            ndim: Number of dimensions (tuple length).
+            max_val: Maximum coordinate value (inclusive).
+            batch_size: Number of tuples per batch.
+
+        Yields:
+            An iterator of tuples for each batch.
+        """
+        values = list(range(max_val + 1))
+        total_combinations = (max_val + 1) ** ndim
         tasks = [
-            (numbers, n, i, min(i + batch_size, total_combinations))
+            (values, ndim, i, min(i + batch_size, total_combinations))
             for i in range(0, total_combinations, batch_size)
         ]
 
@@ -1323,17 +1366,19 @@ class BitwiseXORReward(GridReward):
             index=torch.tensor(self.dims_constrained, device=states_tensor.device),
         )
 
-        # Progressive, compositional tiers: a state gets tier t reward only if it
-        # satisfies all constraints up to t.
+        # Cumulative tiers: a state gets tier-t reward only if it satisfies
+        # all constraints from tiers 0..t.
         valid_up_to_t = torch.ones(x.shape[:-1], device=x.device, dtype=torch.bool)
         for t, w in enumerate(self.tier_weights):
-            lo_b, hi_b = self.bits_per_tier[t]
-            tier_mask = torch.ones_like(valid_up_to_t)
-            for b in range(lo_b, hi_b + 1):
+            lo_bit, hi_bit = self.bits_per_tier[t]
+            # All bit-planes in this tier's window must pass parity checks.
+            all_planes_ok = torch.ones_like(valid_up_to_t)
+            for b in range(lo_bit, hi_bit + 1):
+                # Extract the b-th bit of each coordinate: 0 or 1.
                 bits = ((x >> b) & 1).long()
                 plane_ok = self._apply_parity_checks(bits, t)
-                tier_mask = tier_mask & plane_ok
-            valid_up_to_t = valid_up_to_t & tier_mask
+                all_planes_ok = all_planes_ok & plane_ok
+            valid_up_to_t = valid_up_to_t & all_planes_ok
             R = R + (valid_up_to_t.to(R.dtype) * float(w))
 
         return R
@@ -1405,75 +1450,87 @@ class MultiplicativeCoprimeReward(GridReward):
         ) == len(self.tier_weights)
 
     def _factor_exponents_up_to_cap(self, v: torch.Tensor, cap: int):
-        """Return (residue, exponents) after dividing by allowed primes up to `cap`.
+        """Trial-divide each element by allowed primes, returning residue and exponents.
 
-        v: (...,) LongTensor, non-negative.
-        residue: (...,) after stripping primes up to `cap` times each.
-        exps: tensor [num_primes, ...] of exponent counts per prime (capped by `cap`).
+        Args:
+            v: (...,) LongTensor of non-negative values to factorize.
+            cap: Maximum number of times each prime may divide a value.
+
+        Returns:
+            residue: (...,) values after stripping allowed primes (1 if fully factored).
+            exps: [num_primes, ...] exponent counts per prime (leading axis is primes).
         """
         residue = v.clone()
         exps = []
-        for p in self.primes:
-            p = int(p)
+        for p_int in [int(p) for p in self.primes]:
             count = torch.zeros_like(residue)
-            # Repeatedly divide by p but not more than cap times
             for _ in range(cap):
-                divisible = (residue % p) == 0
+                divisible = (residue % p_int) == 0
                 if not torch.any(divisible):
                     break
-                residue = torch.where(divisible, residue // p, residue)
+                residue = torch.where(divisible, residue // p_int, residue)
                 count = count + divisible.long()
             exps.append(count)
-        exps = torch.stack(exps, dim=0)  # [num_primes, ...]
+        # Shape: [num_primes, ...] — prime axis is leading.
+        exps = torch.stack(exps, dim=0)
         return residue, exps
 
     def _pairwise_coprime_ok(self, v: torch.Tensor) -> torch.Tensor:
-        """Check pairwise coprime on configured pairs using prime divisibility.
+        """Check that configured dimension pairs share no common allowed prime.
 
-        v: (..., m) with m = len(active_dims).
-        Returns (...,) bool.
+        Args:
+            v: (..., num_active_dims) coordinate values.
+
+        Returns:
+            (...,) bool mask, True where all coprime pair constraints hold.
         """
         if not self.coprime_pairs:
             return torch.ones(v.shape[:-1], dtype=torch.bool, device=v.device)
         ok = torch.ones(v.shape[:-1], dtype=torch.bool, device=v.device)
-        for p in self.primes:
-            div = (v % int(p)) == 0  # (..., m)
+        for p_int in [int(p) for p in self.primes]:
+            divisible = (v % p_int) == 0  # (..., num_active_dims)
             for i, j in self.coprime_pairs:
-                m = div.shape[-1]
-                if i >= m or j >= m:
+                num_active = divisible.shape[-1]
+                # Skip pairs that reference dims beyond active_dims (guard).
+                if i >= num_active or j >= num_active:
                     continue
-                both = div[..., i] & div[..., j]
-                ok = ok & (~both)
+                both_divisible = divisible[..., i] & divisible[..., j]
+                ok = ok & (~both_divisible)
         return ok
 
     def _lcm_ok(self, exps: torch.Tensor, target_lcm: int) -> torch.Tensor:
-        """Check whether max exponents across dims match target LCM's exponents.
+        """Check whether max exponents across dims match target LCM's factorization.
 
-        exps: [num_primes, ..., m]
-        target_lcm: int
-        Returns (...,) bool.
+        Args:
+            exps: [num_primes, ..., num_active_dims] exponent counts.
+            target_lcm: The target LCM value to match.
+
+        Returns:
+            (...,) bool mask, True where the LCM of active-dim values equals target.
         """
-        # Factor target_lcm fully over allowed primes; reject if leftover > 1
+        # Factor target_lcm over allowed primes; reject if leftover > 1.
         remaining = int(target_lcm)
-        target_counts: list[int] = []
-        for p in self.primes:
-            p = int(p)
-            c = 0
-            while remaining % p == 0:
-                remaining //= p
-                c += 1
-            target_counts.append(c)
+        target_exp_counts: list[int] = []
+        for p_int in [int(p) for p in self.primes]:
+            exp_count = 0
+            while remaining % p_int == 0:
+                remaining //= p_int
+                exp_count += 1
+            target_exp_counts.append(exp_count)
         if remaining != 1:
-            # Target contains primes outside allowed set -> impossible
-            shape = exps.shape[1:-1]  # broadcast shape (...)
-            return torch.zeros(shape, dtype=torch.bool, device=exps.device)
-        target = torch.tensor(target_counts, dtype=torch.long, device=exps.device)
+            # Target contains primes outside the allowed set — impossible.
+            batch_shape = exps.shape[1:-1]
+            return torch.zeros(batch_shape, dtype=torch.bool, device=exps.device)
 
+        target_vec = torch.tensor(
+            target_exp_counts, dtype=torch.long, device=exps.device
+        )
         max_exp = exps.max(dim=-1).values  # [num_primes, ...]
-        # Broadcast compare to target per prime
-        while target.dim() < max_exp.dim():
-            target = target.unsqueeze(-1)
-        return (max_exp == target).all(dim=0)
+
+        # Unsqueeze target to broadcast against batch dimensions of max_exp.
+        while target_vec.dim() < max_exp.dim():
+            target_vec = target_vec.unsqueeze(-1)
+        return (max_exp == target_vec).all(dim=0)
 
     def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
         R = torch.zeros(
@@ -1484,24 +1541,25 @@ class MultiplicativeCoprimeReward(GridReward):
         if self.R0 != 0.0:
             R += self.R0
 
-        x_full = states_tensor
-        x = x_full.index_select(
+        x = states_tensor.index_select(
             dim=-1, index=torch.tensor(self.active_dims, device=states_tensor.device)
         )
-        # Disallow zeros at the outset for constraints (they cannot have finite prime support)
+        # Zero values cannot be factored over primes — exclude them upfront.
         base_valid = (x != 0).all(dim=-1)
 
         valid_up_to_t = base_valid
         for t, w in enumerate(self.tier_weights):
             cap = self.exponent_caps[t]
+            # Flatten all active-dim values for batch factorization, then reshape.
             residue, exps = self._factor_exponents_up_to_cap(x.reshape(-1), cap)
             residue = residue.reshape(x.shape)
             exps = exps.reshape((len(self.primes),) + x.shape)
 
-            # Prime-support with bounded exponents: residue must be 1 or original value 1
-            support_ok = (residue == 1) | (x == 1)
-            support_ok = support_ok.all(dim=-1)
+            # residue==1 means the value is fully explained by allowed primes.
+            # x==1 trivially satisfies (zero exponents for all primes).
+            support_ok = ((residue == 1) | (x == 1)).all(dim=-1)
 
+            # Coprime check is tier-independent but placed here for uniformity.
             pairs_ok = self._pairwise_coprime_ok(x)
             lcm_ok = torch.ones_like(pairs_ok)
             if self.target_lcms[t] is not None:
@@ -1679,16 +1737,16 @@ class ConditionalMultiScaleReward(GridReward):
                         shift = shift + int(a_tk) * digits[k]
                 shift = shift % self.base
 
-            # Per-dim check: (d_t(i) + shift) mod B < filter_width
+            # Filter: shifted digit must be in [0, filter_width).
             shifted = (digits[t] + shift) % self.base
             per_dim_ok = (shifted < self.filter_width).all(dim=-1)
 
-            # Cross-dim check (optional)
+            # Optional cross-dim modular constraint on the digit sum.
             cross_ok = torch.ones_like(per_dim_ok)
-            m_t = self.cross_dim_mods[t]
-            if m_t is not None:
+            cross_mod = self.cross_dim_mods[t]
+            if cross_mod is not None:
                 digit_sum = digits[t].sum(dim=-1)
-                cross_ok = (digit_sum % int(m_t)) == 0
+                cross_ok = (digit_sum % int(cross_mod)) == 0
 
             tier_ok = per_dim_ok & cross_ok
             valid_up_to_t = valid_up_to_t & tier_ok
@@ -1720,11 +1778,11 @@ class ConditionalMultiScaleReward(GridReward):
         choices_per_coord = (f**T) * (B ** (L - T))
         modes = choices_per_coord**d
 
-        # Cross-dim divisors
+        # Cross-dim modular constraints divide out uniformly.
         for t in range(T):
-            m_t = self.cross_dim_mods[t]
-            if m_t is not None:
-                modes //= m_t
+            cross_mod = self.cross_dim_mods[t]
+            if cross_mod is not None:
+                modes //= cross_mod
 
         return modes
 
@@ -1743,6 +1801,12 @@ class ConditionalMultiScaleReward(GridReward):
 # -------------------------
 # Difficulty preset factories
 # -------------------------
+
+
+def _first_k_dims(k: int, ndim: int) -> list[int]:
+    """Return indices [0, 1, ..., min(k, ndim)-1] for the first k dimensions."""
+    k = min(max(1, k), ndim)
+    return list(range(k))
 
 
 def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
@@ -1765,40 +1829,35 @@ def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
     - Parity checks default to even parity across constrained dims per bit-plane.
     """
 
-    # Choose contiguous first m dims for simplicity; users can override.
-    def dims(m: int) -> list[int]:
-        m = min(max(1, m), ndim)
-        return list(range(m))
-
     presets = {
         "easy": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0],
-            dims_constrained=dims(3),
+            dims_constrained=_first_k_dims(3, ndim),
             bits_per_tier=[(0, 4), (0, 5), (0, 5)],
         ),
         "medium": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
-            dims_constrained=dims(4),
+            dims_constrained=_first_k_dims(4, ndim),
             bits_per_tier=[(0, 6), (0, 7), (0, 7), (0, 7)],
         ),
         "hard": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
-            dims_constrained=dims(8),
+            dims_constrained=_first_k_dims(8, ndim),
             bits_per_tier=[(0, 8), (0, 8), (0, 8), (0, 8)],
         ),
         "challenging": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
-            dims_constrained=dims(6),
+            dims_constrained=_first_k_dims(6, ndim),
             bits_per_tier=[(0, 9), (0, 9), (0, 9), (0, 9)],
         ),
         "impossible": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0, 10000.0],
-            dims_constrained=dims(12),
+            dims_constrained=_first_k_dims(12, ndim),
             bits_per_tier=[(0, 9), (0, 10), (0, 10), (0, 10), (0, 10)],
         ),
     }
@@ -1822,11 +1881,8 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
     - Tier weights are geometric.
     """
 
-    def dims(k: int) -> list[int]:
-        k = min(max(1, k), ndim)
-        return list(range(k))
-
     def chain_pairs(k: int) -> list[tuple[int, int]]:
+        """Return adjacent-index coprime pairs: (0,1), (1,2), ..., (k-2, k-1)."""
         return [(i, i + 1) for i in range(max(0, k - 1))]
 
     presets = {
@@ -1835,7 +1891,7 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             tier_weights=[1.0, 10.0, 100.0],
             primes=[2, 3, 5],
             exponent_caps=[2, 2, 2],
-            active_dims=dims(3),
+            active_dims=_first_k_dims(3, ndim),
             coprime_pairs=chain_pairs(3),
             target_lcms=[None, None, None],
         ),
@@ -1844,7 +1900,7 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
             primes=[2, 3, 5, 7],
             exponent_caps=[2, 2, 2, 2],
-            active_dims=dims(5),
+            active_dims=_first_k_dims(5, ndim),
             coprime_pairs=chain_pairs(5),
             target_lcms=[None, None, None, None],
         ),
@@ -1853,26 +1909,25 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
             primes=[2, 3, 5, 7, 11],
             exponent_caps=[3, 3, 3, 3],
-            active_dims=dims(8),
+            active_dims=_first_k_dims(8, ndim),
             coprime_pairs=chain_pairs(8),
-            # Example LCM target encourages compositional reasoning
-            target_lcms=[None, None, 2**3 * 3**2 * 5 * 7 * 11, 2**3 * 3**2 * 5 * 7 * 11],
+            target_lcms=[None, None, 2**3 * 3**2 * 5 * 7 * 11, 2**3 * 3**2 * 5 * 7 * 11],  # = 9240
         ),
         "challenging": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
             primes=[2, 3, 5, 7, 11, 13],
             exponent_caps=[3, 3, 4, 4],
-            active_dims=dims(10),
+            active_dims=_first_k_dims(10, ndim),
             coprime_pairs=chain_pairs(10),
-            target_lcms=[None, None, None, 2**3 * 3**2 * 5**2 * 13],
+            target_lcms=[None, None, None, 2**3 * 3**2 * 5**2 * 13],  # = 5850
         ),
         "impossible": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0, 10000.0],
             primes=[2, 3, 5, 7, 11, 13, 17, 19, 23, 29],
             exponent_caps=[4, 4, 4, 4, 4],
-            active_dims=dims(12),
+            active_dims=_first_k_dims(12, ndim),
             coprime_pairs=chain_pairs(12),
             target_lcms=[None, None, None, None, 2**4 * 3**3 * 5**2 * 7 * 11],
         ),
@@ -1902,10 +1957,6 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
       - impossible:  4 tiers, 12 active dims, cross-dim -> ~4K modes at tier 4
     """
 
-    def dims(k: int) -> list[int]:
-        k = min(max(1, k), ndim)
-        return list(range(k))
-
     presets = {
         "easy": dict(
             R0=0.0,
@@ -1913,7 +1964,7 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
             base=4,
             filter_width=2,
             seed=42,
-            active_dims=dims(3),
+            active_dims=_first_k_dims(3, ndim),
         ),
         "medium": dict(
             R0=0.0,
@@ -1921,7 +1972,7 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
             base=4,
             filter_width=2,
             seed=42,
-            active_dims=dims(4),
+            active_dims=_first_k_dims(4, ndim),
         ),
         "hard": dict(
             R0=0.0,
@@ -1929,7 +1980,7 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
             base=4,
             filter_width=2,
             seed=42,
-            active_dims=dims(6),
+            active_dims=_first_k_dims(6, ndim),
             cross_dim_mods=[None, 2, 2],
         ),
         "challenging": dict(
@@ -1938,7 +1989,7 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
             base=4,
             filter_width=2,
             seed=42,
-            active_dims=dims(8),
+            active_dims=_first_k_dims(8, ndim),
             cross_dim_mods=[None, None, 2, 2],
         ),
         "impossible": dict(
@@ -1947,7 +1998,7 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
             base=4,
             filter_width=2,
             seed=42,
-            active_dims=dims(12),
+            active_dims=_first_k_dims(12, ndim),
             cross_dim_mods=[None, 2, 2, 2],
         ),
     }
