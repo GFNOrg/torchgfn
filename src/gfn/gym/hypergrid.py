@@ -385,15 +385,16 @@ class HyperGrid(DiscreteEnv):
         if isinstance(self.reward_fn, SparseReward):
             return 0.5
 
-        # For compositional rewards with tiered structure, mark mode as achieving
-        # the highest tier. We assume the classes expose `R0` and `tier_weights`.
+        # ConditionalMultiScale uses an adaptive tier based on dimensionality:
+        # at low d, deeper tiers are needed for modes to be sparse.
+        if isinstance(self.reward_fn, ConditionalMultiScaleReward):
+            return self.reward_fn.mode_threshold()
+
+        # For other compositional rewards with tiered structure, mark mode as
+        # achieving the highest tier.
         if isinstance(
             self.reward_fn,
-            (
-                BitwiseXORReward,
-                MultiplicativeCoprimeReward,
-                ConditionalMultiScaleReward,
-            ),
+            (BitwiseXORReward, MultiplicativeCoprimeReward),
         ):
             r0 = float(getattr(self.reward_fn, "R0", 0.0))
             tw = getattr(self.reward_fn, "tier_weights", [])
@@ -401,7 +402,6 @@ class HyperGrid(DiscreteEnv):
                 raise ValueError(
                     "Tiered reward missing `tier_weights`; cannot derive mode threshold."
                 )
-            # Cumulative structure: mode threshold is R0 + sum of all tier weights
             return r0 + float(sum(tw))
 
         # Other reward schemas are not supported for mode counting via threshold.
@@ -1753,6 +1753,44 @@ class ConditionalMultiScaleReward(GridReward):
             R = R + (valid_up_to_t.to(R.dtype) * float(w))
 
         return R
+
+    def mode_tier(self, target_sparsity: float = 0.01) -> int:
+        """Return the lowest tier whose mode coverage is below target_sparsity.
+
+        Coverage at tier t = (f/B)^(t*d) (before cross-dim constraints).
+        This adapts the mode definition to dimensionality: at low d, deeper
+        tiers are needed for modes to be sparse; at high d, even tier 1 is
+        already a needle in a haystack.
+
+        Args:
+            target_sparsity: Fraction of total state space below which modes
+                are considered "interesting" (default 0.01 = 1%).
+
+        Returns:
+            1-indexed tier number. Clamped to [1, num_tiers].
+        """
+        d = len(self.active_dims)
+        ratio = self.filter_width / self.base  # f/B
+        for t in range(1, len(self.tier_weights) + 1):
+            if ratio ** (t * d) < target_sparsity:
+                return t
+        return len(self.tier_weights)
+
+    def mode_threshold(self, target_sparsity: float = 0.01) -> float:
+        """Return the reward threshold for mode counting at the adaptive tier.
+
+        States with reward >= this value are counted as modes. The tier is
+        chosen via ``mode_tier(target_sparsity)`` so that mode coverage adapts
+        to dimensionality.
+
+        Args:
+            target_sparsity: Passed to ``mode_tier()``.
+
+        Returns:
+            Reward threshold (R0 + sum of weights up to the mode tier).
+        """
+        t = self.mode_tier(target_sparsity)
+        return self.R0 + sum(self.tier_weights[:t])
 
     def analytic_mode_count(self, tier: int | None = None) -> int:
         """Compute exact mode count for a given tier (1-indexed) or all tiers.
