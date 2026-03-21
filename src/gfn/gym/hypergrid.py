@@ -1754,7 +1754,7 @@ class ConditionalMultiScaleReward(GridReward):
 
         return R
 
-    def mode_tier(self, target_sparsity: float = 0.01) -> int:
+    def mode_tier(self, target_sparsity: float = 0.10) -> int:
         """Return the lowest tier whose mode coverage is below target_sparsity.
 
         Coverage at tier t = (f/B)^(t*d) (before cross-dim constraints).
@@ -1764,7 +1764,7 @@ class ConditionalMultiScaleReward(GridReward):
 
         Args:
             target_sparsity: Fraction of total state space below which modes
-                are considered "interesting" (default 0.01 = 1%).
+                are considered "interesting" (default 0.10 = 10%).
 
         Returns:
             1-indexed tier number. Clamped to [1, num_tiers].
@@ -1776,7 +1776,7 @@ class ConditionalMultiScaleReward(GridReward):
                 return t
         return len(self.tier_weights)
 
-    def mode_threshold(self, target_sparsity: float = 0.01) -> float:
+    def mode_threshold(self, target_sparsity: float = 0.10) -> float:
         """Return the reward threshold for mode counting at the adaptive tier.
 
         States with reward >= this value are counted as modes. The tier is
