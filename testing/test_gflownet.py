@@ -188,15 +188,7 @@ def test_flow_matching_vectorized_matches_original(seed):
     trajectories = gflownet.sample_trajectories(env, n=6)
     states_container = gflownet.to_training_samples(trajectories)
     states = states_container.intermediary_states
-    conditions = states.conditions  # conditions live inside States after refactor
-
-    if len(states) == 0:
-        # If the sample produced only terminal states, resample with more trajectories.
-        trajectories = gflownet.sample_trajectories(env, n=12)
-        states_container = gflownet.to_training_samples(trajectories)
-        states = states_container.intermediary_states
-        conditions = states.conditions  # conditions live inside States after refactor
-
+    conditions = states.conditions
     assert len(states) > 0
 
     loss_original = _flow_matching_loss_reference(

@@ -418,10 +418,10 @@ def test_sub_sampling(
         n_components=1,
         n_components_s0=1,
     )
-    try:
-        _ = trajectories.sample(n_samples=2)
-    except Exception as e:
-        raise ValueError(f"Error while testing {env_name}") from e
+    sampled = trajectories.sample(n_samples=2)
+    assert sampled.n_trajectories == 2
+    assert sampled.states is not None
+    assert sampled.actions is not None
 
 
 @pytest.mark.parametrize(
@@ -455,18 +455,19 @@ def test_reverse_backward_trajectories(
                 reversed_trajs.actions.tensor[j, i]
                 == backward_trajs.actions.tensor[terminating_idx - j - 1, i]
             )
-            if env_name != "GraphBuildingOnEdges":
+            if env_name == "GraphBuildingOnEdges":
+                # GraphStates.tensor returns a GeometricBatch with different
+                # indexing semantics. Compare via GraphStates indexing instead.
+                rev_g = reversed_trajs.states[j, i].data.flat[0]
+                bwd_g = backward_trajs.states[terminating_idx - j, i].data.flat[0]
+                assert torch.equal(rev_g.x, bwd_g.x)
+                assert torch.equal(rev_g.edge_index, bwd_g.edge_index)
+                assert torch.equal(rev_g.edge_attr, bwd_g.edge_attr)
+            else:
                 assert torch.all(
                     reversed_trajs.states.tensor[j, i]
                     == backward_trajs.states.tensor[terminating_idx - j, i]
                 )
-            else:
-                # reverse_backward_trajectories seems do not correctly support GraphBuildingOnEdges
-                pytest.skip("FIXME: Need to fix this")
-                # assert torch.all(
-                #     reversed_trajs.states.tensor.edge_index[j, i]
-                #     == backward_trajs.states.tensor.edge_index[terminating_idx - j, i]
-                # )
 
         assert torch.all(reversed_trajs.actions[terminating_idx, i].is_exit)
         assert torch.all(reversed_trajs.states[terminating_idx + 1, i].is_sink_state)
