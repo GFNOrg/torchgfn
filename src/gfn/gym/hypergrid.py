@@ -21,10 +21,15 @@ from gfn.states import DiscreteStates
 
 logger = logging.getLogger(__name__)
 
-if platform.system() == "Windows":
-    multiprocessing.set_start_method("spawn", force=True)
-else:
-    multiprocessing.set_start_method("fork", force=True)
+# Only set the multiprocessing start method when not already configured
+# (e.g. by Jupyter or another framework). force=True can crash notebook kernels.
+try:
+    if platform.system() == "Windows":
+        multiprocessing.set_start_method("spawn")
+    else:
+        multiprocessing.set_start_method("fork")
+except RuntimeError:
+    pass  # Already set — don't override.
 
 
 def lcm(a, b):
@@ -192,12 +197,15 @@ class HyperGrid(DiscreteEnv):
                         raise ValueError(
                             "Exact mode_stats requires store_all_states=True to enumerate states."
                         )
-                    all_states = self.all_states
-                    if all_states is None:
+                    if self._all_states_tensor is None:
                         raise ValueError(
                             "Failed to access all_states for exact mode_stats."
                         )
-                    mask = self.mode_mask(all_states)
+                    # Compute on CPU to avoid device-mismatch in reward fns.
+                    cpu_tensor = self._all_states_tensor.cpu()
+                    rewards = self.reward_fn(cpu_tensor)
+                    threshold = self._mode_reward_threshold()
+                    mask = rewards >= threshold
                     self._n_mode_states_exact = int(mask.sum().item())
                     self._mode_stats_kind = "exact"
                 else:
@@ -532,12 +540,12 @@ class HyperGrid(DiscreteEnv):
 
         # If the grid is small enough, prefer an exact check to avoid fragile heuristics.
         # Also prefer exact when all states are already stored.
+        # All work is done on CPU to avoid device-mismatch issues (e.g. MPS).
         try:
             if self.store_all_states and self.all_states is not None:
-                rewards = self.reward(self.all_states)
-                # Compare with a small tolerance to avoid missing near-boundary cases.
+                cpu_states = self.all_states.tensor.cpu()
+                rewards = self.reward_fn(cpu_states)
                 return bool((rewards >= thr - EPS_REWARD_CMP).any().item())
-            # Cheap exact threshold (up to ~200k states)
             if self.n_states <= 200_000:
                 axes = [
                     torch.arange(self.height, dtype=torch.long) for _ in range(self.ndim)
@@ -566,8 +574,15 @@ class HyperGrid(DiscreteEnv):
             ok = self._modes_exist_quick_check()
             if ok:
                 return True, "OK"
-        except Exception:
+        except (ValueError, ArithmeticError):
+            # Genuine validation failures — fall through to the message below.
             pass
+        except Exception as e:
+            # Unexpected errors (device mismatch, OOM, etc.) — re-raise so
+            # they are not silently converted into a misleading "no modes" message.
+            raise RuntimeError(
+                f"validate_modes failed with an unexpected error: {e}"
+            ) from e
 
         return (
             False,
@@ -644,7 +659,7 @@ class HyperGrid(DiscreteEnv):
         # well enough that max_per_dim_factor^D exceeds (gamma * peak)^D.
         theoretical_peak = 2.0 / sqrt(2 * pi)
         target = R0 + (gamma * theoretical_peak) ** self.ndim * R1
-        rmax = R0 + (max_per_dim_factor ** self.ndim) * R1
+        rmax = R0 + (max_per_dim_factor**self.ndim) * R1
 
         # Must exceed both the gamma-scaled target (grid resolves peaks)
         # and the caller's threshold (mode definition is satisfiable).
@@ -935,11 +950,11 @@ class HyperGrid(DiscreteEnv):
             self._enumerate_all_states_tensor()
 
         assert self._all_states_tensor is not None
+        self._all_states_tensor = self._all_states_tensor.to(self.device)
         assert torch.all(
             self.get_states_indices(self._all_states_tensor)
             == torch.arange(self.n_states, device=self.device)
         )
-        self._all_states_tensor = self._all_states_tensor.to(self.device)
         return self.States(self._all_states_tensor)
 
     @property
@@ -1948,7 +1963,12 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             exponent_caps=[3, 3, 3, 3],
             active_dims=_first_k_dims(8, ndim),
             coprime_pairs=chain_pairs(8),
-            target_lcms=[None, None, 2**3 * 3**2 * 5 * 7 * 11, 2**3 * 3**2 * 5 * 7 * 11],  # = 9240
+            target_lcms=[
+                None,
+                None,
+                2**3 * 3**2 * 5 * 7 * 11,
+                2**3 * 3**2 * 5 * 7 * 11,
+            ],  # = 9240
         ),
         "challenging": dict(
             R0=0.0,
