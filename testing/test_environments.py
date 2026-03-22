@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pytest
@@ -7,7 +7,12 @@ from tensordict import TensorDict
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.env import Env, NonValidActionsError
-from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
+from gfn.estimators import (
+    DiscretePolicyEstimator,
+    PinnedBrownianMotionBackward,
+    PinnedBrownianMotionForward,
+)
+from gfn.gflownet import TBGFlowNet
 from gfn.gym import Box, ConditionalHyperGrid, DiscreteEBM, HyperGrid
 from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.gym.graph_building import GraphBuilding
@@ -1033,3 +1038,228 @@ def test_diffusion_trajectory_mask_alignment():
     # Shape is (T, N) = (num_steps, batch_size) - per-step log probs for each trajectory.
     assert log_pfs.shape == (num_steps, batch_size)
     assert log_pbs.shape == (num_steps, batch_size)
+
+
+# ---------------------------------------------------------------------------
+# Box backward_step tests
+# ---------------------------------------------------------------------------
+
+
+def test_box_bwd_step():
+    """Test Box environment backward step arithmetic."""
+    env = Box(delta=0.1, debug=True)
+
+    # Backward step is subtraction: result = state - action
+    # Actions must produce valid states (result >= 0, and result either >= delta or == 0)
+    state_tensor = torch.tensor([[0.5, 0.5], [0.7, 0.3], [0.9, 0.9]])
+    states = env.States(state_tensor.clone())
+    # These actions produce states [0.3, 0.4], [0.4, 0.15], [0.5, 0.5] — all >= delta
+    action_tensor = torch.tensor([[0.2, 0.1], [0.3, 0.15], [0.4, 0.4]])
+    actions = env.actions_from_tensor(action_tensor)
+
+    result = env._backward_step(states, actions)
+    expected = state_tensor - action_tensor
+    assert torch.allclose(result.tensor, expected, atol=1e-6)
+
+
+def test_box_bwd_step_roundtrip():
+    """Forward step then backward step returns to original state."""
+    env = Box(delta=0.1, debug=True)
+
+    # Start from s0, take a forward step
+    s0 = env.reset(batch_shape=(3,))
+    action_tensor = torch.tensor([[0.3, 0.4], [0.5, 0.2], [0.1, 0.8]])
+    actions = env.actions_from_tensor(action_tensor)
+
+    stepped = env._step(s0, actions)
+    # Now backward step with the same action
+    restored = env._backward_step(stepped, actions)
+
+    assert torch.allclose(restored.tensor, s0.tensor, atol=1e-6)
+
+
+def test_box_bwd_is_action_valid():
+    """Test backward action validation for BoxCartesian."""
+    env = Box(delta=0.1, debug=True)
+
+    state = env.States(torch.tensor([[0.5, 0.5]]))
+
+    # Valid backward action: state - action >= 0
+    valid_action = env.actions_from_tensor(torch.tensor([[0.3, 0.2]]))
+    assert env.is_action_valid(state, valid_action, backward=True)
+
+    # Invalid backward action: would produce negative coordinates
+    invalid_action = env.actions_from_tensor(torch.tensor([[0.6, 0.2]]))
+    assert not env.is_action_valid(state, invalid_action, backward=True)
+
+    # Can't go backward from s0
+    s0 = env.reset(batch_shape=(1,))
+    any_action = env.actions_from_tensor(torch.tensor([[0.1, 0.1]]))
+    assert not env.is_action_valid(s0, any_action, backward=True)
+
+
+# ---------------------------------------------------------------------------
+# validate() tests
+# ---------------------------------------------------------------------------
+
+
+def _make_tb_gflownet(env, debug=True):
+    """Helper to build a TBGFlowNet for validation tests."""
+    from gfn.preprocessors import KHotPreprocessor
+    from gfn.utils.modules import MLP
+
+    preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
+    pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
+    pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
+    pf = DiscretePolicyEstimator(
+        pf_module,
+        n_actions=env.n_actions,
+        is_backward=False,
+        preprocessor=preprocessor,
+    )
+    pb = DiscretePolicyEstimator(
+        pb_module,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=preprocessor,
+    )
+    return TBGFlowNet(pf=pf, pb=pb, debug=debug)
+
+
+def test_validate_hypergrid():
+    """validate() returns L1 distance and logZ_diff for HyperGrid."""
+    env = HyperGrid(ndim=2, height=4, store_all_states=True)
+    gflownet = _make_tb_gflownet(env)
+
+    torch.manual_seed(42)
+    info, states = env.validate(gflownet, n_validation_samples=200)
+
+    assert "l1_dist" in info
+    assert 0 <= info["l1_dist"] <= 2.0  # L1 between prob dists is in [0, 2]
+    assert "logZ_diff" in info
+    assert info["logZ_diff"] >= 0
+    assert states is not None
+    assert len(states) > 0
+
+
+def test_validate_discrete_ebm():
+    """validate() works for DiscreteEBM."""
+    env = DiscreteEBM(ndim=4)
+
+    from gfn.utils.modules import MLP
+
+    preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+    input_dim = cast(int, preprocessor.output_dim)
+    pf_module = MLP(input_dim=input_dim, output_dim=env.n_actions)
+    pb_module = MLP(input_dim=input_dim, output_dim=env.n_actions - 1)
+    pf = DiscretePolicyEstimator(
+        pf_module,
+        n_actions=env.n_actions,
+        is_backward=False,
+        preprocessor=preprocessor,
+    )
+    pb = DiscretePolicyEstimator(
+        pb_module,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=preprocessor,
+    )
+    gflownet = TBGFlowNet(pf=pf, pb=pb)
+
+    torch.manual_seed(42)
+    info, states = env.validate(gflownet, n_validation_samples=200)
+
+    assert "l1_dist" in info
+    assert 0 <= info["l1_dist"] <= 2.0
+    assert "logZ_diff" in info
+    assert states is not None
+
+
+def test_validate_conditional_hypergrid():
+    """validate() works with a condition tensor for ConditionalHyperGrid."""
+    from gfn.estimators import ConditionalDiscretePolicyEstimator
+    from gfn.utils.modules import MLP
+
+    env = ConditionalHyperGrid(ndim=2, height=4, store_all_states=True)
+    preprocessor = IdentityPreprocessor(output_dim=env.state_shape[-1])
+    input_dim = cast(int, preprocessor.output_dim)
+    hidden = 16
+
+    pf = ConditionalDiscretePolicyEstimator(
+        state_module=MLP(input_dim=input_dim, output_dim=hidden),
+        condition_module=MLP(input_dim=env.condition_dim, output_dim=hidden),
+        final_module=MLP(input_dim=hidden * 2, output_dim=env.n_actions),
+        n_actions=env.n_actions,
+        is_backward=False,
+        preprocessor=preprocessor,
+    )
+    pb = ConditionalDiscretePolicyEstimator(
+        state_module=MLP(input_dim=input_dim, output_dim=hidden),
+        condition_module=MLP(input_dim=env.condition_dim, output_dim=hidden),
+        final_module=MLP(input_dim=hidden * 2, output_dim=env.n_actions - 1),
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=preprocessor,
+    )
+    gflownet = TBGFlowNet(pf=pf, pb=pb)
+
+    torch.manual_seed(42)
+    condition = torch.tensor([0.5])
+    info, states = env.validate(
+        gflownet,
+        n_validation_samples=200,
+        validate_condition=condition,
+    )
+
+    assert "l1_dist" in info
+    assert 0 <= info["l1_dist"] <= 2.0
+    assert "logZ_diff" in info
+    assert states is not None
+
+
+def test_validate_with_visited_states():
+    """validate() uses pre-sampled terminating states when provided."""
+    env = HyperGrid(ndim=2, height=4, store_all_states=True)
+    gflownet = _make_tb_gflownet(env)
+
+    # Sample states manually
+    torch.manual_seed(42)
+    sampled = gflownet.sample_terminating_states(env, 100)
+
+    from gfn.states import DiscreteStates
+
+    info, returned_states = env.validate(
+        gflownet,
+        n_validation_samples=50,
+        visited_terminating_states=cast(DiscreteStates, sampled),
+    )
+
+    assert "l1_dist" in info
+    # Should use the last 50 of the 100 provided states
+    assert returned_states is not None
+
+
+def test_validate_no_true_dist_returns_empty():
+    """validate() returns empty dict gracefully when true_dist is not implemented."""
+    env = HyperGrid(ndim=2, height=4, store_all_states=True)
+    gflownet = _make_tb_gflownet(env)
+
+    # Temporarily make true_dist raise NotImplementedError.
+    original = env.true_dist
+    env.true_dist = lambda *a, **kw: (_ for _ in ()).throw(NotImplementedError)
+
+    info, states = env.validate(gflownet, n_validation_samples=10)
+    assert info == {}
+
+    env.true_dist = original
+
+
+def test_validate_zero_samples_returns_empty():
+    """validate() with n_validation_samples=0 and no visited states returns empty."""
+    env = HyperGrid(ndim=2, height=4, store_all_states=True)
+    gflownet = _make_tb_gflownet(env)
+
+    info, states = env.validate(gflownet, n_validation_samples=0)
+
+    assert info == {}
+    assert states is None
