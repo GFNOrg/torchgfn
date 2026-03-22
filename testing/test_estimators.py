@@ -44,7 +44,7 @@ def reference_probability_computation(
     epsilon: float = 0.0,
     is_backward: bool = False,
 ) -> torch.Tensor:
-    """Reference implementation for probability computation as provided in the user query."""
+    """Reference implementation for masked softmax probability computation."""
     assert masks.any(dim=-1).all(), "No possible actions"
 
     # Clone and mask logits

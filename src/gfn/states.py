@@ -1050,13 +1050,13 @@ class DiscreteStates(States, ABC):
         self.forward_masks[..., -1].masked_fill_(batch_idx, True)
 
     def init_forward_masks(self, set_ones: bool = True) -> None:
-        """Initalizes forward masks.
+        """Initializes forward masks.
 
-        A convienience function for common mask operations.
+        A convenience function for common mask operations.
 
         Args:
-            set_ones: if True, forward masks are initalized to all ones. Otherwise,
-                they are initalized to all zeros.
+            set_ones: if True, forward masks are initialized to all ones. Otherwise,
+                they are initialized to all zeros.
         """
         shape = self.batch_shape + (self.n_actions,)
         if set_ones:

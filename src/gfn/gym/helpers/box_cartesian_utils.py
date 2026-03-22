@@ -258,12 +258,9 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
         )
 
         # Normalize concentration parameters
-        alpha = self.min_concentration + (
-            self.max_concentration - self.min_concentration
-        ) * torch.sigmoid(alpha_raw)
-        beta = self.min_concentration + (
-            self.max_concentration - self.min_concentration
-        ) * torch.sigmoid(beta_raw)
+        conc_range = self.max_concentration - self.min_concentration
+        alpha = self.min_concentration + conc_range * torch.sigmoid(alpha_raw)
+        beta = self.min_concentration + conc_range * torch.sigmoid(beta_raw)
 
         return BoxCartesianDistribution(
             states=states,

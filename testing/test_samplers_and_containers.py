@@ -213,9 +213,9 @@ def trajectory_sampling_with_return(
     n_components_s0: int,
 ) -> Tuple[Trajectories, Trajectories, Estimator, Estimator]:
     if preprocessor_name != "Identity" and env_name != "HyperGrid":
-        pytest.skip("Useless tests")
+        pytest.skip("Non-identity preprocessors only tested with HyperGrid")
     if (delta != 0.1 or n_components != 1 or n_components_s0 != 1) and env_name != "Box":
-        pytest.skip("Useless tests")
+        pytest.skip("Delta/component parameters only varied for Box")
 
     env, pf_estimator, pb_estimator = get_env_and_estimators(
         env_name,

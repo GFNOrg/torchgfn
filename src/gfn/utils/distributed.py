@@ -28,8 +28,8 @@ def report_load_imbalance(
     logger.info("-" * 80)
 
     for step, times in all_timing_dict[0].items():
-        if type(times) is not list:
-            times = [times]  # Ensure times is a list
+        if not isinstance(times, list):
+            times = [times]
 
         curr_step_times = {}
         is_valid_key = True  # Time information for some steps are not present in all ranks. Those are skipped.
@@ -151,16 +151,14 @@ def initialize_distributed_compute_mpi4py(
     num_remote_buffers: int,
     num_agent_groups: int,
 ) -> DistributedContextmpi4py:
-    """Initalizes distributed compute using either ccl or mpi backends."""
-    """
-    Initalizes distributed compute using either ccl or mpi backends.
-    Args:
-        dist_backend: The backend to use for distributed compute.
-        num_remote_buffers: The number of remote buffers to use.
-    """
+    """Initializes distributed compute using mpi4py.
 
+    Args:
+        num_remote_buffers: The number of remote buffers to use.
+        num_agent_groups: The number of agent groups.
+    """
     pmi_size = MPI.COMM_WORLD.Get_size()
-    print("+ Initalizing distributed compute, PMI_SIZE={}".format(pmi_size))
+    print(f"+ Initializing distributed compute, PMI_SIZE={pmi_size}")
 
     if pmi_size <= 1:
         print("+ PMI_SIZE <= 1, running in single process mode.")
@@ -318,13 +316,12 @@ def initialize_distributed_compute(
     num_remote_buffers: int,
     num_agent_groups: int,
 ) -> DistributedContext:
-    """Initalizes distributed compute using either ccl or mpi backends."""
-    """
-    Initalizes distributed compute using either ccl or mpi backends.
+    """Initializes distributed compute using ccl, mpi, or gloo backends.
 
     Args:
         dist_backend: The backend to use for distributed compute.
         num_remote_buffers: The number of remote buffers to use.
+        num_agent_groups: The number of agent groups.
     """
     assert dist_backend in [
         "ccl",

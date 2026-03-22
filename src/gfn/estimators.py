@@ -967,7 +967,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         )
         assert (
             reduction in REDUCTION_FUNCTIONS
-        ), "reduction function not one of {}".format(REDUCTION_FUNCTIONS.keys())
+        ), f"reduction function not one of {set(REDUCTION_FUNCTIONS)}"
         self.reduction_function = REDUCTION_FUNCTIONS[reduction]
 
     def forward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:

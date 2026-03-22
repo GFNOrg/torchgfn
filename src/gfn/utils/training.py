@@ -138,7 +138,7 @@ def warm_up(
     Returns:
         The trained GFlowNet instance.
     """
-    t = trange(n_epochs, desc="Bar desc", leave=True)
+    t = trange(n_epochs, desc="Training", leave=True)
     for epoch in t:
         training_trajs = replay_buf.sample(batch_size)
         optimizer.zero_grad()
