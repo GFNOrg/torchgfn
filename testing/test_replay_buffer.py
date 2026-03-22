@@ -309,6 +309,162 @@ def test_prioritized_sampling(simple_env, trajectories):
     assert torch.all(counts[:-1] <= counts[1:])
 
 
+# ---------------------------------------------------------------------------
+# Replay buffer hardening tests
+# ---------------------------------------------------------------------------
+
+
+def _make_transitions(env, n, log_rewards, log_probs=None):
+    """Helper to build n Transitions with controlled log_rewards."""
+    state_class = env.make_states_class()
+    action_class = env.make_actions_class()
+    return Transitions(
+        env,
+        states=state_class(torch.randn(n, 2)),
+        next_states=state_class(torch.randn(n, 2)),
+        actions=action_class(torch.ones(n, 1)),
+        log_probs=log_probs,
+        log_rewards=log_rewards,
+        is_terminating=torch.zeros(n, dtype=torch.bool),
+    )
+
+
+def test_prioritized_capacity_evicts_lowest_rewards(simple_env):
+    """When buffer overflows with prioritized_capacity, lowest rewards are evicted."""
+    buffer = ReplayBuffer(simple_env, capacity=3, prioritized_capacity=True)
+
+    batch1 = _make_transitions(simple_env, 3, torch.tensor([10.0, 20.0, 30.0]))
+    buffer.add(batch1)
+    assert len(buffer) == 3
+
+    batch2 = _make_transitions(simple_env, 2, torch.tensor([5.0, 25.0]))
+    buffer.add(batch2)
+
+    assert len(buffer) == 3
+    # Combined [5,10,20,25,30] sorted ascending, keep [-3:] = [20,25,30]
+    assert isinstance(buffer.training_container, Transitions)
+    rewards = buffer.training_container.log_rewards
+    assert rewards is not None
+    assert torch.allclose(rewards, torch.tensor([20.0, 25.0, 30.0]))
+
+
+def test_non_prioritized_capacity_keeps_newest(simple_env):
+    """Without prioritized_capacity, buffer keeps newest items (FIFO eviction)."""
+    buffer = ReplayBuffer(simple_env, capacity=3, prioritized_capacity=False)
+
+    batch1 = _make_transitions(simple_env, 3, torch.tensor([100.0, 200.0, 300.0]))
+    buffer.add(batch1)
+
+    batch2 = _make_transitions(simple_env, 2, torch.tensor([1.0, 2.0]))
+    buffer.add(batch2)
+
+    assert len(buffer) == 3
+    # [100,200,300] extended with [1,2] = [100,200,300,1,2], keep [-3:] = [300,1,2]
+    assert isinstance(buffer.training_container, Transitions)
+    rewards = buffer.training_container.log_rewards
+    assert rewards is not None
+    assert torch.allclose(rewards, torch.tensor([300.0, 1.0, 2.0]))
+
+
+def test_add_clears_stale_fields_on_trajectories(simple_env):
+    """After add(), log_probs and estimator_outputs are cleared on Trajectories."""
+    buffer = ReplayBuffer(simple_env, capacity=10)
+    state_class = simple_env.make_states_class()
+    action_class = simple_env.make_actions_class()
+
+    traj = Trajectories(
+        simple_env,
+        states=state_class(torch.randn(4, 2, 2)),
+        actions=action_class(torch.ones(3, 2, 1)),
+        log_probs=torch.ones(3, 2),
+        log_rewards=torch.tensor([1.0, 2.0]),
+        estimator_outputs=torch.randn(3, 2, 4),
+        terminating_idx=torch.tensor([2, 3]),
+    )
+    buffer.add(traj)
+
+    assert isinstance(buffer.training_container, Trajectories)
+    assert buffer.training_container.log_probs is None
+    assert buffer.training_container.estimator_outputs is None
+
+
+def test_add_clears_log_probs_on_transitions(simple_env):
+    """After add(), log_probs is cleared on Transitions."""
+    buffer = ReplayBuffer(simple_env, capacity=10)
+
+    trans = _make_transitions(
+        simple_env, 3, torch.tensor([1.0, 2.0, 3.0]), log_probs=torch.zeros(3)
+    )
+    buffer.add(trans)
+
+    assert isinstance(buffer.training_container, Transitions)
+    assert buffer.training_container.log_probs is None
+
+
+def test_type_consistency_rejects_mismatched_containers(simple_env):
+    """Adding a different container type to an occupied buffer raises AssertionError."""
+    buffer = ReplayBuffer(simple_env, capacity=10)
+
+    trans = _make_transitions(simple_env, 3, torch.tensor([1.0, 2.0, 3.0]))
+    buffer.add(trans)
+
+    state_class = simple_env.make_states_class()
+    action_class = simple_env.make_actions_class()
+    traj = Trajectories(
+        simple_env,
+        states=state_class(torch.randn(3, 2, 2)),
+        actions=action_class(torch.ones(2, 2, 1)),
+        log_rewards=torch.tensor([1.0, 2.0]),
+        terminating_idx=torch.tensor([1, 2]),
+    )
+
+    with pytest.raises(AssertionError):
+        buffer.add(traj)
+
+
+def test_multiple_add_cycles_maintain_capacity(simple_env):
+    """Repeated add cycles never exceed capacity and maintain data integrity."""
+    capacity = 5
+    buffer = ReplayBuffer(simple_env, capacity=capacity)
+
+    for i in range(20):
+        batch = _make_transitions(
+            simple_env,
+            3,
+            torch.tensor([i * 3.0, i * 3.0 + 1, i * 3.0 + 2]),
+        )
+        buffer.add(batch)
+        assert len(buffer) <= capacity
+
+    assert len(buffer) == capacity
+    assert isinstance(buffer.training_container, Transitions)
+    rewards = buffer.training_container.log_rewards
+    assert rewards is not None
+    assert len(rewards) == capacity
+
+
+def test_prioritized_sample_with_replacement(simple_env):
+    """Prioritized sampling uses replacement when n_samples > buffer size."""
+    buffer = ReplayBuffer(simple_env, capacity=10, prioritized_sampling=True)
+    trans = _make_transitions(simple_env, 3, torch.tensor([1.0, 2.0, 3.0]))
+    buffer.add(trans)
+
+    sampled = buffer.sample(10)
+    assert len(sampled) == 10
+    assert isinstance(sampled, Transitions)
+    assert sampled.log_rewards is not None
+    # All sampled rewards must come from the original set.
+    for r in sampled.log_rewards.tolist():
+        assert r in [1.0, 2.0, 3.0]
+
+
+def test_device_property_raises_on_empty_buffer(simple_env):
+    """Accessing device on empty buffer raises AssertionError."""
+    buffer = ReplayBuffer(simple_env, capacity=10)
+    with pytest.raises(AssertionError, match="Buffer is empty"):
+        _ = buffer.device
+
+
 def _make_states_container(
     env, state_tensors, is_terminating, log_rewards, conditions=None
 ):
