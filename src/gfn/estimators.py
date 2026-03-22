@@ -639,8 +639,13 @@ class LogitBasedEstimator(Estimator):
         - If epsilon == 0: masked, biased, temperature-scaled logits.
         - Else: normalized log-probs of the epsilon-greedy mixture (valid as logits).
         """
-        if debug:
-            assert not torch.isnan(logits).any(), "Module output logits contain NaNs"
+        # Check for NaN in module output — the source of NaN from exploding
+        # gradients. Gated behind debug to avoid graph breaks in torch.compile.
+        if debug and torch.isnan(logits).any():
+            raise ValueError(
+                "Module output contains NaN. This typically indicates "
+                "exploding gradients or numerical instability in the model."
+            )
 
         # Prepare logits first (masking, bias, temperature) in the existing dtype
         x = LogitBasedEstimator._prepare_logits(

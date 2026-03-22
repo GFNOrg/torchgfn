@@ -471,6 +471,14 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
                 raise ValueError("Infinite pf logprobs found")
             if torch.any(torch.isinf(total_log_pb_trajectories)):
                 raise ValueError("Infinite pb logprobs found")
+            if not torch.isfinite(log_rewards).all():
+                non_finite = ~torch.isfinite(log_rewards)
+                raise ValueError(
+                    f"Non-finite log_rewards found ({non_finite.sum().item()} "
+                    f"of {log_rewards.numel()} values). This typically means "
+                    f"env.reward() returned zero or negative values. "
+                    f"Consider using log_reward_clip_min to clamp extreme values."
+                )
             assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
             assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
 
