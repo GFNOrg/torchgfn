@@ -116,10 +116,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             debug=debug,
             loss_fn=loss_fn,
         )
-        assert any(
-            isinstance(logF, cls)
-            for cls in [ScalarEstimator, ConditionalScalarEstimator]
-        ), "logF must be a ScalarEstimator or derived"
+        if not isinstance(logF, (ScalarEstimator, ConditionalScalarEstimator)):
+            raise TypeError(
+                f"logF must be a ScalarEstimator or ConditionalScalarEstimator, "
+                f"got {type(logF).__name__}"
+            )
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda

@@ -1183,8 +1183,7 @@ class GraphStates(States):
         Returns:
             The device of the underlying array of GeometricData.
         """
-        assert self._device is not None
-        return self._device
+        return cast(torch.device, self._device)
 
     def to(self, device: torch.device) -> GraphStates:
         """Moves the GraphStates to the specified device.
@@ -1266,9 +1265,9 @@ class GraphStates(States):
         Returns:
             A GraphStates object containing copies of the initial state.
         """
-        assert cls.s0.edge_attr is not None
-        assert cls.s0.x is not None
-        device = cls.s0.x.device if device is None else device
+        s0_x = cast(torch.Tensor, cls.s0.x)
+        s0_edge_attr = cast(torch.Tensor, cls.s0.edge_attr)
+        device = s0_x.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
@@ -1280,8 +1279,8 @@ class GraphStates(States):
 
         return cls(
             data_array,
-            categorical_node_features=cls.s0.x.dtype == torch.long,
-            categorical_edge_features=cls.s0.edge_attr.dtype == torch.long,
+            categorical_node_features=s0_x.dtype == torch.long,
+            categorical_edge_features=s0_edge_attr.dtype == torch.long,
             device=device,
             conditions=conditions,
             debug=debug,
@@ -1307,12 +1306,12 @@ class GraphStates(States):
         Returns:
             A GraphStates object containing copies of the sink state.
         """
-        assert cls.sf.edge_attr is not None
-        assert cls.sf.x is not None
-        device = cls.sf.x.device if device is None else device
-
         if cls.sf is None:
             raise NotImplementedError("Sink state is not defined")
+
+        sf_x = cast(torch.Tensor, cls.sf.x)
+        sf_edge_attr = cast(torch.Tensor, cls.sf.edge_attr)
+        device = sf_x.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
@@ -1324,8 +1323,8 @@ class GraphStates(States):
 
         return cls(
             data_array,
-            categorical_node_features=cls.sf.x.dtype == torch.long,
-            categorical_edge_features=cls.sf.edge_attr.dtype == torch.long,
+            categorical_node_features=sf_x.dtype == torch.long,
+            categorical_edge_features=sf_edge_attr.dtype == torch.long,
             conditions=conditions,
             device=device,
             debug=debug,
@@ -1708,13 +1707,13 @@ class GraphStates(States):
         """
         out = torch.zeros(self.data.size, dtype=torch.bool, device=self.device)
 
-        assert other.x is not None
-        assert other.edge_index is not None
-        assert other.edge_attr is not None
+        other_x = cast(torch.Tensor, other.x)
+        other_edge_index = cast(torch.Tensor, other.edge_index)
+        other_edge_attr_t = cast(torch.Tensor, other.edge_attr)
 
-        other_edges = sorted(other.edge_index.t().tolist())
-        other_edge_attr = other.edge_attr[
-            torch.argsort(other.edge_index[0] * other.x.size(0) + other.edge_index[1])
+        other_edges = sorted(other_edge_index.t().tolist())
+        other_edge_attr = other_edge_attr_t[
+            torch.argsort(other_edge_index[0] * other_x.size(0) + other_edge_index[1])
         ]
 
         for i, graph in enumerate(self.data.flat):

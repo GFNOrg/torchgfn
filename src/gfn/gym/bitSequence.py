@@ -395,13 +395,14 @@ class BitSequence(DiscreteEnv):
         Returns:
             The previous states.
         """
-        assert (
-            actions.tensor.squeeze()
-            == states.tensor[
-                torch.arange(states.tensor.shape[0], device=states.tensor.device),
-                states.length - 1,
-            ]
-        ).all()
+        if self.debug:
+            assert (
+                actions.tensor.squeeze()
+                == states.tensor[
+                    torch.arange(states.tensor.shape[0], device=states.tensor.device),
+                    states.length - 1,
+                ]
+            ).all(), "Backward action must match the last appended token"
         old_tensor = states.tensor
         old_tensor[..., states.length - 1] = -1
         return self.States(old_tensor)

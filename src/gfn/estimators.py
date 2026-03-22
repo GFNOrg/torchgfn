@@ -1248,11 +1248,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         """
         # Prepare integer token sequences without -1 padding and use a BOS index.
         # We infer the active sequence length per row from (token != -1).
-        tokens = states.tensor
-        if not torch.is_floating_point(tokens):
-            tokens = tokens.long()
-        else:
-            tokens = tokens.to(dtype=torch.long)
+        tokens = states.tensor.long()
 
         # Replace padding (-1) with BOS index expected by the sequence model.
         # RecurrentDiscreteSequenceModel reserves index == vocab_size for BOS.
@@ -1270,7 +1266,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
             max_len = int(valid_mask.sum().item())
         else:
             max_len = int(valid_mask.sum(dim=-1).max().item())
-        if max_len <= 0:
+        if max_len == 0:
             max_len = 1  # Ensure at least BOS is processed
 
         # Trim to the common active prefix length and run the sequence model.

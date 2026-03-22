@@ -590,8 +590,6 @@ class DiscreteEnv(Env, ABC):
         if isinstance(state_shape, int):
             state_shape = (state_shape,)
 
-        assert dummy_action is not None
-        assert exit_action is not None
         assert s0.shape == state_shape
         assert dummy_action.shape == (1,)
         assert exit_action.shape == (1,)
@@ -1040,8 +1038,6 @@ class GraphEnv(Env):
         self.is_directed = is_directed
         self.debug = debug
 
-        assert s0.x is not None
-        assert sf.x is not None
         assert s0.x.shape[-1] == sf.x.shape[-1]
 
         self.States = self.make_states_class()
@@ -1060,8 +1056,7 @@ class GraphEnv(Env):
         Returns:
             The device of the initial graph state's node features.
         """
-        assert self.s0.x is not None
-        return self.s0.x.device
+        return cast(torch.Tensor, self.s0.x).device
 
     def make_states_class(self) -> type[GraphStates]:
         """Returns the GraphStates class for this environment.

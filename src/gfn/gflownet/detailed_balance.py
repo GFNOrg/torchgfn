@@ -146,10 +146,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 "DBGFlowNet does not support recurrent PF estimators (transitions path cannot propagate carry)."
             )
 
-        assert any(
-            isinstance(logF, cls)
-            for cls in [ScalarEstimator, ConditionalScalarEstimator]
-        ), "logF must be a ScalarEstimator or derived"
+        if not isinstance(logF, (ScalarEstimator, ConditionalScalarEstimator)):
+            raise TypeError(
+                f"logF must be a ScalarEstimator or ConditionalScalarEstimator, "
+                f"got {type(logF).__name__}"
+            )
 
         self.logF = logF
         self.forward_looking = forward_looking
