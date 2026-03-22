@@ -98,7 +98,7 @@ def test_add_trajectories(simple_env, trajectories):
     assert buffer.training_container is not None
     assert isinstance(buffer.training_container, Trajectories)
     assert len(buffer) == 5
-    assert "trajectories" in repr(buffer)
+    assert "Trajectories" in repr(buffer)
 
 
 def test_add_transitions(simple_env, transitions):
@@ -108,7 +108,7 @@ def test_add_transitions(simple_env, transitions):
     assert buffer.training_container is not None
     assert isinstance(buffer.training_container, Transitions)
     assert len(buffer) == 5
-    assert "transitions" in repr(buffer)
+    assert "Transitions" in repr(buffer)
 
 
 def test_add_state_pairs(simple_env, state_pairs):
@@ -118,8 +118,7 @@ def test_add_state_pairs(simple_env, state_pairs):
     assert buffer.training_container is not None
     assert isinstance(buffer.training_container, StatesContainer)
     assert len(buffer) == 10
-    print(repr(buffer))
-    assert "statescontainer" in repr(buffer)
+    assert "StatesContainer" in repr(buffer)
 
 
 def test_capacity_limit(simple_env, trajectories):

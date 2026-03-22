@@ -164,8 +164,8 @@ class OneHotPreprocessor(Preprocessor):
                 Should return a tensor of shape (*batch_shape, 1).
         """
         super().__init__(output_dim=n_states)
+        self.output_dim: int = n_states
         self.get_states_indices = get_states_indices
-        self.output_dim = n_states
 
     def preprocess(self, states: DiscreteStates) -> torch.Tensor:
         """Preprocesses the states by converting them to one-hot encoded vectors.
@@ -206,9 +206,9 @@ class KHotPreprocessor(Preprocessor):
             ndim: Number of dimensions in the state space.
         """
         super().__init__(output_dim=height * ndim)
+        self.output_dim: int = height * ndim
         self.height = height
         self.ndim = ndim
-        self.output_dim = height * ndim
 
     def preprocess(self, states: DiscreteStates) -> torch.Tensor:
         """Preprocesses the states by creating k-hot encoded vectors.

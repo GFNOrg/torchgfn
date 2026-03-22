@@ -164,7 +164,7 @@ class ReplayBuffer:
         if self.training_container is None:
             type_str = "empty"
         else:
-            type_str = self.training_container.__class__.__name__.lower()
+            type_str = self.training_container.__class__.__name__
         return (
             f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {type_str})"
         )

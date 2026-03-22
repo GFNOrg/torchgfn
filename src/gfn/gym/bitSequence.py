@@ -1,6 +1,6 @@
 from __future__ import annotations  # This allows to use the class name in type hints
 
-from typing import ClassVar, List, Optional, Sequence, Tuple, Union, cast
+from typing import ClassVar, List, Optional, Sequence, Tuple, cast
 
 import torch
 
@@ -338,7 +338,7 @@ class BitSequence(DiscreteEnv):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        batch_shape: int | Tuple[int] | None = None,
         sink: bool = False,
     ) -> BitSequenceStates:
         """Generates initial or sink states from batch_shape.

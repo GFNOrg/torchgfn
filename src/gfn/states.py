@@ -972,8 +972,6 @@ class DiscreteStates(States, ABC):
         assert isinstance(out, DiscreteStates)
         return out
 
-        # The helper methods are convenience functions for common mask operations.
-
     def set_nonexit_action_masks(
         self,
         cond: torch.Tensor,

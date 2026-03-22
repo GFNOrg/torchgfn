@@ -98,21 +98,80 @@ def test_pytorch_inheritance():
     )
 
     tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
-    assert hasattr(
-        tbgflownet.parameters(), "__iter__"
-    ), "Expected gflownet to have iterable parameters() method inherited from nn.Module"
-    assert hasattr(
-        tbgflownet.state_dict(), "__dict__"
-    ), "Expected gflownet to have indexable state_dict() method inherited from nn.Module"
+    params = list(tbgflownet.parameters())
+    assert len(params) > 0, "TBGFlowNet should have learnable parameters"
+    assert all(isinstance(p, torch.nn.Parameter) for p in params)
+    state = tbgflownet.state_dict()
+    assert len(state) > 0, "TBGFlowNet state_dict should not be empty"
 
     estimator = DiscretePolicyEstimator(pf_module, n_actions=2)
     fmgflownet = FMGFlowNet(estimator)
-    assert hasattr(
-        fmgflownet.parameters(), "__iter__"
-    ), "Expected gflownet to have iterable parameters() method inherited from nn.Module"
-    assert hasattr(
-        fmgflownet.state_dict(), "__dict__"
-    ), "Expected gflownet to have indexable state_dict() method inherited from nn.Module"
+    params = list(fmgflownet.parameters())
+    assert len(params) > 0, "FMGFlowNet should have learnable parameters"
+    state = fmgflownet.state_dict()
+    assert len(state) > 0, "FMGFlowNet state_dict should not be empty"
+
+
+def _flow_matching_loss_reference(gflownet, env, states, conditions, reduction="mean"):
+    """Per-action loop reference implementation of flow matching loss."""
+    if len(states) == 0:
+        return torch.tensor(0.0, device=states.device)
+    assert len(states.batch_shape) == 1
+    assert not torch.any(states.is_initial_state)
+    incoming_log_flows = torch.full_like(
+        states.backward_masks, -float("inf"), dtype=torch.get_default_dtype()
+    )
+    outgoing_log_flows = torch.full_like(
+        states.forward_masks, -float("inf"), dtype=torch.get_default_dtype()
+    )
+    for action_idx in range(env.n_actions - 1):
+        valid_backward_mask = states.backward_masks[:, action_idx]
+        valid_forward_mask = states.forward_masks[:, action_idx]
+        valid_backward_states = states[valid_backward_mask]
+        valid_forward_states = states[valid_forward_mask]
+        backward_actions = torch.full_like(
+            valid_backward_states.backward_masks[:, 0], action_idx, dtype=torch.long
+        ).unsqueeze(-1)
+        backward_actions = env.actions_from_tensor(backward_actions)
+        valid_backward_states_parents = env._backward_step(
+            valid_backward_states, backward_actions
+        )
+        if conditions is not None:
+            valid_backward_conditions = conditions[valid_backward_mask]
+            valid_forward_conditions = conditions[valid_forward_mask]
+            with has_conditions_exception_handler("logF", gflownet.logF):
+                incoming_log_flows[valid_backward_mask, action_idx] = gflownet.logF(
+                    valid_backward_states_parents,
+                    valid_backward_conditions,
+                )[:, action_idx]
+                outgoing_log_flows[valid_forward_mask, action_idx] = gflownet.logF(
+                    valid_forward_states,
+                    valid_forward_conditions,
+                )[:, action_idx]
+        else:
+            with no_conditions_exception_handler("logF", gflownet.logF):
+                incoming_log_flows[valid_backward_mask, action_idx] = gflownet.logF(
+                    valid_backward_states_parents,
+                )[:, action_idx]
+                outgoing_log_flows[valid_forward_mask, action_idx] = gflownet.logF(
+                    valid_forward_states,
+                )[:, action_idx]
+    valid_forward_mask = states.forward_masks[:, -1]
+    if conditions is not None:
+        with has_conditions_exception_handler("logF", gflownet.logF):
+            outgoing_log_flows[valid_forward_mask, -1] = gflownet.logF(
+                states[valid_forward_mask],
+                conditions[valid_forward_mask],
+            )[:, -1]
+    else:
+        with no_conditions_exception_handler("logF", gflownet.logF):
+            outgoing_log_flows[valid_forward_mask, -1] = gflownet.logF(
+                states[valid_forward_mask],
+            )[:, -1]
+    log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
+    log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
+    scores = (log_incoming_flows - log_outgoing_flows).pow(2)
+    return loss_reduce(scores, reduction)
 
 
 @pytest.mark.parametrize("seed", [0, 12, 47, 67])
@@ -140,69 +199,7 @@ def test_flow_matching_vectorized_matches_original(seed):
 
     assert len(states) > 0
 
-    def flow_matching_loss_original(
-        self, env, states, conditions, reduction: str = "mean"
-    ):
-        if len(states) == 0:
-            return torch.tensor(0.0, device=states.device)
-        assert len(states.batch_shape) == 1
-        assert not torch.any(states.is_initial_state)
-        incoming_log_flows = torch.full_like(
-            states.backward_masks, -float("inf"), dtype=torch.get_default_dtype()
-        )
-        outgoing_log_flows = torch.full_like(
-            states.forward_masks, -float("inf"), dtype=torch.get_default_dtype()
-        )
-        for action_idx in range(env.n_actions - 1):
-            valid_backward_mask = states.backward_masks[:, action_idx]
-            valid_forward_mask = states.forward_masks[:, action_idx]
-            valid_backward_states = states[valid_backward_mask]
-            valid_forward_states = states[valid_forward_mask]
-            backward_actions = torch.full_like(
-                valid_backward_states.backward_masks[:, 0], action_idx, dtype=torch.long
-            ).unsqueeze(-1)
-            backward_actions = env.actions_from_tensor(backward_actions)
-            valid_backward_states_parents = env._backward_step(
-                valid_backward_states, backward_actions
-            )
-            if conditions is not None:
-                valid_backward_conditions = conditions[valid_backward_mask]
-                valid_forward_conditions = conditions[valid_forward_mask]
-                with has_conditions_exception_handler("logF", self.logF):
-                    incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
-                        valid_backward_states_parents,
-                        valid_backward_conditions,
-                    )[:, action_idx]
-                    outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
-                        valid_forward_states,
-                        valid_forward_conditions,
-                    )[:, action_idx]
-            else:
-                with no_conditions_exception_handler("logF", self.logF):
-                    incoming_log_flows[valid_backward_mask, action_idx] = self.logF(
-                        valid_backward_states_parents,
-                    )[:, action_idx]
-                    outgoing_log_flows[valid_forward_mask, action_idx] = self.logF(
-                        valid_forward_states,
-                    )[:, action_idx]
-        valid_forward_mask = states.forward_masks[:, -1]
-        if conditions is not None:
-            with has_conditions_exception_handler("logF", self.logF):
-                outgoing_log_flows[valid_forward_mask, -1] = self.logF(
-                    states[valid_forward_mask],
-                    conditions[valid_forward_mask],
-                )[:, -1]
-        else:
-            with no_conditions_exception_handler("logF", self.logF):
-                outgoing_log_flows[valid_forward_mask, -1] = self.logF(
-                    states[valid_forward_mask],
-                )[:, -1]
-        log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
-        log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
-        scores = (log_incoming_flows - log_outgoing_flows).pow(2)
-        return loss_reduce(scores, reduction)
-
-    loss_original = flow_matching_loss_original(
+    loss_original = _flow_matching_loss_reference(
         gflownet, env, states, conditions, reduction="mean"
     )
     # conditions now live inside states; no separate conditions arg needed.

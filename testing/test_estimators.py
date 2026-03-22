@@ -423,10 +423,11 @@ def test_edge_case_single_valid_action():
     probs = torch.exp(result)
 
     # Check that only valid actions have non-zero probability
-    assert probs[0, 0] > 0 and probs[0, [1, 2, 3, 4]].sum() == 0
-    assert probs[1, 2] > 0 and probs[1, [0, 1, 3, 4]].sum() == 0
-    assert probs[2, 4] > 0 and probs[2, [0, 1, 2, 3]].sum() == 0
-    assert probs[3, 1] > 0 and probs[3, [0, 2, 3, 4]].sum() == 0
+    zero = torch.tensor(0.0)
+    assert probs[0, 0] > 0 and torch.allclose(probs[0, [1, 2, 3, 4]], zero.expand(4))
+    assert probs[1, 2] > 0 and torch.allclose(probs[1, [0, 1, 3, 4]], zero.expand(4))
+    assert probs[2, 4] > 0 and torch.allclose(probs[2, [0, 1, 2, 3]], zero.expand(4))
+    assert probs[3, 1] > 0 and torch.allclose(probs[3, [0, 2, 3, 4]], zero.expand(4))
 
     # Check probabilities sum to 1
     assert torch.allclose(probs.sum(dim=-1), torch.ones(batch_size))

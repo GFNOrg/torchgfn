@@ -1260,8 +1260,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         # Determine a common prefix length across the (active) batch.
         # Active rows in a rollout step share the same length; use max for safety.
         # We still derive length from original states.tensor where -1 marks padding.
-        original = states.tensor
-        valid_mask = original >= 0
+        valid_mask = states.tensor >= 0
         if valid_mask.ndim == 1:
             max_len = int(valid_mask.sum().item())
         else:
