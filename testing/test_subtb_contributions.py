@@ -16,6 +16,15 @@ class DummyTrajectories:
         return self.terminating_idx.numel()
 
 
+class _SubTBStub:
+    """Minimal stub exposing get_geometric_within_contributions without full init."""
+
+    get_geometric_within_contributions = SubTBGFlowNet.get_geometric_within_contributions
+
+    def __init__(self, lamda: float):
+        self.lamda = lamda
+
+
 def _reference_contributions(
     lam: float | torch.Tensor,
     terminating_idx: torch.Tensor,
@@ -47,8 +56,7 @@ def test_geometric_within_contributions_matches_reference():
     terminating_idx = torch.tensor([1, 2, 3, 5], dtype=torch.int64)
     trajectories = DummyTrajectories(terminating_idx)
 
-    model = object.__new__(SubTBGFlowNet)
-    model.lamda = 0.9
+    model = _SubTBStub(lamda=0.9)
 
     result = model.get_geometric_within_contributions(
         cast(Trajectories, trajectories)  # type: ignore[arg-type]
@@ -68,11 +76,8 @@ def test_geometric_within_contributions_near_one_is_stable():
     terminating_idx = torch.tensor([2, 4, 6], dtype=torch.int64)
     trajectories = DummyTrajectories(terminating_idx)
 
-    model_near_one = object.__new__(SubTBGFlowNet)
-    model_near_one.lamda = 1.0 - 1e-4
-
-    model_exact_one = object.__new__(SubTBGFlowNet)
-    model_exact_one.lamda = 1.0
+    model_near_one = _SubTBStub(lamda=1.0 - 1e-4)
+    model_exact_one = _SubTBStub(lamda=1.0)
 
     result_near_one = model_near_one.get_geometric_within_contributions(
         cast(Trajectories, trajectories)  # type: ignore[arg-type]
@@ -92,8 +97,7 @@ def test_geometric_within_contributions_matches_bruteforce(lam: float):
     terminating_idx = torch.randint(1, 7, size=(6,), dtype=torch.int64)
     trajectories = DummyTrajectories(terminating_idx)
 
-    model = object.__new__(SubTBGFlowNet)
-    model.lamda = lam
+    model = _SubTBStub(lamda=lam)
 
     result = model.get_geometric_within_contributions(
         cast(Trajectories, trajectories)  # type: ignore[arg-type]
