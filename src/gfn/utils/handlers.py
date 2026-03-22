@@ -12,17 +12,13 @@ def has_conditions_exception_handler(
     target_name: str,
     target: Any,
 ):
-    """A context manager that handles exceptions when conditions is passed.
-
-    Args:
-        target_name: The name of the target.
-        target: The target object.
-    """
+    """Catches TypeError when calling a target with conditions and logs context."""
     try:
         yield
     except TypeError as e:
-        logger.error(f"conditions was passed but {target_name} is {type(target)}")
-        logger.error(f"error: {str(e)}")
+        logger.error(
+            f"Failed calling {target_name} ({type(target).__name__}) with conditions: {e}"
+        )
         raise
 
 
@@ -31,17 +27,14 @@ def no_conditions_exception_handler(
     target_name: str,
     target: Any,
 ):
-    """A context manager that handles exceptions when no conditions is passed.
-
-    Args:
-        target_name: The name of the target.
-        target: The target object.
-    """
+    """Catches TypeError when calling a target without conditions and logs context."""
     try:
         yield
     except TypeError as e:
-        logger.error(f"conditions was not passed but {target_name} is {type(target)}")
-        logger.error(f"error: {str(e)}")
+        logger.error(
+            f"Failed calling {target_name} ({type(target).__name__}) "
+            f"without conditions: {e}"
+        )
         raise
 
 
@@ -50,18 +43,11 @@ def is_callable_exception_handler(
     target_name: str,
     target: Any,
 ):
-    """A context manager that handles exceptions when a target is not callable.
-
-    Args:
-        target_name: The name of the target.
-        target: The target object.
-    """
+    """Catches exceptions when calling a target that may not be callable."""
     try:
         yield
-    except:  # noqa
-        logger.error(
-            f"conditions was passed but {target_name} is not callable: {type(target)}"
-        )
+    except Exception as e:
+        logger.error(f"Failed calling {target_name} ({type(target).__name__}): {e}")
         raise
 
 

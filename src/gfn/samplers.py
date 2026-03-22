@@ -556,8 +556,8 @@ class LocalSearchSampler(Sampler):
         n: Optional[int] = None,
         states: Optional[States] = None,
         conditions: Optional[torch.Tensor] = None,
-        save_estimator_outputs: bool = False,  # FIXME: currently not work if this is True
-        save_logprobs: bool = False,  # FIXME: currently not work if this is True
+        save_estimator_outputs: bool = False,
+        save_logprobs: bool = False,
         n_local_search_loops: int = 0,
         back_steps: torch.Tensor | None = None,
         back_ratio: float | None = None,
@@ -603,6 +603,11 @@ class LocalSearchSampler(Sampler):
             The final trajectories container contains both the initial trajectories
             and the improved trajectories from local search.
         """
+        if save_estimator_outputs:
+            raise NotImplementedError(
+                "save_estimator_outputs is not yet supported in LocalSearchSampler"
+            )
+
         trajectories = super().sample_trajectories(
             env,
             n,

@@ -109,8 +109,6 @@ class ReplayBufferManager:
         byte_tensor = torch.ByteTensor(length)
         dist.recv(byte_tensor, src=sender_rank)
 
-        # Deserialize back into object.
-        # obj_bytes = bytes(byte_tensor.tolist()). # TODO -- Remove?
         msg = Message.deserialize(byte_tensor)
         return sender_rank, msg, length
 

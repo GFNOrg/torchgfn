@@ -239,7 +239,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         ]
 
         if math.isfinite(self.log_reward_clip_min):
-            log_rewards.clamp_min(self.log_reward_clip_min)
+            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
         targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 

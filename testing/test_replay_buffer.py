@@ -10,7 +10,7 @@ from gfn.containers.replay_buffer import (
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
-from gfn.gym.hypergrid import HyperGrid
+from gfn.gym.hypergrid import ConditionalHyperGrid, HyperGrid
 
 
 @pytest.fixture
@@ -308,3 +308,159 @@ def test_prioritized_sampling(simple_env, trajectories):
 
     # Higher-reward trajectories should have been sampled more often.
     assert torch.all(counts[:-1] <= counts[1:])
+
+
+def _make_states_container(
+    env, state_tensors, is_terminating, log_rewards, conditions=None
+):
+    """Helper to build a StatesContainer with controlled data."""
+    states = env.states_from_tensor(state_tensors)
+    if conditions is not None:
+        states.conditions = conditions
+    return StatesContainer(
+        env=env,
+        states=states,
+        is_terminating=is_terminating,
+        log_rewards=log_rewards,
+    )
+
+
+def test_diverse_buffer_rejects_duplicates():
+    """Verify diversity filtering: duplicates rejected, novel states accepted."""
+    env = HyperGrid(ndim=2, height=8)
+    capacity = 10
+    cutoff = 1.0  # L2 distance threshold
+
+    buffer = NormBasedDiversePrioritizedReplayBuffer(
+        env, capacity=capacity, cutoff_distance=cutoff, p_norm_distance=2.0
+    )
+
+    # Pre-fill buffer: 5 copies of state [1,1] + 5 distinct states spread apart.
+    duplicate_state = torch.tensor([1, 1])
+    distinct_states = torch.tensor([[3, 3], [5, 5], [7, 7], [3, 7], [7, 3]])
+    all_states = torch.cat([duplicate_state.unsqueeze(0).expand(5, -1), distinct_states])
+    is_term = torch.ones(10, dtype=torch.bool)
+    rewards = torch.ones(10) * 10.0  # High rewards so they won't be filtered by reward.
+
+    initial_data = _make_states_container(env, all_states, is_term, rewards)
+    buffer.add(initial_data)
+    assert len(buffer) == capacity
+
+    # Try to add more copies of [1,1] — should be rejected (within cutoff of existing).
+    dup_states = duplicate_state.unsqueeze(0).expand(3, -1).clone()
+    dup_data = _make_states_container(
+        env,
+        dup_states,
+        torch.ones(3, dtype=torch.bool),
+        torch.ones(3) * 20.0,  # Even higher reward.
+    )
+    buffer.add(dup_data)
+
+    # Buffer should still be at capacity (duplicates were filtered out).
+    assert len(buffer) == capacity
+    # Count how many [1,1] states are in the buffer — should not have grown.
+    term_states = buffer.training_container.terminating_states.tensor
+    n_duplicates = (term_states == duplicate_state).all(dim=-1).sum().item()
+    assert n_duplicates <= 5, f"Expected <=5 copies of [1,1], got {n_duplicates}"
+
+    # Add a truly novel state far from everything — should be accepted.
+    novel_state = torch.tensor([[0, 0]])  # Far from all existing states.
+    novel_data = _make_states_container(
+        env,
+        novel_state,
+        torch.ones(1, dtype=torch.bool),
+        torch.ones(1) * 20.0,
+    )
+    buffer.add(novel_data)
+
+    # Buffer at capacity, but novel state should have displaced the lowest-reward entry.
+    term_states = buffer.training_container.terminating_states.tensor
+    has_novel = (term_states == torch.tensor([0, 0])).all(dim=-1).any().item()
+    assert has_novel, "Novel state [0,0] should have been accepted into the buffer"
+
+
+def test_diverse_buffer_conditional_same_state_different_conditions():
+    """Same terminal state with different conditions should be treated as distinct."""
+    env = ConditionalHyperGrid(ndim=2, height=8)
+    capacity = 10
+    cutoff = 0.5  # Small enough that condition diff of 1.0 exceeds it.
+
+    buffer = NormBasedDiversePrioritizedReplayBuffer(
+        env, capacity=capacity, cutoff_distance=cutoff, p_norm_distance=2.0
+    )
+
+    # Pre-fill: 5x state [3,3] with condition=0.0, 5x distinct states with condition=0.0.
+    state_a = torch.tensor([3, 3])
+    distinct_states = torch.tensor([[1, 1], [5, 5], [7, 7], [1, 7], [7, 1]])
+    all_states = torch.cat([state_a.unsqueeze(0).expand(5, -1), distinct_states])
+    cond_0 = torch.full((10, 1), 0.0)
+    is_term = torch.ones(10, dtype=torch.bool)
+    rewards = torch.ones(10) * 10.0
+
+    initial_data = _make_states_container(env, all_states, is_term, rewards, cond_0)
+    buffer.add(initial_data)
+    assert len(buffer) == capacity
+
+    # Add state [3,3] with condition=1.0 — distance in (state,cond) space is 1.0 > cutoff.
+    novel_cond_data = _make_states_container(
+        env,
+        state_a.unsqueeze(0),
+        torch.ones(1, dtype=torch.bool),
+        torch.ones(1) * 20.0,
+        conditions=torch.tensor([[1.0]]),
+    )
+    buffer.add(novel_cond_data)
+
+    # Should be accepted — the condition difference exceeds cutoff.
+    term_states = buffer.training_container.terminating_states
+    state_matches = (term_states.tensor == state_a).all(dim=-1)
+    matched_conditions = term_states.conditions[state_matches]
+    has_0 = (matched_conditions).abs().lt(0.01).any().item()
+    has_1 = (matched_conditions - 1.0).abs().lt(0.01).any().item()
+    assert has_0 and has_1, (
+        f"Expected both conditions 0.0 and 1.0 for state [3,3], "
+        f"got conditions: {matched_conditions.squeeze().tolist()}"
+    )
+
+    # Add state [3,3] with condition=0.0 again — should be rejected as duplicate.
+    dup_cond_data = _make_states_container(
+        env,
+        state_a.unsqueeze(0),
+        torch.ones(1, dtype=torch.bool),
+        torch.ones(1) * 20.0,
+        conditions=torch.tensor([[0.0]]),
+    )
+    len_before = len(buffer)
+    buffer.add(dup_cond_data)
+    assert len(buffer) == len_before
+
+
+def test_diversity_repr_shape():
+    """Unit test: _diversity_repr includes conditions in the representation."""
+    env = HyperGrid(ndim=2, height=4)
+    cond_env = ConditionalHyperGrid(ndim=2, height=4)
+
+    # Without conditions: shape is (n_terminating, state_dim).
+    states_no_cond = _make_states_container(
+        env,
+        torch.tensor([[1, 1], [2, 2]]),
+        torch.ones(2, dtype=torch.bool),
+        torch.ones(2),
+    )
+    repr_no_cond = NormBasedDiversePrioritizedReplayBuffer._diversity_repr(
+        states_no_cond
+    )
+    assert repr_no_cond.shape == (2, 2)
+
+    # With conditions: shape is (n_terminating, state_dim + condition_dim).
+    states_with_cond = _make_states_container(
+        cond_env,
+        torch.tensor([[1, 1], [2, 2]]),
+        torch.ones(2, dtype=torch.bool),
+        torch.ones(2),
+        conditions=torch.tensor([[0.5], [0.9]]),
+    )
+    repr_with_cond = NormBasedDiversePrioritizedReplayBuffer._diversity_repr(
+        states_with_cond
+    )
+    assert repr_with_cond.shape == (2, 3)  # 2 state dims + 1 condition dim

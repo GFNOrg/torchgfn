@@ -1520,12 +1520,13 @@ class GraphStates(States):
         """
         parts = [
             f"{self.__class__.__name__}(",
-            f"batch={self.batch_shape}, ",
-            f"device={self.device})",
-            f"categorical_node_features={self.categorical_node_features}, ",
+            f"batch={self.batch_shape},",
+            f"device={self.device},",
+            f"categorical_node_features={self.categorical_node_features},",
             f"categorical_edge_features={self.categorical_edge_features}",
+            ")",
         ]
-        return "".join(parts)
+        return " ".join(parts)
 
     def __len__(self) -> int:
         """Returns the total number of graphs.
