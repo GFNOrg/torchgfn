@@ -107,7 +107,7 @@ def print_final_results(all_results: pd.DataFrame, width: int = 80):
 
 def _print_mode_stats(env: Env):
     print("\nMode Stats:")
-    print(f"+ Number of modes: {2**env.ndim}")
+    print(f"+ Number of mode states: {env.n_modes}")
 
 
 def build_gflownet(
@@ -257,7 +257,6 @@ def train(
                 env,
                 gflownet,
                 validation_samples,
-                visited_terminating_states,
             )
             modes_found = env.modes_found(visited_terminating_states)
             discovered_modes.update(modes_found)
@@ -265,7 +264,7 @@ def train(
 
             # Format training progress information.
             l1_dist = val_info["l1_dist"]
-            logZ_diff = val_info["logZ_diff"]
+            logZ_diff = val_info.get("logZ_diff", 0.0)
             n_terminating = len(visited_terminating_states)
             # l1_info = f"L1 dist={val_info['l1_dist']:.8f} " if "l1_dist" in val_info else ""
             # print(

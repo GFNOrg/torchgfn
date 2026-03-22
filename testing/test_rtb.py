@@ -15,7 +15,7 @@ from gfn.utils.modules import MLP
 
 def _make_hypergrid_estimators():
     """Build simple forward policies for HyperGrid prior/posterior."""
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     preproc = KHotPreprocessor(env.height, env.ndim)
     assert isinstance(preproc.output_dim, int)
 

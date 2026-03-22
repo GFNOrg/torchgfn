@@ -147,7 +147,6 @@ def main(args):
                 env,
                 gflownet,
                 args.validation_samples,
-                visited_terminating_states,
             )
 
             assert isinstance(visited_terminating_states, DiscreteStates)
@@ -157,7 +156,11 @@ def main(args):
             str_info = f"Iter {it + 1}: "
             if "l1_dist" in validation_info:
                 str_info += f"L1 distance={validation_info['l1_dist']:.8f} "
-            str_info += f"modes discovered={len(discovered_modes)} / {env.n_modes} "
+            n_total = env.n_modes
+            pct = 100 * len(discovered_modes) / n_total if n_total else 0
+            str_info += (
+                f"mode states found={len(discovered_modes)} / {n_total} ({pct:.1f}%) "
+            )
             str_info += f"n terminating states {len(visited_terminating_states)}"
             print(str_info)
 

@@ -60,7 +60,7 @@ def test_trajectory_based_gflownet_generic():
 
 
 def test_flow_matching_gflownet_generic():
-    env = HyperGrid(ndim=2)
+    env = HyperGrid(ndim=2, validate_modes=False)
     preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
     module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     estimator = DiscretePolicyEstimator(
@@ -217,7 +217,7 @@ def test_subtb_get_scores_vectorized_matches_original(seed: int):
     n_traj = 4
 
     # Deterministic HyperGrid env and frozen estimators so real methods can run.
-    env = HyperGrid(ndim=2, height=3, device="cpu", debug=False)
+    env = HyperGrid(ndim=2, height=3, device="cpu", debug=False, validate_modes=False)
     preproc = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
     # Tiny MLPs with random weights (frozen for determinism).

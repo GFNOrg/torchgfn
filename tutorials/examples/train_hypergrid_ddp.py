@@ -24,17 +24,15 @@ from argparse import ArgumentParser
 from math import ceil
 from typing import cast
 
+import matplotlib.pyplot as plt
 import torch
 import torch.distributed as dist
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
 from tutorials.examples.train_hypergrid import (
     ModesReplayBufferManager,
-    build_mode_heatmap_plot,
-    build_mode_heatmap_table,
-    mode_heatmap_side,
+    build_mode_discovery_figure,
     plot_results,
-    update_mode_heatmap,
 )
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
@@ -509,11 +507,6 @@ def main(args) -> dict:  # noqa: C901
     )
     per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
     local_modes_found = set()
-    local_n_modes_total = env.n_modes
-    local_mode_heatmap_side = mode_heatmap_side(local_n_modes_total)
-    local_mode_heatmap = torch.zeros(
-        (local_mode_heatmap_side, local_mode_heatmap_side), dtype=torch.float32
-    )
 
     # Training is on-policy only when there are no sources of off-policy
     # samples: no replay buffer, no epsilon-greedy exploration, no temperature
@@ -664,7 +657,6 @@ def main(args) -> dict:  # noqa: C901
         new_local_modes = iter_modes_found - local_modes_found
         if new_local_modes:
             local_modes_found.update(new_local_modes)
-            update_mode_heatmap(local_mode_heatmap, new_local_modes)
 
         assert visited_terminating_states is not None
         all_visited_terminating_states.extend(visited_terminating_states)
@@ -683,16 +675,17 @@ def main(args) -> dict:  # noqa: C901
             to_log.update(score_dict)
         local_n_modes_found = len(local_modes_found)
         to_log["local_n_modes_found"] = local_n_modes_found
+        n_total = env.n_modes
+        if n_total:
+            to_log["local_mode_coverage"] = local_n_modes_found / n_total
 
         if log_this_iter:
             if args.validate_environment:
                 with Timer(timing, "validation", enabled=args.timing):
-                    validation_info, all_visited_terminating_states = env.validate(
+                    validation_info, _ = env.validate(
                         gflownet,
                         args.validation_samples,
-                        all_visited_terminating_states,
                     )
-                    assert all_visited_terminating_states is not None
                     to_log.update(validation_info)
 
             with Timer(timing, "log", enabled=args.timing):
@@ -715,11 +708,10 @@ def main(args) -> dict:  # noqa: C901
                     )
 
                 if use_wandb:
-                    heatmap_table = build_mode_heatmap_table(local_mode_heatmap, wandb)
-                    to_log["local_modes_heatmap_table"] = heatmap_table
-                    heatmap_plot = build_mode_heatmap_plot(heatmap_table, wandb)
-                    if heatmap_plot is not None:
-                        to_log["local_modes_heatmap"] = heatmap_plot
+                    fig = build_mode_discovery_figure(env, local_modes_found)
+                    if fig is not None:
+                        to_log["mode_discovery_map"] = wandb.Image(fig)
+                        plt.close(fig)
                     wandb.log(to_log, step=iteration)
 
     logger.info("Finished all iterations")

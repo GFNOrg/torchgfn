@@ -11,3 +11,16 @@
 # This constant must be consistent across estimators, environments, and loss
 # functions. Changing it here updates all three automatically.
 DIFFUSION_TERMINAL_TIME_EPS: float = 1e-2
+
+
+# Numerical tolerances used by quick mode-existence checks.
+#
+# - EPS_REWARD_CMP: tolerance for comparing scalar rewards to thresholds. It
+#   guards against small floating-point rounding errors when checking
+#   inequalities like r >= thr. Must accommodate float32 precision (~1e-7
+#   relative error), since reward functions return float32 tensors while
+#   thresholds are computed in float64.
+# - EPS_INDEX_CMP: tolerance for floating-point-to-index boundary calculations,
+#   used when turning fractional bands into integer indices.
+EPS_REWARD_CMP = 1e-6
+EPS_INDEX_CMP = 1e-9

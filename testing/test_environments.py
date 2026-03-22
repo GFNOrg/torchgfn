@@ -47,7 +47,7 @@ def test_HyperGrid_preprocessors(
     ND_BATCH_SHAPE = (4, 2)
     SEED = 1234
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True, validate_modes=False)
 
     if preprocessor_name == "Identity":
         preprocessor = IdentityPreprocessor(output_dim=NDIM)
@@ -76,7 +76,7 @@ def test_HyperGrid_fwd_step():
     NDIM = 2
     ENV_HEIGHT = BATCH_SIZE = 3
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True, validate_modes=False)
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
@@ -108,7 +108,7 @@ def test_HyperGrid_bwd_step():
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True, validate_modes=False)
     states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
 
     passing_actions_lists = [
@@ -142,7 +142,9 @@ def test_ConditionalHyperGrid():
     ENV_HEIGHT = 3
     BATCH_SIZE = 5
 
-    env = ConditionalHyperGrid(ndim=NDIM, height=ENV_HEIGHT, store_all_states=True)
+    env = ConditionalHyperGrid(
+        ndim=NDIM, height=ENV_HEIGHT, store_all_states=True, validate_modes=False
+    )
 
     # Condition Sampling
     conditions = env.sample_conditions(BATCH_SIZE)
