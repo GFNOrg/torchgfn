@@ -628,8 +628,8 @@ Selective averaging based on async mpi-3 comms
 
 class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
     r"""
-    Asynchronous selective averaging version 2, uses mpi one-sided comms to get the
-    selectively averaged parameters from a random set of ranks.
+    Asynchronous selective replacement with mpi4py.
+    On replacement, the local policy is reinitialized instead of averaging donors.
     """
 
     def __init__(
@@ -826,47 +826,15 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         if self.debug_mode:
             layer_name = "pb.module.last_layer.bias"
 
-        if self.is_agent_dying(local_metric, self.threshold_metric, check_agent):
-            with Timer(self.timing, "sa get_params_from_donors"):
-                if self.debug_mode:
-                    with open(self.logfile, "a") as f:
-                        # kill this model and rebuild model with fresh weights
-                        num_donors = max(
-                            1, int(self.comm_size * 0.5)
-                        )  # * self.replacement_ratio))
-                        donors = self._get_donors(
-                            self.comm_size, num_donors, self.myrank
-                        )
-                        new_avg_params = self._get_model_params_from_donors(
-                            donors, layer_name, f
-                        )
-
-                        if layer_name is not None:
-                            json.dump(
-                                {
-                                    self._count: [
-                                        self._mpi_tensor_wins[layer_name][1].tolist(),
-                                        donors,
-                                        new_avg_params[layer_name].tolist(),
-                                    ]
-                                },
-                                f,
-                            )
-                        f.write("\n")
-                else:
-                    num_donors = max(
-                        1, int(self.comm_size * 0.5)
-                    )  # self.replacement_ratio))
-                    donors = self._get_donors(self.comm_size, num_donors, self.myrank)
-                    new_avg_params = self._get_model_params_from_donors(
-                        donors, layer_name, None
-                    )
-
+        should_replace, all_metrics = self._should_replace(iteration, local_metric)
+        if should_replace:
+            self.num_replacements += 1
             with Timer(self.timing, "sa new_agent_model_rebuild"):
                 model, optimizer = self._model_builder()
-                for name, param in model.named_parameters():
-                    if name in new_avg_params:
-                        param.data.copy_(new_avg_params[name])
+            if self.debug_mode:
+                with open(self.logfile, "a") as f:
+                    json.dump({self._count: {"event": "reinitialize"}}, f)
+                    f.write("\n")
 
         if expose_params is True:
             with Timer(self.timing, "sa copy_params_to_buf"):
@@ -960,8 +928,8 @@ Notes:
 
 class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
     r"""
-    Asynchronous selective averaging version 2, uses mpi one-sided comms to get the
-    selectively averaged parameters from a random set of ranks.
+    Asynchronous selective replacement with mpi4py.
+    On replacement, the local policy is reinitialized instead of averaging donors.
     """
 
     def __init__(
@@ -1170,75 +1138,18 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
 
         self._count += 1
         self._model = model
-        named_params = list(model.named_parameters())
-        for name, param in named_params:
-            param.data.shape
 
         # validation info
-        layer_name = None
-        if self.debug_mode:
-            layer_name = "pb.module.last_layer.bias"
-
         self.total_iterations += 1
         check_agent = 1  # 0: static thresholding, 1: dynamic based on age
         if self.is_agent_dying(local_metric, self.threshold_metric, check_agent):
             self.num_replacements += 1
-            with Timer(self.timing, "sa get_params_from_donors"):
-                # kill this model and rebuild model with fresh weights
-                num_donors = max(
-                    1, int(self.comm_size * 0.5)
-                )  # <<<<< parameterize this one
-                donors = self._get_donors(self.comm_size, num_donors, self.myrank)
-                _new_avg_params = self._get_model_params_from_donors(
-                    donors, layer_name, None
-                )
-
-            with Timer(self.timing, "sa param_list_to_dict_convert"):
-                # conver the flat tensor to model param dict
-                new_avg_params: Dict[str, torch.Tensor] = {}
-                win_buf: Dict[str, torch.Tensor] = {}
-
-                offset = 0
-                for name, param in model.named_parameters():
-                    device = param.device
-                    flat_size = param.data.numel()
-                    assert flat_size == np.prod(param.data.shape)
-                    donor_tensor_flat = _new_avg_params[offset : offset + flat_size]
-                    donor_tensor = torch.tensor(
-                        donor_tensor_flat.reshape(param.data.shape), device=device
-                    )
-                    if self.debug_mode:
-                        buf_tensor_flat = self._mpi_tensor_wins[1][
-                            offset : offset + flat_size
-                        ]
-                        buf_tensor = torch.tensor(
-                            buf_tensor_flat.reshape(param.data.shape), device=device
-                        )
-                        win_buf[name] = buf_tensor
-
-                    new_avg_params[name] = donor_tensor
-                    offset += flat_size
-
-            if self.debug_mode:
-                with open(self.logfile, "a") as f:
-                    if layer_name is not None:
-                        json.dump(
-                            {
-                                self._count: [
-                                    win_buf[layer_name].tolist(),
-                                    donors,
-                                    new_avg_params[layer_name].tolist(),
-                                ]
-                            },
-                            f,
-                        )
-                        f.write("\n")
-
             with Timer(self.timing, "sa new_agent_model_rebuild"):
                 model, optimizer = self._model_builder()
-                for name, param in model.named_parameters():
-                    if name in new_avg_params:
-                        param.data.copy_(new_avg_params[name])
+            if self.debug_mode:
+                with open(self.logfile, "a") as f:
+                    json.dump({self._count: {"event": "reinitialize"}}, f)
+                    f.write("\n")
 
         if expose_params is True:
             with Timer(self.timing, "sa copy_params_to_buf"):
@@ -1279,7 +1190,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
 
 
 class AverageAllPolicympi4py(SpawnPolicy):
-    """Standard model averaging across all ranks every N iterations."""
+    """Reinitialize local model weights every N iterations."""
 
     def __init__(self, average_every: int) -> None:
         super().__init__(average_every)
@@ -1298,15 +1209,11 @@ class AverageAllPolicympi4py(SpawnPolicy):
         if iteration % self.average_every != 0:
             return model, optimizer, {"averaged_this_iteration": False}
 
-        # print("AverageAll mpi4py model parameters across all ranks ...", flush=True)
-        world_size = group.Get_size()
-        for param in model.parameters():
-            param_tensor = (
-                param.detach().cpu().numpy().copy()
-            )  # param.data.clone().numpy()
-            # dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=group)
-            group.Allreduce(MPI.IN_PLACE, param_tensor, op=MPI.SUM)
-            param_tensor /= world_size
-            param.data.copy_(torch.from_numpy(param_tensor))
+        # Reinitialize local weights instead of averaging across ranks.
+        for module in model.modules():
+            if hasattr(module, "reset_parameters"):
+                module.reset_parameters()
+        # Reset optimizer state to match the fresh model parameters.
+        optimizer.state.clear()
 
         return model, optimizer, {"averaged_this_iteration": True}
