@@ -742,22 +742,29 @@ class DiscreteEnv(Env, ABC):
         return new_states
 
     @staticmethod
-    def _jsd(p: torch.Tensor, q: torch.Tensor, eps: float = 1e-12) -> float:
+    def _jsd(p: torch.Tensor, q: torch.Tensor) -> float:
         """Jensen-Shannon divergence between two discrete distributions.
+
+        Uses the convention 0 * log(0 / x) = 0 via masking so that zero-
+        probability bins contribute nothing (no clamping, no mass distortion).
 
         Args:
             p: First distribution (1-D, sums to ~1).
             q: Second distribution (1-D, sums to ~1).
-            eps: Small constant to avoid log(0).
 
         Returns:
             JSD in nats (base-e). Bounded in [0, ln(2)].
         """
-        p = p.clamp(min=eps)
-        q = q.clamp(min=eps)
         m = 0.5 * (p + q)
-        kl_pm = (p * (p / m).log()).sum()
-        kl_qm = (q * (q / m).log()).sum()
+
+        # KL(p || m): only sum over bins where p > 0 (m > 0 is guaranteed there).
+        p_pos = p > 0
+        kl_pm = (p[p_pos] * (p[p_pos] / m[p_pos]).log()).sum()
+
+        # KL(q || m): only sum over bins where q > 0.
+        q_pos = q > 0
+        kl_qm = (q[q_pos] * (q[q_pos] / m[q_pos]).log()).sum()
+
         return (0.5 * (kl_pm + kl_qm)).item()
 
     def get_terminating_state_dist(self, states: DiscreteStates) -> torch.Tensor:
