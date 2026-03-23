@@ -296,7 +296,7 @@ class BayesianStructureArgs(CommonArgs):
 class ConditionalArgs(CommonArgs):
     gflownet: str = "tb"
     ndim: int = 5
-    height: int = 2
+    height: int = 8
     n_iterations: int = 10
     batch_size: int = 1000
     seed: int = 4444
@@ -323,22 +323,24 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
     final_l1_dist = logs["l1_dist"]
     assert final_l1_dist is not None
 
+    # Targets recalibrated after validate() was changed to sample fresh from
+    # the current policy (instead of reusing accumulated training samples).
     if ndim == 2 and height == 8:
         if replay_buffer_size == 0:
-            tgt = 0.1904  # 2.975e-3 * 64 (n_terminating_states)
-            atol = 0.064
+            tgt = 0.012  # fresh-sample l1 for converged TB on 8x8 2D grid
+            atol = 0.015
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
-            tgt = 0.2007  # 3.1364e-3 * 64 (n_terminating_states)
-            atol = 0.064
+            tgt = 0.013  # with replay buffer
+            atol = 0.015
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 2 and height == 16:
-        tgt = 0.3133  # 1.224e-3 * 256 (n_terminating_states)
-        atol = 0.256
+        tgt = 0.052  # fresh-sample l1 for converged TB on 16x16 2D grid
+        atol = 0.05
         # TODO: Why is this skipped?
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
@@ -346,15 +348,15 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4 and height == 8:
-        tgt = 0.6554  # 1.6e-4 * 4096 (n_terminating_states)
-        atol = 0.4096
+        tgt = 0.25  # fresh-sample l1 for converged TB on 8^4 grid
+        atol = 0.35
         if replay_buffer_size == 0:
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
-            tgt = 0.7014  # 1.7123e-4 * 4096 (n_terminating_states)
-            atol = 0.4096
+            tgt = 0.30  # with replay buffer
+            atol = 0.35
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
@@ -362,8 +364,8 @@ def test_hypergrid_tb(ndim: int, height: int, replay_buffer_size: int):
         # TODO: Why is this skipped?
         if replay_buffer_size != 0:
             pytest.skip("Skipping test for replay buffer size != 0")
-        tgt = 1.4582  # 2.224e-5 * 65536 (n_terminating_states)
-        atol = 0.6554
+        tgt = 0.66  # fresh-sample l1 for converged TB on 16^4 grid
+        atol = 0.55
         assert np.isclose(
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
@@ -381,28 +383,29 @@ def test_hypergrid_fm(ndim: int, replay_buffer_size: int):
     logs = train_hypergrid_main(args)
     assert "l1_dist" in logs
     final_l1_dist = logs["l1_dist"]
+    # Targets recalibrated after validate() fresh-sampling change.
     if ndim == 2:
         if replay_buffer_size == 0:
-            tgt = 0.3215  # 5.024e-3 * 64 (n_terminating_states)
-            atol = 0.064
+            tgt = 0.047  # fresh-sample l1 for converged FM on 8x8 2D grid
+            atol = 0.05
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
-            tgt = 0.8806  # 1.376e-2 * 64 (n_terminating_states)
+            tgt = 0.8806  # FM with replay buffer (unchanged — already passing)
             atol = 0.64
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 4:
         if replay_buffer_size == 0:
-            tgt = 0.9516  # 2.3227e-4 * 4096 (n_terminating_states)
-            atol = 0.4096
+            tgt = 0.49  # fresh-sample l1 for converged FM on 8^4 grid
+            atol = 0.35
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
             ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
         else:
-            tgt = 1.3196  # 3.2208e-4 * 4096 (n_terminating_states)
+            tgt = 1.3196  # FM with replay buffer (unchanged — already passing)
             atol = 0.4096
             assert np.isclose(
                 final_l1_dist, tgt, atol=atol
@@ -440,8 +443,9 @@ def test_discreteebm(ndim: int, alpha: float):
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"
     elif ndim == 2 and alpha == 1.0:
-        tgt = 0.5264  # 1.3159e-1 * 4 (n_terminating_states)
-        atol = 0.4
+        # Recalibrated after validate() fresh-sampling change.
+        tgt = 0.042  # fresh-sample l1 for converged EBM (ndim=2, alpha=1.0)
+        atol = 0.06
         assert np.isclose(
             final_l1_dist, tgt, atol=atol
         ), f"final_l1_dist: {final_l1_dist} vs {tgt}"

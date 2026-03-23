@@ -118,7 +118,7 @@ def test_numerical_stability_large_residuals():
 def _make_tb_setup():
     """Build a TBGFlowNet with HyperGrid and sample trajectories."""
     torch.manual_seed(0)
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     preproc = KHotPreprocessor(env.height, env.ndim)
     pf_module = MLP(input_dim=preproc.output_dim, output_dim=env.n_actions)
     pb_module = MLP(input_dim=preproc.output_dim, output_dim=env.n_actions - 1)
@@ -186,7 +186,7 @@ def test_tb_with_linex():
 def test_rtb_with_shifted_cosh():
     """RTB with ShiftedCoshLoss produces finite loss and gradients."""
     torch.manual_seed(0)
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     preproc = KHotPreprocessor(env.height, env.ndim)
     pf_post = DiscretePolicyEstimator(
         module=MLP(input_dim=preproc.output_dim, output_dim=env.n_actions),
@@ -222,7 +222,7 @@ def test_db_with_shifted_cosh():
     from gfn.estimators import ScalarEstimator
 
     torch.manual_seed(0)
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     preproc = KHotPreprocessor(env.height, env.ndim)
     pf = DiscretePolicyEstimator(
         module=MLP(input_dim=preproc.output_dim, output_dim=env.n_actions),

@@ -6,7 +6,7 @@ import torch
 from tensordict import TensorDict
 
 from gfn.actions import GraphActions, GraphActionType
-from gfn.env import Env, NonValidActionsError
+from gfn.env import DiscreteEnv, Env, NonValidActionsError
 from gfn.estimators import PinnedBrownianMotionBackward, PinnedBrownianMotionForward
 from gfn.gym import Box, ConditionalHyperGrid, DiscreteEBM, HyperGrid
 from gfn.gym.diffusion_sampling import DiffusionSampling
@@ -47,7 +47,7 @@ def test_HyperGrid_preprocessors(
     ND_BATCH_SHAPE = (4, 2)
     SEED = 1234
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True, validate_modes=False)
 
     if preprocessor_name == "Identity":
         preprocessor = IdentityPreprocessor(output_dim=NDIM)
@@ -76,7 +76,7 @@ def test_HyperGrid_fwd_step():
     NDIM = 2
     ENV_HEIGHT = BATCH_SIZE = 3
 
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True, validate_modes=False)
     states = env.reset(batch_shape=BATCH_SIZE)  # Instantiate a batch of initial states
     assert (states.batch_shape[0], states.state_shape[0]) == (BATCH_SIZE, NDIM)
 
@@ -108,7 +108,7 @@ def test_HyperGrid_bwd_step():
     SEED = 1234
 
     # Testing the backward method from a batch of random (seeded) state.
-    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True)
+    env = HyperGrid(ndim=NDIM, height=ENV_HEIGHT, debug=True, validate_modes=False)
     states = env.reset(batch_shape=(NDIM, ENV_HEIGHT), random=True, seed=SEED)
 
     passing_actions_lists = [
@@ -142,7 +142,9 @@ def test_ConditionalHyperGrid():
     ENV_HEIGHT = 3
     BATCH_SIZE = 5
 
-    env = ConditionalHyperGrid(ndim=NDIM, height=ENV_HEIGHT, store_all_states=True)
+    env = ConditionalHyperGrid(
+        ndim=NDIM, height=ENV_HEIGHT, store_all_states=True, validate_modes=False
+    )
 
     # Condition Sampling
     conditions = env.sample_conditions(BATCH_SIZE)
@@ -1033,3 +1035,90 @@ def test_diffusion_trajectory_mask_alignment():
     # Shape is (T, N) = (num_steps, batch_size) - per-step log probs for each trajectory.
     assert log_pfs.shape == (num_steps, batch_size)
     assert log_pbs.shape == (num_steps, batch_size)
+
+
+# --- JSD correctness tests ---
+
+
+class TestJSD:
+    """Verify DiscreteEnv._jsd is unbiased across distribution shapes."""
+
+    @staticmethod
+    def _jsd_numpy(p, q):
+        """Reference JSD using scipy-style masking for 0·log(0)=0."""
+        p = np.asarray(p, dtype=np.float64)
+        q = np.asarray(q, dtype=np.float64)
+        m = 0.5 * (p + q)
+        kl_pm = np.where(p > 0, p * np.log(p / np.where(m > 0, m, 1.0)), 0.0).sum()
+        kl_qm = np.where(q > 0, q * np.log(q / np.where(m > 0, m, 1.0)), 0.0).sum()
+        return 0.5 * (kl_pm + kl_qm)
+
+    def test_identical_distributions(self):
+        """JSD(p, p) == 0 for any p."""
+        p = torch.tensor([0.25, 0.25, 0.25, 0.25])
+        assert DiscreteEnv._jsd(p, p) == pytest.approx(0.0, abs=1e-10)
+
+    def test_disjoint_distributions(self):
+        """JSD is ln(2) when supports are completely disjoint."""
+        p = torch.tensor([0.5, 0.5, 0.0, 0.0])
+        q = torch.tensor([0.0, 0.0, 0.5, 0.5])
+        assert DiscreteEnv._jsd(p, q) == pytest.approx(np.log(2), abs=1e-7)
+
+    def test_uniform_vs_peaked(self):
+        """JSD between uniform and peaked matches numpy reference."""
+        p = torch.tensor([0.25, 0.25, 0.25, 0.25])
+        q = torch.tensor([0.97, 0.01, 0.01, 0.01])
+        expected = self._jsd_numpy(p.numpy(), q.numpy())
+        assert DiscreteEnv._jsd(p, q) == pytest.approx(expected, abs=1e-7)
+
+    def test_extreme_sparsity(self):
+        """JSD is unbiased when most bins are zero (sparse distributions).
+
+        This is the case that eps-clamping gets wrong: with 10000 bins and
+        only a few nonzero, clamping adds eps to every bin, inflating total
+        mass and biasing the result.
+        """
+        n_bins = 10000
+        p = torch.zeros(n_bins)
+        q = torch.zeros(n_bins)
+        # p has mass on 3 bins, q has mass on 3 different bins
+        p[:3] = torch.tensor([0.5, 0.3, 0.2])
+        q[5000:5003] = torch.tensor([0.6, 0.3, 0.1])
+        expected = self._jsd_numpy(p.numpy(), q.numpy())
+        result = DiscreteEnv._jsd(p, q)
+        assert result == pytest.approx(expected, abs=1e-7)
+        # Fully disjoint support → must equal ln(2)
+        assert result == pytest.approx(np.log(2), abs=1e-7)
+
+    def test_partial_overlap_sparse(self):
+        """JSD with partial overlap on a large sparse vector."""
+        n_bins = 10000
+        p = torch.zeros(n_bins)
+        q = torch.zeros(n_bins)
+        # Shared bin 0; different bins 1 and 5000
+        p[0] = 0.5
+        p[1] = 0.5
+        q[0] = 0.5
+        q[5000] = 0.5
+        expected = self._jsd_numpy(p.numpy(), q.numpy())
+        result = DiscreteEnv._jsd(p, q)
+        assert result == pytest.approx(expected, abs=1e-7)
+        # Must be strictly between 0 and ln(2)
+        assert 0 < result < np.log(2)
+
+    def test_symmetry(self):
+        """JSD(p, q) == JSD(q, p)."""
+        p = torch.tensor([0.7, 0.2, 0.1])
+        q = torch.tensor([0.1, 0.3, 0.6])
+        assert DiscreteEnv._jsd(p, q) == pytest.approx(DiscreteEnv._jsd(q, p), abs=1e-10)
+
+    def test_bounded(self):
+        """JSD is always in [0, ln(2)]."""
+        rng = torch.Generator().manual_seed(42)
+        for _ in range(20):
+            p = torch.rand(50, generator=rng)
+            p = p / p.sum()
+            q = torch.rand(50, generator=rng)
+            q = q / q.sum()
+            jsd = DiscreteEnv._jsd(p, q)
+            assert 0 <= jsd <= np.log(2) + 1e-10

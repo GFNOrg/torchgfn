@@ -96,7 +96,6 @@ def main(args):  # noqa: C901
                 env,
                 gflownet,
                 args.validation_samples,
-                visited_terminating_states,
             )
             if use_wandb:
                 wandb.log(validation_info, step=iteration)
