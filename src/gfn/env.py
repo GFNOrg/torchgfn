@@ -810,6 +810,43 @@ class DiscreteEnv(Env, ABC):
 
         return (counts / n_samples).cpu()
 
+    def _warn_if_insufficient_samples(self, n_validation_samples: int) -> None:
+        """Emit a warning if validation sample count is too low for the state space."""
+        try:
+            n_ts = self.n_terminating_states
+        except NotImplementedError:
+            return  # n_terminating_states not available; skip check.
+
+        samples_per_state = n_validation_samples / n_ts
+        mode_info = ""
+        n_ms = getattr(self, "n_mode_states", None)
+        if callable(n_ms):
+            n_ms = n_ms  # property already resolved
+        if isinstance(n_ms, (int, float)) and n_ms > 0:
+            sparsity = n_ms / n_ts
+            mode_info = f" Mode sparsity: {n_ms}/{n_ts} = {sparsity:.4f}."
+        if samples_per_state < 1:
+            warnings.warn(
+                f"n_validation_samples={n_validation_samples} is less "
+                f"than n_terminating_states={n_ts} "
+                f"({samples_per_state:.2f} samples/state). Most states "
+                f"will have zero counts — L1 and JSD will be unreliable."
+                f"{mode_info} Recommend at least "
+                f"{10 * n_ts} samples.",
+                UserWarning,
+                stacklevel=3,
+            )
+        elif samples_per_state < 10:
+            warnings.warn(
+                f"n_validation_samples={n_validation_samples} for "
+                f"n_terminating_states={n_ts} "
+                f"({samples_per_state:.1f} samples/state) may produce "
+                f"noisy validation metrics.{mode_info} Recommend at "
+                f"least {10 * n_ts} samples.",
+                UserWarning,
+                stacklevel=3,
+            )
+
     def validate(
         self,
         gflownet: "GFlowNet",
@@ -867,39 +904,7 @@ class DiscreteEnv(Env, ABC):
             self, "_sample_sufficiency_checked", False
         ):
             self._sample_sufficiency_checked = True  # type: ignore[attr-defined]
-            try:
-                n_ts = self.n_terminating_states
-                samples_per_state = n_validation_samples / n_ts
-                mode_info = ""
-                n_ms = getattr(self, "n_mode_states", None)
-                if callable(n_ms):
-                    n_ms = n_ms  # property already resolved
-                if isinstance(n_ms, (int, float)) and n_ms > 0:
-                    sparsity = n_ms / n_ts
-                    mode_info = f" Mode sparsity: {n_ms}/{n_ts} = {sparsity:.4f}."
-                if samples_per_state < 1:
-                    warnings.warn(
-                        f"n_validation_samples={n_validation_samples} is less "
-                        f"than n_terminating_states={n_ts} "
-                        f"({samples_per_state:.2f} samples/state). Most states "
-                        f"will have zero counts — L1 and JSD will be unreliable."
-                        f"{mode_info} Recommend at least "
-                        f"{10 * n_ts} samples.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-                elif samples_per_state < 10:
-                    warnings.warn(
-                        f"n_validation_samples={n_validation_samples} for "
-                        f"n_terminating_states={n_ts} "
-                        f"({samples_per_state:.1f} samples/state) may produce "
-                        f"noisy validation metrics.{mode_info} Recommend at "
-                        f"least {10 * n_ts} samples.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-            except NotImplementedError:
-                pass  # n_terminating_states not available; skip check.
+            self._warn_if_insufficient_samples(n_validation_samples)
 
         # --- Get true distribution ---
         try:
@@ -956,11 +961,22 @@ class DiscreteEnv(Env, ABC):
         validation_info: Dict[str, float] = {"l1_dist": l1_dist, "jsd": jsd}
 
         # --- logZ comparison (best-effort) ---
+        self._add_logz_diff(validation_info, gflownet, validate_condition)
+
+        return validation_info, sampled_terminating_states
+
+    def _add_logz_diff(
+        self,
+        validation_info: Dict[str, float],
+        gflownet: "GFlowNet",
+        validate_condition: torch.Tensor | None,
+    ) -> None:
+        """Compute |learned_logZ - true_logZ| and add to validation_info."""
         true_logZ: float | None = None
         try:
             true_logZ = self.log_partition(validate_condition)
         except NotImplementedError:
-            pass
+            return
 
         learned_logZ: float | None = None
         if hasattr(gflownet, "logZ"):
@@ -978,13 +994,11 @@ class DiscreteEnv(Env, ABC):
                             "validate_condition was provided; skipping logZ "
                             "comparison.",
                             UserWarning,
-                            stacklevel=2,
+                            stacklevel=3,
                         )
 
         if learned_logZ is not None and true_logZ is not None:
             validation_info["logZ_diff"] = abs(learned_logZ - true_logZ)
-
-        return validation_info, sampled_terminating_states
 
     def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
         """Optional method to return the indices of the states in the environment.

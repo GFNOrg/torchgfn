@@ -54,7 +54,6 @@ from gfn.utils.training import get_terminating_state_dist
 DEFAULT_SEED: int = 4444
 
 
-
 def build_conditional_pf_pb(
     env: ConditionalHyperGrid,
 ) -> tuple[ConditionalDiscretePolicyEstimator, ConditionalDiscretePolicyEstimator]:
