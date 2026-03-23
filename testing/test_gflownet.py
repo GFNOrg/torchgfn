@@ -24,7 +24,8 @@ from gfn.utils.handlers import (
 from gfn.utils.modules import MLP
 
 
-def test_trajectory_based_gflownet_generic():
+def _make_box_tb():
+    """Creates a Box env + TBGFlowNet for testing."""
     n_components = 3
     pf_module = BoxCartesianPFMLP(
         hidden_dim=32, n_hidden_layers=3, n_components=n_components
@@ -35,17 +36,18 @@ def test_trajectory_based_gflownet_generic():
         n_components=n_components,
         trunk=pf_module.trunk,
     )
-
     env = Box()
-
     pf_estimator = BoxCartesianPFEstimator(
         env=env, module=pf_module, n_components=n_components
     )
     pb_estimator = BoxCartesianPBEstimator(
         env=env, module=pb_module, n_components=n_components
     )
+    return env, TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
 
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
+
+def test_trajectory_based_gflownet_generic():
+    env, gflownet = _make_box_tb()
     mock_trajectories = Trajectories(env)
 
     result = gflownet.to_training_samples(mock_trajectories)
@@ -77,34 +79,15 @@ def test_flow_matching_gflownet_generic():
 
 
 def test_pytorch_inheritance():
-    n_components = 3
-    pf_module = BoxCartesianPFMLP(
-        hidden_dim=32, n_hidden_layers=3, n_components=n_components
-    )
-    pb_module = BoxCartesianPBMLP(
-        hidden_dim=32,
-        n_hidden_layers=3,
-        n_components=n_components,
-        trunk=pf_module.trunk,
-    )
-
-    env = Box()
-
-    pf_estimator = BoxCartesianPFEstimator(
-        env=env, module=pf_module, n_components=n_components
-    )
-    pb_estimator = BoxCartesianPBEstimator(
-        env=env, module=pb_module, n_components=n_components
-    )
-
-    tbgflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator)
+    _, tbgflownet = _make_box_tb()
     params = list(tbgflownet.parameters())
     assert len(params) > 0, "TBGFlowNet should have learnable parameters"
     assert all(isinstance(p, torch.nn.Parameter) for p in params)
     state = tbgflownet.state_dict()
     assert len(state) > 0, "TBGFlowNet state_dict should not be empty"
 
-    estimator = DiscretePolicyEstimator(pf_module, n_actions=2)
+    fm_module = MLP(input_dim=8, output_dim=3)
+    estimator = DiscretePolicyEstimator(fm_module, n_actions=3)
     fmgflownet = FMGFlowNet(estimator)
     params = list(fmgflownet.parameters())
     assert len(params) > 0, "FMGFlowNet should have learnable parameters"
