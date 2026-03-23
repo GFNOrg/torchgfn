@@ -150,8 +150,6 @@ class MLEDiffusion(GFlowNet):
         Returns:
             Scalar loss (mean reduction).
         """
-        del env  # unused
-        del recalculate_all_logprobs  # unused
         device, dtype, s_curr = self._extract_samples(terminal_states)
 
         bsz, dim = s_curr.shape

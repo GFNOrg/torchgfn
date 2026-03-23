@@ -122,7 +122,6 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         Args:
             env: The discrete environment where the states are sampled from.
             states: The DiscreteStates object to evaluate (should not include $s_0$).
-            conditions: Optional conditions tensor for conditional environments.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
 
         Returns:
@@ -223,8 +222,19 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
 
         log_incoming_flows = torch.logsumexp(incoming_log_flows, dim=-1)
         log_outgoing_flows = torch.logsumexp(outgoing_log_flows, dim=-1)
-        scores = self.loss_fn(log_incoming_flows - log_outgoing_flows)
+        flow_diff = log_incoming_flows - log_outgoing_flows
 
+        # Catch NaN from -inf - (-inf) when both incoming and outgoing flows
+        # are all -inf for a state. Gated behind debug to avoid graph breaks.
+        if self.debug and torch.isnan(flow_diff).any():
+            n_nan = torch.isnan(flow_diff).sum().item()
+            raise ValueError(
+                f"NaN in flow matching scores ({n_nan} of {flow_diff.numel()} "
+                f"states). This occurs when a state has no valid incoming or "
+                f"outgoing flow paths."
+            )
+
+        scores = self.loss_fn(flow_diff)
         return loss_reduce(scores, reduction)
 
     def reward_matching_loss(

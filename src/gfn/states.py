@@ -1,4 +1,4 @@
-from __future__ import annotations  # This allows to use the class name in type hints
+from __future__ import annotations
 
 import inspect
 import logging
@@ -446,6 +446,8 @@ class States(ABC):
         Args:
             other: States object to be concatenated to the current States object.
         """
+        self_was_empty = len(self) == 0
+
         if len(other.batch_shape) == len(self.batch_shape) == 1:
             # This corresponds to adding a state to a trajectory
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
@@ -469,10 +471,23 @@ class States(ABC):
         self._is_initial_cache = None
         self._is_sink_cache = None
 
+        self._merge_conditions(other, self_was_empty)
+
+    def _merge_conditions(self, other: States, self_was_empty: bool) -> None:
+        """Merges conditions after extending tensors.
+
+        When self was empty its conditions are None by construction, so we
+        adopt the other's conditions rather than warning about inconsistency.
+        Symmetrically, extending with an empty other is a no-op for conditions.
+        """
         if self.conditions is not None and other.conditions is not None:
             self.conditions = torch.cat(
                 (self.conditions, other.conditions), dim=len(self.batch_shape) - 1
             )
+        elif other.conditions is not None and self_was_empty:
+            self.conditions = other.conditions.clone()
+        elif self.conditions is not None and len(other) == 0:
+            pass  # Extending with empty; keep our conditions.
         else:
             if self.conditions is not None or other.conditions is not None:
                 logger.warning(
@@ -912,6 +927,8 @@ class DiscreteStates(States, ABC):
             other: DiscreteStates object to concatenate with.
         """
         assert self.device == other.device, "Devices must match"
+        self_was_empty = len(self) == 0
+
         if len(other.batch_shape) == len(self.batch_shape) == 1:
             # This corresponds to adding a state to a trajectory
             self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
@@ -926,17 +943,7 @@ class DiscreteStates(States, ABC):
             )
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
 
-        if self.conditions is not None and other.conditions is not None:
-            self.conditions = torch.cat(
-                (self.conditions, other.conditions), dim=len(self.batch_shape) - 1
-            )
-        else:
-            # Inconsistent, raise a warning and set to None
-            if self.conditions is not None or other.conditions is not None:
-                logger.warning(
-                    "Inconsistent conditions when extending states. Setting to None."
-                )
-            self.conditions = None
+        self._merge_conditions(other, self_was_empty)
 
         # Invalidate masks cache since underlying tensor has changed
         self._invalidate_masks_cache()
@@ -971,8 +978,6 @@ class DiscreteStates(States, ABC):
         # Note: conditions are already stacked by parent class
         assert isinstance(out, DiscreteStates)
         return out
-
-        # The helper methods are convenience functions for common mask operations.
 
     def set_nonexit_action_masks(
         self,
@@ -1050,13 +1055,13 @@ class DiscreteStates(States, ABC):
         self.forward_masks[..., -1].masked_fill_(batch_idx, True)
 
     def init_forward_masks(self, set_ones: bool = True) -> None:
-        """Initalizes forward masks.
+        """Initializes forward masks.
 
-        A convienience function for common mask operations.
+        A convenience function for common mask operations.
 
         Args:
-            set_ones: if True, forward masks are initalized to all ones. Otherwise,
-                they are initalized to all zeros.
+            set_ones: if True, forward masks are initialized to all ones. Otherwise,
+                they are initialized to all zeros.
         """
         shape = self.batch_shape + (self.n_actions,)
         if set_ones:
@@ -1183,8 +1188,9 @@ class GraphStates(States):
         Returns:
             The device of the underlying array of GeometricData.
         """
-        assert self._device is not None
-        return self._device
+        if self.debug:
+            assert isinstance(self._device, torch.device)
+        return self._device  # type: ignore[return-value]
 
     def to(self, device: torch.device) -> GraphStates:
         """Moves the GraphStates to the specified device.
@@ -1266,9 +1272,12 @@ class GraphStates(States):
         Returns:
             A GraphStates object containing copies of the initial state.
         """
-        assert cls.s0.edge_attr is not None
-        assert cls.s0.x is not None
-        device = cls.s0.x.device if device is None else device
+        if debug:
+            assert cls.s0.x is not None
+            assert cls.s0.edge_attr is not None
+        s0_x = cls.s0.x  # Guaranteed non-None by GraphEnv.__init__.
+        s0_edge_attr = cls.s0.edge_attr
+        device = s0_x.device if device is None else device  # type: ignore[union-attr]
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
@@ -1280,8 +1289,8 @@ class GraphStates(States):
 
         return cls(
             data_array,
-            categorical_node_features=cls.s0.x.dtype == torch.long,
-            categorical_edge_features=cls.s0.edge_attr.dtype == torch.long,
+            categorical_node_features=s0_x.dtype == torch.long,  # type: ignore[union-attr]
+            categorical_edge_features=s0_edge_attr.dtype == torch.long,  # type: ignore[union-attr]
             device=device,
             conditions=conditions,
             debug=debug,
@@ -1307,12 +1316,15 @@ class GraphStates(States):
         Returns:
             A GraphStates object containing copies of the sink state.
         """
-        assert cls.sf.edge_attr is not None
-        assert cls.sf.x is not None
-        device = cls.sf.x.device if device is None else device
-
         if cls.sf is None:
             raise NotImplementedError("Sink state is not defined")
+
+        if debug:
+            assert cls.sf.x is not None
+            assert cls.sf.edge_attr is not None
+        sf_x = cls.sf.x  # Guaranteed non-None by GraphEnv.__init__.
+        sf_edge_attr = cls.sf.edge_attr
+        device = sf_x.device if device is None else device  # type: ignore[union-attr]
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
@@ -1324,8 +1336,8 @@ class GraphStates(States):
 
         return cls(
             data_array,
-            categorical_node_features=cls.sf.x.dtype == torch.long,
-            categorical_edge_features=cls.sf.edge_attr.dtype == torch.long,
+            categorical_node_features=sf_x.dtype == torch.long,  # type: ignore[union-attr]
+            categorical_edge_features=sf_edge_attr.dtype == torch.long,  # type: ignore[union-attr]
             conditions=conditions,
             device=device,
             debug=debug,
@@ -1520,12 +1532,13 @@ class GraphStates(States):
         """
         parts = [
             f"{self.__class__.__name__}(",
-            f"batch={self.batch_shape}, ",
-            f"device={self.device})",
-            f"categorical_node_features={self.categorical_node_features}, ",
+            f"batch={self.batch_shape},",
+            f"device={self.device},",
+            f"categorical_node_features={self.categorical_node_features},",
             f"categorical_edge_features={self.categorical_edge_features}",
+            ")",
         ]
-        return "".join(parts)
+        return " ".join(parts)
 
     def __len__(self) -> int:
         """Returns the total number of graphs.
@@ -1663,6 +1676,8 @@ class GraphStates(States):
         Args:
             other: GraphStates object to concatenate with.
         """
+        self_was_empty = len(self) == 0
+
         if len(self.batch_shape) == len(other.batch_shape) == 1:
             self.data = np.concatenate([self.data, other.data])
 
@@ -1681,17 +1696,7 @@ class GraphStates(States):
                 f"Cannot extend GraphStates with batch shape {other.batch_shape}"
             )
 
-        # Handle conditions for 2D case
-        if self.conditions is not None and other.conditions is not None:
-            self.conditions = torch.cat(
-                (self.conditions, other.conditions), dim=len(self.batch_shape) - 1
-            )
-        else:
-            if self.conditions is not None or other.conditions is not None:
-                logger.warning(
-                    "Inconsistent conditions when extending states. Setting to None."
-                )
-            self.conditions = None
+        self._merge_conditions(other, self_was_empty)
 
     def _compare(self, other: GeometricData) -> torch.Tensor:
         """Compares the current batch of graphs with another graph.
@@ -1707,13 +1712,17 @@ class GraphStates(States):
         """
         out = torch.zeros(self.data.size, dtype=torch.bool, device=self.device)
 
-        assert other.x is not None
-        assert other.edge_index is not None
-        assert other.edge_attr is not None
+        if self.debug:
+            assert other.x is not None
+            assert other.edge_index is not None
+            assert other.edge_attr is not None
+        other_x = other.x  # Guaranteed non-None for valid graph states.
+        other_edge_index = other.edge_index
+        other_edge_attr_t = other.edge_attr
 
-        other_edges = sorted(other.edge_index.t().tolist())
-        other_edge_attr = other.edge_attr[
-            torch.argsort(other.edge_index[0] * other.x.size(0) + other.edge_index[1])
+        other_edges = sorted(other_edge_index.t().tolist())
+        other_edge_attr = other_edge_attr_t[
+            torch.argsort(other_edge_index[0] * other_x.size(0) + other_edge_index[1])
         ]
 
         for i, graph in enumerate(self.data.flat):
@@ -1755,6 +1764,16 @@ class GraphStates(States):
 
         return out.view(self.batch_shape)
 
+    def _compare_reference(self, ref: "GeometricData") -> torch.Tensor:
+        """Compares batch against a reference graph (s0 or sf), handling device mismatch."""
+        if isinstance(ref.x, torch.Tensor):
+            try:
+                ensure_same_device(self.device, cast(torch.Tensor, ref.x).device)
+            except ValueError:
+                ref = ref.clone()
+                ref.to(str(self.device))
+        return self._compare(ref)
+
     @property
     def is_sink_state(self) -> torch.Tensor:
         r"""Returns a boolean tensor indicating which graphs are sink states ($s_f$).
@@ -1762,19 +1781,7 @@ class GraphStates(States):
         Returns:
             A boolean tensor of shape (*batch_shape,) that is True for sink states.
         """
-        g = self.sf
-
-        if isinstance(g.x, torch.Tensor):
-            try:
-                ensure_same_device(self.device, cast(torch.Tensor, g.x).device)
-                other = g
-            except ValueError:
-                other = g.clone()
-                other.to(str(self.device))
-        else:
-            other = g
-
-        return self._compare(other)
+        return self._compare_reference(self.sf)
 
     @property
     def is_initial_state(self) -> torch.Tensor:
@@ -1783,17 +1790,7 @@ class GraphStates(States):
         Returns:
             A boolean tensor of shape (*batch_shape,) that is True for initial states.
         """
-        g = self.s0
-        if getattr(g, "x", None) is not None:
-            try:
-                ensure_same_device(self.device, cast(torch.Tensor, g.x).device)  # type: ignore[attr-defined]
-                other = g
-            except ValueError:
-                other = g.clone()
-                other.to(str(self.device))
-        else:
-            other = g
-        return self._compare(other)
+        return self._compare_reference(self.s0)
 
     @classmethod
     def stack(cls, states: List[GraphStates]) -> GraphStates:

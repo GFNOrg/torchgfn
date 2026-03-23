@@ -14,7 +14,28 @@ from gfn.states import States
 from gfn.utils.modules import MLP, UniformModule
 
 
-class BoxCartesianDistribution(Distribution):
+class _BetaMixtureMixin:
+    """Shared Beta mixture sampling/log_prob for forward and backward distributions."""
+
+    log_weights: Tensor
+    alpha: Tensor
+    beta: Tensor
+
+    def _sample_beta_mixture(self) -> Tensor:
+        """Sample from Beta mixture without MixtureSameFamily overhead."""
+        comp_idx = Categorical(logits=self.log_weights).sample()
+        sel_alpha = self.alpha.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
+        sel_beta = self.beta.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
+        return Beta(sel_alpha, sel_beta).sample()
+
+    def _beta_mixture_log_prob(self, r: Tensor) -> Tensor:
+        """Compute Beta mixture log_prob without MixtureSameFamily overhead."""
+        r_expanded = r.unsqueeze(-1)
+        comp_log_probs = Beta(self.alpha, self.beta).log_prob(r_expanded)
+        return torch.logsumexp(self.log_weights + comp_log_probs, dim=-1)
+
+
+class BoxCartesianDistribution(_BetaMixtureMixin, Distribution):
     """Cartesian increment distribution for Box environment.
 
     Uses MixtureSameFamily(Categorical, Beta) per dimension for sampling increments.
@@ -80,19 +101,6 @@ class BoxCartesianDistribution(Distribution):
 
         # Pre-compute boundary mask (used in both sample and log_prob)
         self.at_boundary = torch.any(states.tensor >= 1 - delta - epsilon, dim=-1)
-
-    def _sample_beta_mixture(self) -> Tensor:
-        """Sample from Beta mixture without MixtureSameFamily overhead."""
-        comp_idx = Categorical(logits=self.log_weights).sample()  # (batch, n_dim)
-        sel_alpha = self.alpha.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
-        sel_beta = self.beta.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
-        return Beta(sel_alpha, sel_beta).sample()
-
-    def _beta_mixture_log_prob(self, r: Tensor) -> Tensor:
-        """Compute Beta mixture log_prob without MixtureSameFamily overhead."""
-        r_expanded = r.unsqueeze(-1)  # (batch, n_dim, 1)
-        comp_log_probs = Beta(self.alpha, self.beta).log_prob(r_expanded)
-        return torch.logsumexp(self.log_weights + comp_log_probs, dim=-1)
 
     def sample(self, sample_shape: Size = Size()) -> Tensor:
         """Sample actions using Cartesian per-dimension increments."""
@@ -258,12 +266,9 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
         )
 
         # Normalize concentration parameters
-        alpha = self.min_concentration + (
-            self.max_concentration - self.min_concentration
-        ) * torch.sigmoid(alpha_raw)
-        beta = self.min_concentration + (
-            self.max_concentration - self.min_concentration
-        ) * torch.sigmoid(beta_raw)
+        conc_range = self.max_concentration - self.min_concentration
+        alpha = self.min_concentration + conc_range * torch.sigmoid(alpha_raw)
+        beta = self.min_concentration + conc_range * torch.sigmoid(beta_raw)
 
         return BoxCartesianDistribution(
             states=states,
@@ -277,7 +282,7 @@ class BoxCartesianPFEstimator(Estimator, PolicyMixin):
         )
 
 
-class BoxCartesianPBDistribution(Distribution):
+class BoxCartesianPBDistribution(_BetaMixtureMixin, Distribution):
     """Backward Cartesian distribution for Box environment.
 
     In torchgfn's design, the source state is the origin [0, 0]. The BTS
@@ -359,19 +364,6 @@ class BoxCartesianPBDistribution(Distribution):
         # For backward: action in [delta, state] for dims where state >= delta
         self.min_incr = delta
         self.max_range = (states.tensor - self.min_incr).clamp(min=epsilon)
-
-    def _sample_beta_mixture(self) -> Tensor:
-        """Sample from Beta mixture without MixtureSameFamily overhead."""
-        comp_idx = Categorical(logits=self.log_weights).sample()
-        sel_alpha = self.alpha.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
-        sel_beta = self.beta.gather(-1, comp_idx.unsqueeze(-1)).squeeze(-1)
-        return Beta(sel_alpha, sel_beta).sample()
-
-    def _beta_mixture_log_prob(self, r: Tensor) -> Tensor:
-        """Compute Beta mixture log_prob without MixtureSameFamily overhead."""
-        r_expanded = r.unsqueeze(-1)
-        comp_log_probs = Beta(self.alpha, self.beta).log_prob(r_expanded)
-        return torch.logsumexp(self.log_weights + comp_log_probs, dim=-1)
 
     def sample(self, sample_shape: Size = Size()) -> Tensor:
         """Sample backward actions.
@@ -560,15 +552,15 @@ class BoxCartesianPBEstimator(Estimator, PolicyMixin):
         )
 
 
-class BoxCartesianPFMLP(MLP):
-    """Simplified MLP for Box forward policy using Cartesian increments.
+class _BoxCartesianMLP(MLP):
+    """Base MLP for Box Cartesian policies (forward and backward).
 
-    Output format: [exit_logit, mixture_logits..., alpha..., beta...]
-    where mixture_logits, alpha, beta each have shape n_dim * n_components.
+    Output format: [logit, mixture_logits..., alpha..., beta...]
+    where the first logit is exit (PF) or back-to-start (PB), and
+    mixture_logits, alpha, beta each have shape n_dim * n_components.
 
     States are normalized from [0, 1] to [-1, 1] before the forward pass to
-    match the gflownet reference (states2policy normalization) and to provide
-    symmetric, zero-centred inputs to the network.
+    match the gflownet reference (states2policy normalization).
     """
 
     def __init__(
@@ -591,7 +583,6 @@ class BoxCartesianPFMLP(MLP):
         self.n_components = n_components
         self.n_dim = n_dim
 
-        # Output: exit_logit + (weights + alpha + beta) * n_dim * n_comp
         output_dim = 1 + 3 * n_dim * n_components
 
         super().__init__(
@@ -608,51 +599,12 @@ class BoxCartesianPFMLP(MLP):
         return super().forward(2.0 * preprocessed_states - 1.0)
 
 
-class BoxCartesianPBMLP(MLP):
-    """Simplified MLP for Box backward policy using Cartesian increments.
+class BoxCartesianPFMLP(_BoxCartesianMLP):
+    """MLP for Box forward policy. First output is exit logit."""
 
-    Output format: [mixture_logits..., alpha..., beta...]
-    where mixture_logits, alpha, beta each have shape n_dim * n_components.
 
-    States are normalized from [0, 1] to [-1, 1] before the forward pass,
-    matching the gflownet reference normalization.
-    """
-
-    def __init__(
-        self,
-        hidden_dim: int,
-        n_hidden_layers: int,
-        n_components: int,
-        n_dim: int = 2,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize the MLP.
-
-        Args:
-            hidden_dim: Hidden layer dimension.
-            n_hidden_layers: Number of hidden layers.
-            n_components: Number of mixture components.
-            n_dim: Number of dimensions (default 2 for Box).
-            **kwargs: Additional arguments for MLP.
-        """
-        self.n_components = n_components
-        self.n_dim = n_dim
-
-        # Output: bts_logit + (weights + alpha + beta) * n_dim * n_comp
-        output_dim = 1 + 3 * n_dim * n_components
-
-        super().__init__(
-            input_dim=n_dim,
-            hidden_dim=hidden_dim,
-            n_hidden_layers=n_hidden_layers,
-            output_dim=output_dim,
-            activation_fn="elu",
-            **kwargs,
-        )
-
-    def forward(self, preprocessed_states: Tensor) -> Tensor:
-        """Forward pass. Normalizes [0, 1] states to [-1, 1] before the MLP."""
-        return super().forward(2.0 * preprocessed_states - 1.0)
+class BoxCartesianPBMLP(_BoxCartesianMLP):
+    """MLP for Box backward policy. First output is back-to-start logit."""
 
 
 class UniformBoxCartesianPBModule(UniformModule):

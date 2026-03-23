@@ -10,6 +10,7 @@ Verifies:
 
 from typing import cast
 
+import pytest
 import torch
 
 from gfn.estimators import DiscretePolicyEstimator
@@ -161,23 +162,19 @@ def test_gradients_flow_same_as_rtb():
 # ---------------------------------------------------------------------------
 
 
-def test_param_roundtrip_float():
+@pytest.mark.parametrize(
+    "logZ, beta",
+    [
+        (2.0, 0.5),  # float
+        (torch.tensor(3.0), torch.tensor(0.25)),  # tensor
+    ],
+)
+def test_param_roundtrip(logZ, beta):
     """RTB → Trust-PCL → RTB conversion must be the identity."""
-    logZ, beta = 2.0, 0.5
     tpcl = rtb_to_trust_pcl_params(logZ, beta)
     rtb = trust_pcl_to_rtb_params(tpcl["alpha"], tpcl["v_soft_s0"])
-    assert abs(rtb["logZ"] - logZ) < 1e-10
-    assert abs(rtb["beta"] - beta) < 1e-10
-
-
-def test_param_roundtrip_tensor():
-    """Roundtrip with tensors."""
-    logZ = torch.tensor(3.0)
-    beta = torch.tensor(0.25)
-    tpcl = rtb_to_trust_pcl_params(logZ, beta)
-    rtb = trust_pcl_to_rtb_params(tpcl["alpha"], tpcl["v_soft_s0"])
-    assert torch.allclose(torch.tensor(rtb["logZ"]), logZ, atol=1e-6)
-    assert torch.allclose(torch.tensor(rtb["beta"]), beta, atol=1e-6)
+    assert torch.allclose(torch.as_tensor(rtb["logZ"]), torch.as_tensor(logZ), atol=1e-6)
+    assert torch.allclose(torch.as_tensor(rtb["beta"]), torch.as_tensor(beta), atol=1e-6)
 
 
 def test_rtb_to_trust_pcl_values():

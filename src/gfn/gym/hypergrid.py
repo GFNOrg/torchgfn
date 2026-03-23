@@ -495,10 +495,9 @@ class HyperGrid(DiscreteEnv):
                 indices.shape == states.batch_shape
             ), f"indices.shape is {indices.shape} and states.batch_shape is {states.batch_shape}"
         else:
-            n_dims = len(indices.shape)
             assert (
-                indices.shape[:n_dims] == states.shape[:n_dims]
-            ), f"indices.shape is {indices.shape} and states.shape is {states.shape}"
+                indices.shape == states.shape[:-1]
+            ), f"indices.shape is {indices.shape} but expected {states.shape[:-1]}"
         return indices
 
     def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:

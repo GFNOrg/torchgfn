@@ -102,6 +102,27 @@ class PolicyEstimatorProtocol(Protocol):
     ) -> tuple[torch.Tensor, Any]: ...
 
 
+_POLICY_REQUIRED_METHODS = ("init_context", "compute_dist", "log_probs")
+
+
+def validate_policy_estimator(estimator: Any, name: str = "estimator") -> None:
+    """Checks that an estimator implements the PolicyMixin interface.
+
+    Args:
+        estimator: The estimator to validate.
+        name: Label for error messages (e.g., "pf", "pb").
+
+    Raises:
+        TypeError: If a required method is missing.
+    """
+    for method in _POLICY_REQUIRED_METHODS:
+        if not hasattr(estimator, method):
+            raise TypeError(
+                f"Estimator '{name}' is not policy-capable "
+                f"(missing PolicyMixin method: {method})"
+            )
+
+
 class PolicyMixin:
     """Mixin enabling an `Estimator` to act as a policy (distribution over actions).
 
@@ -639,8 +660,13 @@ class LogitBasedEstimator(Estimator):
         - If epsilon == 0: masked, biased, temperature-scaled logits.
         - Else: normalized log-probs of the epsilon-greedy mixture (valid as logits).
         """
-        if debug:
-            assert not torch.isnan(logits).any(), "Module output logits contain NaNs"
+        # Check for NaN in module output — the source of NaN from exploding
+        # gradients. Gated behind debug to avoid graph breaks in torch.compile.
+        if debug and torch.isnan(logits).any():
+            raise ValueError(
+                "Module output contains NaN. This typically indicates "
+                "exploding gradients or numerical instability in the model."
+            )
 
         # Prepare logits first (masking, bias, temperature) in the existing dtype
         x = LogitBasedEstimator._prepare_logits(
@@ -967,7 +993,7 @@ class ConditionalScalarEstimator(ConditionalDiscretePolicyEstimator):
         )
         assert (
             reduction in REDUCTION_FUNCTIONS
-        ), "reduction function not one of {}".format(REDUCTION_FUNCTIONS.keys())
+        ), f"reduction function not one of {set(REDUCTION_FUNCTIONS)}"
         self.reduction_function = REDUCTION_FUNCTIONS[reduction]
 
     def forward(self, states: States, conditions: torch.Tensor) -> torch.Tensor:
@@ -1248,11 +1274,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         """
         # Prepare integer token sequences without -1 padding and use a BOS index.
         # We infer the active sequence length per row from (token != -1).
-        tokens = states.tensor
-        if not torch.is_floating_point(tokens):
-            tokens = tokens.long()
-        else:
-            tokens = tokens.to(dtype=torch.long)
+        tokens = states.tensor.long()
 
         # Replace padding (-1) with BOS index expected by the sequence model.
         # RecurrentDiscreteSequenceModel reserves index == vocab_size for BOS.
@@ -1264,13 +1286,12 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         # Determine a common prefix length across the (active) batch.
         # Active rows in a rollout step share the same length; use max for safety.
         # We still derive length from original states.tensor where -1 marks padding.
-        original = states.tensor
-        valid_mask = original >= 0
+        valid_mask = states.tensor >= 0
         if valid_mask.ndim == 1:
             max_len = int(valid_mask.sum().item())
         else:
             max_len = int(valid_mask.sum(dim=-1).max().item())
-        if max_len <= 0:
+        if max_len == 0:
             max_len = 1  # Ensure at least BOS is processed
 
         # Trim to the common active prefix length and run the sequence model.

@@ -7,6 +7,7 @@ Covers:
   - Integration with TB, RTB, and DB using alternative losses
 """
 
+import pytest
 import torch
 
 from gfn.estimators import DiscretePolicyEstimator
@@ -90,11 +91,8 @@ def test_linex_asymmetric():
 
 def test_linex_alpha_validation():
     """LinexLoss(alpha=0) should raise ValueError."""
-    try:
+    with pytest.raises(ValueError, match="alpha"):
         LinexLoss(alpha=0.0)
-        assert False, "Should have raised ValueError"
-    except ValueError:
-        pass
 
 
 # ---------------------------------------------------------------------------

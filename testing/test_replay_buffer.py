@@ -10,7 +10,7 @@ from gfn.containers.replay_buffer import (
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
-from gfn.gym.hypergrid import HyperGrid
+from gfn.gym.hypergrid import ConditionalHyperGrid, HyperGrid
 
 
 @pytest.fixture
@@ -98,7 +98,7 @@ def test_add_trajectories(simple_env, trajectories):
     assert buffer.training_container is not None
     assert isinstance(buffer.training_container, Trajectories)
     assert len(buffer) == 5
-    assert "trajectories" in repr(buffer)
+    assert "Trajectories" in repr(buffer)
 
 
 def test_add_transitions(simple_env, transitions):
@@ -108,7 +108,7 @@ def test_add_transitions(simple_env, transitions):
     assert buffer.training_container is not None
     assert isinstance(buffer.training_container, Transitions)
     assert len(buffer) == 5
-    assert "transitions" in repr(buffer)
+    assert "Transitions" in repr(buffer)
 
 
 def test_add_state_pairs(simple_env, state_pairs):
@@ -118,8 +118,7 @@ def test_add_state_pairs(simple_env, state_pairs):
     assert buffer.training_container is not None
     assert isinstance(buffer.training_container, StatesContainer)
     assert len(buffer) == 10
-    print(repr(buffer))
-    assert "statescontainer" in repr(buffer)
+    assert "StatesContainer" in repr(buffer)
 
 
 def test_capacity_limit(simple_env, trajectories):
@@ -308,3 +307,315 @@ def test_prioritized_sampling(simple_env, trajectories):
 
     # Higher-reward trajectories should have been sampled more often.
     assert torch.all(counts[:-1] <= counts[1:])
+
+
+# ---------------------------------------------------------------------------
+# Replay buffer hardening tests
+# ---------------------------------------------------------------------------
+
+
+def _make_transitions(env, n, log_rewards, log_probs=None):
+    """Helper to build n Transitions with controlled log_rewards."""
+    state_class = env.make_states_class()
+    action_class = env.make_actions_class()
+    return Transitions(
+        env,
+        states=state_class(torch.randn(n, 2)),
+        next_states=state_class(torch.randn(n, 2)),
+        actions=action_class(torch.ones(n, 1)),
+        log_probs=log_probs,
+        log_rewards=log_rewards,
+        is_terminating=torch.zeros(n, dtype=torch.bool),
+    )
+
+
+def test_prioritized_capacity_evicts_lowest_rewards(simple_env):
+    """When buffer overflows with prioritized_capacity, lowest rewards are evicted."""
+    buffer = ReplayBuffer(simple_env, capacity=3, prioritized_capacity=True)
+
+    batch1 = _make_transitions(simple_env, 3, torch.tensor([10.0, 20.0, 30.0]))
+    buffer.add(batch1)
+    assert len(buffer) == 3
+
+    batch2 = _make_transitions(simple_env, 2, torch.tensor([5.0, 25.0]))
+    buffer.add(batch2)
+
+    assert len(buffer) == 3
+    # Combined [5,10,20,25,30] sorted ascending, keep [-3:] = [20,25,30]
+    assert isinstance(buffer.training_container, Transitions)
+    rewards = buffer.training_container.log_rewards
+    assert rewards is not None
+    assert torch.allclose(rewards, torch.tensor([20.0, 25.0, 30.0]))
+
+
+def test_non_prioritized_capacity_keeps_newest(simple_env):
+    """Without prioritized_capacity, buffer keeps newest items (FIFO eviction)."""
+    buffer = ReplayBuffer(simple_env, capacity=3, prioritized_capacity=False)
+
+    batch1 = _make_transitions(simple_env, 3, torch.tensor([100.0, 200.0, 300.0]))
+    buffer.add(batch1)
+
+    batch2 = _make_transitions(simple_env, 2, torch.tensor([1.0, 2.0]))
+    buffer.add(batch2)
+
+    assert len(buffer) == 3
+    # [100,200,300] extended with [1,2] = [100,200,300,1,2], keep [-3:] = [300,1,2]
+    assert isinstance(buffer.training_container, Transitions)
+    rewards = buffer.training_container.log_rewards
+    assert rewards is not None
+    assert torch.allclose(rewards, torch.tensor([300.0, 1.0, 2.0]))
+
+
+def test_add_clears_stale_fields_on_trajectories(simple_env):
+    """After add(), log_probs and estimator_outputs are cleared on Trajectories."""
+    buffer = ReplayBuffer(simple_env, capacity=10)
+    state_class = simple_env.make_states_class()
+    action_class = simple_env.make_actions_class()
+
+    traj = Trajectories(
+        simple_env,
+        states=state_class(torch.randn(4, 2, 2)),
+        actions=action_class(torch.ones(3, 2, 1)),
+        log_probs=torch.ones(3, 2),
+        log_rewards=torch.tensor([1.0, 2.0]),
+        estimator_outputs=torch.randn(3, 2, 4),
+        terminating_idx=torch.tensor([2, 3]),
+    )
+    buffer.add(traj)
+
+    assert isinstance(buffer.training_container, Trajectories)
+    assert buffer.training_container.log_probs is None
+    assert buffer.training_container.estimator_outputs is None
+
+
+def test_add_clears_log_probs_on_transitions(simple_env):
+    """After add(), log_probs is cleared on Transitions."""
+    buffer = ReplayBuffer(simple_env, capacity=10)
+
+    trans = _make_transitions(
+        simple_env, 3, torch.tensor([1.0, 2.0, 3.0]), log_probs=torch.zeros(3)
+    )
+    buffer.add(trans)
+
+    assert isinstance(buffer.training_container, Transitions)
+    assert buffer.training_container.log_probs is None
+
+
+def test_type_consistency_rejects_mismatched_containers(simple_env):
+    """Adding a different container type to an occupied buffer raises AssertionError."""
+    buffer = ReplayBuffer(simple_env, capacity=10)
+
+    trans = _make_transitions(simple_env, 3, torch.tensor([1.0, 2.0, 3.0]))
+    buffer.add(trans)
+
+    state_class = simple_env.make_states_class()
+    action_class = simple_env.make_actions_class()
+    traj = Trajectories(
+        simple_env,
+        states=state_class(torch.randn(3, 2, 2)),
+        actions=action_class(torch.ones(2, 2, 1)),
+        log_rewards=torch.tensor([1.0, 2.0]),
+        terminating_idx=torch.tensor([1, 2]),
+    )
+
+    with pytest.raises(AssertionError):
+        buffer.add(traj)
+
+
+def test_multiple_add_cycles_maintain_capacity(simple_env):
+    """Repeated add cycles never exceed capacity and maintain data integrity."""
+    capacity = 5
+    buffer = ReplayBuffer(simple_env, capacity=capacity)
+
+    for i in range(20):
+        batch = _make_transitions(
+            simple_env,
+            3,
+            torch.tensor([i * 3.0, i * 3.0 + 1, i * 3.0 + 2]),
+        )
+        buffer.add(batch)
+        assert len(buffer) <= capacity
+
+    assert len(buffer) == capacity
+    assert isinstance(buffer.training_container, Transitions)
+    rewards = buffer.training_container.log_rewards
+    assert rewards is not None
+    assert len(rewards) == capacity
+
+
+def test_prioritized_sample_with_replacement(simple_env):
+    """Prioritized sampling uses replacement when n_samples > buffer size."""
+    buffer = ReplayBuffer(simple_env, capacity=10, prioritized_sampling=True)
+    trans = _make_transitions(simple_env, 3, torch.tensor([1.0, 2.0, 3.0]))
+    buffer.add(trans)
+
+    sampled = buffer.sample(10)
+    assert len(sampled) == 10
+    assert isinstance(sampled, Transitions)
+    assert sampled.log_rewards is not None
+    # All sampled rewards must come from the original set.
+    for r in sampled.log_rewards.tolist():
+        assert r in [1.0, 2.0, 3.0]
+
+
+def test_device_property_raises_on_empty_buffer(simple_env):
+    """Accessing device on empty buffer raises AssertionError."""
+    buffer = ReplayBuffer(simple_env, capacity=10)
+    with pytest.raises(AssertionError, match="Buffer is empty"):
+        _ = buffer.device
+
+
+def _make_states_container(
+    env, state_tensors, is_terminating, log_rewards, conditions=None
+):
+    """Helper to build a StatesContainer with controlled data."""
+    states = env.states_from_tensor(state_tensors)
+    if conditions is not None:
+        states.conditions = conditions
+    return StatesContainer(
+        env=env,
+        states=states,
+        is_terminating=is_terminating,
+        log_rewards=log_rewards,
+    )
+
+
+def test_diverse_buffer_rejects_duplicates():
+    """Verify diversity filtering: duplicates rejected, novel states accepted."""
+    env = HyperGrid(ndim=2, height=8)
+    capacity = 10
+    cutoff = 1.0  # L2 distance threshold
+
+    buffer = NormBasedDiversePrioritizedReplayBuffer(
+        env, capacity=capacity, cutoff_distance=cutoff, p_norm_distance=2.0
+    )
+
+    # Pre-fill buffer: 5 copies of state [1,1] + 5 distinct states spread apart.
+    duplicate_state = torch.tensor([1, 1])
+    distinct_states = torch.tensor([[3, 3], [5, 5], [7, 7], [3, 7], [7, 3]])
+    all_states = torch.cat([duplicate_state.unsqueeze(0).expand(5, -1), distinct_states])
+    is_term = torch.ones(10, dtype=torch.bool)
+    rewards = torch.ones(10) * 10.0  # High rewards so they won't be filtered by reward.
+
+    initial_data = _make_states_container(env, all_states, is_term, rewards)
+    buffer.add(initial_data)
+    assert len(buffer) == capacity
+
+    # Try to add more copies of [1,1] — should be rejected (within cutoff of existing).
+    dup_states = duplicate_state.unsqueeze(0).expand(3, -1).clone()
+    dup_data = _make_states_container(
+        env,
+        dup_states,
+        torch.ones(3, dtype=torch.bool),
+        torch.ones(3) * 20.0,  # Even higher reward.
+    )
+    buffer.add(dup_data)
+
+    # Buffer should still be at capacity (duplicates were filtered out).
+    assert len(buffer) == capacity
+    # Count how many [1,1] states are in the buffer — should not have grown.
+    term_states = buffer.training_container.terminating_states.tensor
+    n_duplicates = (term_states == duplicate_state).all(dim=-1).sum().item()
+    assert n_duplicates <= 5, f"Expected <=5 copies of [1,1], got {n_duplicates}"
+
+    # Add a truly novel state far from everything — should be accepted.
+    novel_state = torch.tensor([[0, 0]])  # Far from all existing states.
+    novel_data = _make_states_container(
+        env,
+        novel_state,
+        torch.ones(1, dtype=torch.bool),
+        torch.ones(1) * 20.0,
+    )
+    buffer.add(novel_data)
+
+    # Buffer at capacity, but novel state should have displaced the lowest-reward entry.
+    term_states = buffer.training_container.terminating_states.tensor
+    has_novel = (term_states == torch.tensor([0, 0])).all(dim=-1).any().item()
+    assert has_novel, "Novel state [0,0] should have been accepted into the buffer"
+
+
+def test_diverse_buffer_conditional_same_state_different_conditions():
+    """Same terminal state with different conditions should be treated as distinct."""
+    env = ConditionalHyperGrid(ndim=2, height=8)
+    capacity = 10
+    cutoff = 0.5  # Small enough that condition diff of 1.0 exceeds it.
+
+    buffer = NormBasedDiversePrioritizedReplayBuffer(
+        env, capacity=capacity, cutoff_distance=cutoff, p_norm_distance=2.0
+    )
+
+    # Pre-fill: 5x state [3,3] with condition=0.0, 5x distinct states with condition=0.0.
+    state_a = torch.tensor([3, 3])
+    distinct_states = torch.tensor([[1, 1], [5, 5], [7, 7], [1, 7], [7, 1]])
+    all_states = torch.cat([state_a.unsqueeze(0).expand(5, -1), distinct_states])
+    cond_0 = torch.full((10, 1), 0.0)
+    is_term = torch.ones(10, dtype=torch.bool)
+    rewards = torch.ones(10) * 10.0
+
+    initial_data = _make_states_container(env, all_states, is_term, rewards, cond_0)
+    buffer.add(initial_data)
+    assert len(buffer) == capacity
+
+    # Add state [3,3] with condition=1.0 — distance in (state,cond) space is 1.0 > cutoff.
+    novel_cond_data = _make_states_container(
+        env,
+        state_a.unsqueeze(0),
+        torch.ones(1, dtype=torch.bool),
+        torch.ones(1) * 20.0,
+        conditions=torch.tensor([[1.0]]),
+    )
+    buffer.add(novel_cond_data)
+
+    # Should be accepted — the condition difference exceeds cutoff.
+    term_states = buffer.training_container.terminating_states
+    state_matches = (term_states.tensor == state_a).all(dim=-1)
+    matched_conditions = term_states.conditions[state_matches]
+    has_0 = (matched_conditions).abs().lt(0.01).any().item()
+    has_1 = (matched_conditions - 1.0).abs().lt(0.01).any().item()
+    assert has_0 and has_1, (
+        f"Expected both conditions 0.0 and 1.0 for state [3,3], "
+        f"got conditions: {matched_conditions.squeeze().tolist()}"
+    )
+
+    # Add state [3,3] with condition=0.0 again — should be rejected as duplicate.
+    dup_cond_data = _make_states_container(
+        env,
+        state_a.unsqueeze(0),
+        torch.ones(1, dtype=torch.bool),
+        torch.ones(1) * 20.0,
+        conditions=torch.tensor([[0.0]]),
+    )
+    len_before = len(buffer)
+    buffer.add(dup_cond_data)
+    assert len(buffer) == len_before
+
+
+def test_diversity_repr_shape():
+    """Unit test: _diversity_repr includes conditions in the representation."""
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
+    cond_env = ConditionalHyperGrid(ndim=2, height=4, validate_modes=False)
+
+    # Without conditions: shape is (n_terminating, state_dim).
+    states_no_cond = _make_states_container(
+        env,
+        torch.tensor([[1, 1], [2, 2]]),
+        torch.ones(2, dtype=torch.bool),
+        torch.ones(2),
+    )
+    repr_no_cond = NormBasedDiversePrioritizedReplayBuffer._diversity_repr(
+        states_no_cond
+    )
+    assert repr_no_cond.shape == (2, 2)
+
+    # With conditions: shape is (n_terminating, state_dim + condition_dim).
+    states_with_cond = _make_states_container(
+        cond_env,
+        torch.tensor([[1, 1], [2, 2]]),
+        torch.ones(2, dtype=torch.bool),
+        torch.ones(2),
+        conditions=torch.tensor([[0.5], [0.9]]),
+    )
+    repr_with_cond = NormBasedDiversePrioritizedReplayBuffer._diversity_repr(
+        states_with_cond
+    )
+    assert repr_with_cond.shape == (2, 3)  # 2 state dims + 1 condition dim

@@ -1,3 +1,4 @@
+import math
 from typing import Tuple, cast
 
 import torch
@@ -60,7 +61,11 @@ def check_compatibility(
                 "`transitions` is type={}, not Transitions".format(type(transitions))
             )
         else:
-            raise ValueError(" wrong happening with log_pf evaluations")
+            raise ValueError(
+                "states and actions batch shapes do not match {} vs {}, check log_pf evaluations".format(
+                    states.batch_shape, actions.batch_shape
+                )
+            )
 
 
 class DBGFlowNet(PFBasedGFlowNet[Transitions]):
@@ -141,10 +146,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 "DBGFlowNet does not support recurrent PF estimators (transitions path cannot propagate carry)."
             )
 
-        assert any(
-            isinstance(logF, cls)
-            for cls in [ScalarEstimator, ConditionalScalarEstimator]
-        ), "logF must be a ScalarEstimator or derived"
+        if not isinstance(logF, (ScalarEstimator, ConditionalScalarEstimator)):
+            raise TypeError(
+                f"logF must be a ScalarEstimator or ConditionalScalarEstimator, "
+                f"got {type(logF).__name__}"
+            )
 
         self.logF = logF
         self.forward_looking = forward_looking
@@ -260,7 +266,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         log_rewards = cast(torch.Tensor, transitions.log_rewards)
         if self.debug:
             assert log_rewards is not None
-        log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
+        if math.isfinite(self.log_reward_clip_min):
+            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
         log_F_s_next[is_terminating] = log_rewards[is_terminating]
 
         # Assign log_F_s_next for intermediate next states (skip work if none).
@@ -294,7 +301,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             else:
                 log_rewards_state = env.log_reward(states)
 
-            log_rewards_state = log_rewards_state.clamp_min(self.log_reward_clip_min)
+            if math.isfinite(self.log_reward_clip_min):
+                log_rewards_state = log_rewards_state.clamp_min(self.log_reward_clip_min)
             log_F_s = log_F_s + log_rewards_state
 
             if torch.any(is_intermediate):
@@ -306,7 +314,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 else:
                     log_rewards_next = env.log_reward(next_states[interm_idx])
 
-                log_rewards_next = log_rewards_next.clamp_min(self.log_reward_clip_min)
+                if math.isfinite(self.log_reward_clip_min):
+                    log_rewards_next = log_rewards_next.clamp_min(
+                        self.log_reward_clip_min
+                    )
                 log_F_s_next[interm_idx] = log_F_s_next[interm_idx] + log_rewards_next
 
         # Compute scores

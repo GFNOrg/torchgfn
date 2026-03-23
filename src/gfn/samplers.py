@@ -5,7 +5,7 @@ import torch
 from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.estimators import Estimator, PolicyEstimatorProtocol
+from gfn.estimators import Estimator, PolicyEstimatorProtocol, validate_policy_estimator
 from gfn.states import GraphStates, States
 from gfn.utils.graphs import graph_states_share_storage
 from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
@@ -65,13 +65,7 @@ class Sampler:
         # NOTE: Explicitly cast to the policy protocol so static analyzers know
         # the estimator exposes the mixin methods (init_context/compute_dist/log_probs).
         policy_estimator = cast(PolicyEstimatorProtocol, self.estimator)
-        # Runtime guard: ensure the estimator actually implements the required protocol methods.
-        # This keeps helpful error messages when a non‑policy estimator is supplied.
-        for required in ("init_context", "compute_dist", "log_probs"):
-            if not hasattr(policy_estimator, required):
-                raise TypeError(
-                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
-                )
+        validate_policy_estimator(policy_estimator)
 
         if ctx is None:
             ctx = policy_estimator.init_context(
@@ -124,7 +118,6 @@ class Sampler:
 
         return actions, log_probs, estimator_output
 
-    # TODO: How to avoid "Sampler.sample_trajectories' is too complex" error?
     def sample_trajectories(  # noqa: C901
         self,
         env: Env,
@@ -161,15 +154,8 @@ class Sampler:
             For backward trajectories, the reward is computed at the initial state
             (s0) rather than the terminal state (sf).
         """
-        # NOTE: Cast to the policy protocol for static typing across mixin methods/properties.
         policy_estimator = cast(PolicyEstimatorProtocol, self.estimator)
-        # Runtime guard: ensure the estimator actually implements the required protocol
-        # method and raises an error when a non‑policy estimator is supplied.
-        for required in ("init_context", "compute_dist", "log_probs"):
-            if not hasattr(policy_estimator, required):
-                raise TypeError(
-                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
-                )
+        validate_policy_estimator(policy_estimator)
 
         if policy_estimator.is_backward:
             # [ASSUMPTION] When backward sampling, all provided states are the
@@ -214,8 +200,6 @@ class Sampler:
         )
 
         step = 0
-        if not hasattr(policy_estimator, "init_context"):
-            raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
         ctx = policy_estimator.init_context(n_trajectories, device, states.conditions)
 
         # Pre-allocate dummy actions tensor once. Each step clones it instead
@@ -556,8 +540,8 @@ class LocalSearchSampler(Sampler):
         n: Optional[int] = None,
         states: Optional[States] = None,
         conditions: Optional[torch.Tensor] = None,
-        save_estimator_outputs: bool = False,  # FIXME: currently not work if this is True
-        save_logprobs: bool = False,  # FIXME: currently not work if this is True
+        save_estimator_outputs: bool = False,
+        save_logprobs: bool = False,
         n_local_search_loops: int = 0,
         back_steps: torch.Tensor | None = None,
         back_ratio: float | None = None,
@@ -603,6 +587,11 @@ class LocalSearchSampler(Sampler):
             The final trajectories container contains both the initial trajectories
             and the improved trajectories from local search.
         """
+        if save_estimator_outputs:
+            raise NotImplementedError(
+                "save_estimator_outputs is not yet supported in LocalSearchSampler"
+            )
+
         trajectories = super().sample_trajectories(
             env,
             n,
