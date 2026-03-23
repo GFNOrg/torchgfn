@@ -161,14 +161,12 @@ Parameters
   - Number of random samples used for `approx` statistics.
 
 Properties
-- `n_modes`: number of distinct modes, when available
-  - `exact`: count of unique `mode_ids` among mode states
-  - `approx`: estimated from unique `mode_ids` observed in samples
-  - fallback: `2**ndim` (baseline heuristic) if stats are disabled
-- `n_mode_states`: number of states inside modes
-  - `exact`: integer count
+- `n_mode_states`: number of states whose reward meets the mode threshold
+  - `exact`: integer count (requires `store_all_states=True`)
   - `approx`: floating-point estimate (fraction × total states)
-  - `None` if stats are disabled
+  - Falls back to on-demand computation when `all_states` is available
+  - `None` if stats are disabled and `all_states` is not stored
+- `n_modes`: alias for `n_mode_states` (each grid cell above threshold counts as one mode)
 
 > Warning
 > - `mode_stats="exact"` requires `store_all_states=True` and enumerates all `H^D` states; this can be very expensive in time and memory for large `H` or `D`. Prefer `approx` for large grids or when running distributed training.
