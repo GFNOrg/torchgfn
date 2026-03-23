@@ -22,5 +22,5 @@ DIFFUSION_TERMINAL_TIME_EPS: float = 1e-2
 #   thresholds are computed in float64.
 # - EPS_INDEX_CMP: tolerance for floating-point-to-index boundary calculations,
 #   used when turning fractional bands into integer indices.
-EPS_REWARD_CMP = 1e-6
-EPS_INDEX_CMP = 1e-9
+EPS_REWARD_CMP: float = 1e-6
+EPS_INDEX_CMP: float = 1e-9
