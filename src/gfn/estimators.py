@@ -102,6 +102,27 @@ class PolicyEstimatorProtocol(Protocol):
     ) -> tuple[torch.Tensor, Any]: ...
 
 
+_POLICY_REQUIRED_METHODS = ("init_context", "compute_dist", "log_probs")
+
+
+def validate_policy_estimator(estimator: Any, name: str = "estimator") -> None:
+    """Checks that an estimator implements the PolicyMixin interface.
+
+    Args:
+        estimator: The estimator to validate.
+        name: Label for error messages (e.g., "pf", "pb").
+
+    Raises:
+        TypeError: If a required method is missing.
+    """
+    for method in _POLICY_REQUIRED_METHODS:
+        if not hasattr(estimator, method):
+            raise TypeError(
+                f"Estimator '{name}' is not policy-capable "
+                f"(missing PolicyMixin method: {method})"
+            )
+
+
 class PolicyMixin:
     """Mixin enabling an `Estimator` to act as a policy (distribution over actions).
 
