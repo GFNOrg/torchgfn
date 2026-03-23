@@ -73,31 +73,34 @@ See in-code: `gym.hypergrid.get_bitwise_xor_presets(D, H)`.
 
 See in-code: `get_multiplicative_coprime_presets(D, H)`.
 
-### Template Minkowski powers (information sharing recommended)
-**Intuition**: Compose a small atom template \(T\) near the origin via repeated Minkowski sums. In practice we gate by thin L1 radius bands per tier, optionally with simple residue constraints, which closely track membership in \(T^{\oplus k}\).
+### Conditional multi-scale (cross-scale dependency)
+**Intuition**: Decompose each coordinate in base \(B\) into \(L = \log_B H\) digits. Tier \(t\) constrains digit \(t{-}1\) via a shifted filter that depends on all finer-scale digits, creating a hierarchy where learning lower-scale structure is prerequisite for predicting higher-scale constraints.
 
 **Mathematical definition (tier t)**
-- Choose subset of dimensions \(S \subseteq \{1,\dots,D\}\) used for L1 and residues (default all).
-- Choose an L1 band \([r^{\min}_t, r^{\max}_t]\). Define \(\lVert x \rVert_{1,S} = \sum_{i \in S} x_i\).
-- Optional sum residue \((m_t, a_t)\): require \( \lVert x \rVert_{1,S} \equiv a_t \pmod{m_t} \).
-- Composition perspective: atoms \(T\) with 0 and unit basis imply membership in \(T^{\oplus k}\) when \(\lVert x \rVert_1 \approx k\); the band gates implicitly approximate the tier’s fold \(k\).
+- Decompose each coordinate \(x_i\) into base-\(B\) digits \(d_0(i), d_1(i), \dots, d_{L-1}(i)\).
+- Define a shift \(\sigma_t(i) = \sum_{k=0}^{t-2} a_{t,k} \cdot d_k(i) \bmod B\) using seed-derived coefficients \(a_{t,k}\).
+- Per-dimension constraint: \((d_{t-1}(i) + \sigma_t(i)) \bmod B < f_t\), where \(f_t\) is the filter width.
+- Optional cross-dimensional constraint: \(\sum_i d_{t-1}(i) \equiv 0 \pmod{m_t}\).
+- Active dimensions: optionally restrict constraints to a subset \(A \subseteq \{1,\dots,D\}\).
 
-**Reward**: Add \(w_t\) if band and residue hold and all lower tiers hold.
+**Reward**: \(R(x) = R_0 + \sum_t w_t \cdot \mathbf{1}[x \text{ satisfies tiers } 1..t]\).
 
-**Distance control**: Directly via \(r_t\) bands; combine with residues to thin.
+**Mode count** (exact closed form):
+- Without cross-dim: \(\text{modes}_T = \bigl(\prod_{t=1}^T f_t\bigr)^d \cdot B^{(L-T) \cdot d}\).
+- With cross-dim: divide by \(\prod_t m_t\).
 
-**Sharding**: Medium. You can shard by annuli (bands), but composition and gating choices benefit from shared knowledge.
+**Sharding**: Medium–High. Digit-level constraints are local per dimension, but the cross-scale shifts couple tiers, rewarding shared knowledge of lower-scale structure.
 
-#### Difficulty presets (indicative)
-| Difficulty | Target steps | L1 bands per tier | Residues |
-|---|---:|---|---|
-| Easy | 50–100 | [(60,61), (80,81), (90,91)] | – |
-| Medium | 250–500 | [(300,301), (350,351), (420,421), (480,481)] | mod 4 = 1 (tier 2) |
-| Hard | 1k–2.5k | [(1400,1401), (1800,1801), (2200,2201), (2400,2401)] | parity on sum |
-| Challenging | 2.5k–5k | [(2800,2801), (3200,3201), (4000,4001), (4800,4801)] | mod 3 = 2 (tier 0) |
-| Impossible | 5k–10k | [(6000,6001), …, (10000,10001)] | sparse mod gates |
+#### Difficulty presets (indicative, base=4, H=256 → L=4)
+| Difficulty | Tiers | Active dims | Cross-dim | Approx. modes at top tier |
+|---|---:|---:|---|---|
+| Easy | 2 | 3 | – | ~2M |
+| Medium | 3 | 4 | – | ~1M |
+| Hard | 3 | 6 | mod 2 (tiers 2–3) | ~260K |
+| Challenging | 4 | 8 | mod 2 (tiers 3–4) | ~65K |
+| Impossible | 4 | 12 | mod 2 (tiers 2–4) | ~4K |
 
-See in-code: `gym.hypergrid.get_template_minkowski_presets(D, H)`.
+See in-code: `gym.hypergrid.get_conditional_multiscale_presets(D, H)`.
 
 ## Non-compositional baselines
 
@@ -137,7 +140,7 @@ Compared to the Original reward, the outer region cancels \(R_1\) while the cent
 |---|---|---|---|
 | Bitwise/XOR fractal | High | Low | Local, uniform GF(2) constraints; shard by bit prefixes |
 | Multiplicative/Coprime ladder | Low–Medium | High | Global prime/exponent and LCM/coprime structure |
-| Template Minkowski powers | Medium | Medium–High | Bands shard, but composition/gates benefit from shared rules |
+| Conditional multi-scale | Medium–High | Medium–High | Digit constraints are local, but cross-scale shifts couple tiers |
 
 ## Difficulty bands and macro-steps
 - Bands: Easy (50–100), Medium (250–500), Hard (1k–2.5k), Challenging (2.5k–5k), Impossible (5k+).
@@ -199,7 +202,6 @@ env = HyperGrid(ndim=D, height=H, reward_fn_str="bitwise_xor", reward_fn_kwargs=
 ## References
 - GF(2) and parity checks: [Wikipedia – Finite field of two elements](https://en.wikipedia.org/wiki/Finite_field_arithmetic#Binary_field_(GF(2)))
 - Linear codes and parity-check matrices: [Wikipedia – Parity-check matrix](https://en.wikipedia.org/wiki/Parity-check_matrix)
-- Minkowski sum: [Wikipedia – Minkowski addition](https://en.wikipedia.org/wiki/Minkowski_addition)
 - L1 norm: [Wikipedia – Norm (mathematics)](https://en.wikipedia.org/wiki/Norm_(mathematics))
 - Fundamental theorem of arithmetic (unique factorization), gcd/lcm: [Wikipedia – Fundamental theorem of arithmetic](https://en.wikipedia.org/wiki/Fundamental_theorem_of_arithmetic), [Wikipedia – Greatest common divisor](https://en.wikipedia.org/wiki/Greatest_common_divisor), [Wikipedia – Least common multiple](https://en.wikipedia.org/wiki/Least_common_multiple)
 - GFlowNets hypergrid baseline: Bengio et al., 2021 – [Flow Network based Generative Models for Non-Iterative Diverse Candidate Generation](https://arxiv.org/abs/2106.04399)
