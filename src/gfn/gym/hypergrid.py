@@ -843,16 +843,23 @@ class HyperGrid(DiscreteEnv):
             start_time = time()
             all_states_tensor = []
             reward_sum = 0.0
+            n_expected = self.height**self.ndim
+            n_found = 0
 
             # max_val = height - 1 because coordinates are 0-indexed.
             for batch_tuples in self._generate_combinations_in_batches(
                 self.ndim, self.height - 1, batch_size
             ):
                 batch_tensor = torch.LongTensor(list(batch_tuples))
+                n_found += batch_tensor.shape[0]
                 if self.store_all_states:
                     all_states_tensor.append(batch_tensor)
                 if self.calculate_partition:
                     reward_sum += self.reward_fn(batch_tensor).sum().item()
+
+            assert (
+                n_expected == n_found
+            ), f"Enumeration visited {n_found} states, expected {n_expected}"
 
             end_time = time()
             logger.info(
@@ -866,49 +873,6 @@ class HyperGrid(DiscreteEnv):
 
             if self.calculate_partition:
                 self._log_partition = log(reward_sum)
-
-    def _calculate_log_partition(self, batch_size: int = 20_000):
-        """Compute log Z = log(sum of rewards over all states).
-
-        If all states are already stored, computes directly. Otherwise
-        enumerates via batched multiprocessing (same strategy as
-        ``_enumerate_all_states_tensor``).
-
-        Args:
-            batch_size: Number of states per batch.
-        """
-        if self._log_partition is None and self.calculate_partition:
-            if self._all_states_tensor is not None:
-                self._log_partition = (
-                    self.reward_fn(self._all_states_tensor).sum().log().item()
-                )
-                return
-
-            # Total states = height^ndim. We verify this count after enumeration.
-            max_val = self.height - 1  # Coordinates are 0-indexed.
-            n_expected = (max_val + 1) ** self.ndim
-            n_found = 0
-            start_time = time()
-            reward_sum = 0.0
-
-            for batch_tuples in self._generate_combinations_in_batches(
-                self.ndim, max_val, batch_size
-            ):
-                batch_tensor = torch.LongTensor(list(batch_tuples))
-                rewards = self.reward_fn(batch_tensor)
-                reward_sum += rewards.sum().item()
-                n_found += batch_tensor.shape[0]
-
-            assert n_expected == n_found, "failed to compute reward of all indices!"
-            end_time = time()
-            self._log_partition = log(reward_sum)
-
-            logger.info(
-                "log_partition = {}, calculated in {} minutes".format(
-                    self._log_partition,
-                    (end_time - start_time) / 60.0,
-                )
-            )
 
     def true_dist(self, condition=None) -> torch.Tensor | None:  # condition is ignored
         """Returns the pmf over all states in the hypergrid."""
