@@ -546,13 +546,21 @@ def set_up_logF_estimator(
 
 
 def set_up_gflownet(
-    args, env, preprocessor, agent_group_list, my_agent_group_id, strategy_rng
+    args,
+    env,
+    preprocessor,
+    agent_group_list,
+    my_agent_group_id,
+    strategy_rng,
+    strategy_cfg: Optional[dict] = None,
 ):
     """Returns a GFlowNet complete with the required estimators."""
     # Initialize per-agent exploration strategy.
-    # Default (tests stable): on-policy, no noisy layers.
-    # When --use_random_strategies is provided, sample a random initial strategy.
-    if getattr(args, "use_random_strategies", False):
+    # If an explicit strategy is provided (e.g., during rebuilds), reuse it.
+    # Otherwise, build it from args / random sampling (first model build).
+    if strategy_cfg is not None:
+        cfg = dict(strategy_cfg)
+    elif getattr(args, "use_random_strategies", False):
         cfg = _sample_new_strategy(args, strategy_rng)
     else:
         cfg = {
@@ -816,10 +824,11 @@ def main(args) -> dict:  # noqa: C901
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
     model_builder_count = 0
+    initial_strategy_cfg: Optional[dict] = None
 
     # Builder closure to create a fresh model + optimizer (used by spawn policy as well)
     def _model_builder() -> Tuple[GFlowNet, torch.optim.Optimizer]:
-        nonlocal model_builder_count, use_wandb
+        nonlocal model_builder_count, use_wandb, initial_strategy_cfg
         model_builder_count += 1
 
         model, cfg = set_up_gflownet(
@@ -829,7 +838,10 @@ def main(args) -> dict:  # noqa: C901
             distributed_context.agent_groups,
             distributed_context.agent_group_id,
             strategy_rng,
+            strategy_cfg=initial_strategy_cfg,
         )
+        if initial_strategy_cfg is None:
+            initial_strategy_cfg = dict(cfg)
         if use_wandb:
             import wandb
 
