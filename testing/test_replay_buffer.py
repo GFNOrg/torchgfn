@@ -592,8 +592,8 @@ def test_diverse_buffer_conditional_same_state_different_conditions():
 
 def test_diversity_repr_shape():
     """Unit test: _diversity_repr includes conditions in the representation."""
-    env = HyperGrid(ndim=2, height=4)
-    cond_env = ConditionalHyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
+    cond_env = ConditionalHyperGrid(ndim=2, height=4, validate_modes=False)
 
     # Without conditions: shape is (n_terminating, state_dim).
     states_no_cond = _make_states_container(

@@ -243,7 +243,7 @@ def test_get_trajectory_pbs_matches_legacy_with_default_adapter():
     torch.testing.assert_close(modern, legacy)
 
 
-def test_trajectory_pf_vectorized_vs_nonvectorized_parity():
+def test_trajectory_pf_vectorized_vs_nonvectorized_parity(monkeypatch):
     env, pf_estimator, sampler = _build_env_and_pf()
 
     trajectories = sampler.sample_trajectories(
@@ -261,20 +261,19 @@ def test_trajectory_pf_vectorized_vs_nonvectorized_parity():
     )
 
     # Per-step path: temporarily override is_vectorized.
-    pf_estimator.__class__.is_vectorized = property(lambda self: False)
-    try:
-        nvec = get_trajectory_pfs(
-            pf_estimator,
-            trajectories,
-            recalculate_all_logprobs=True,
-        )
-    finally:
-        pf_estimator.__class__.is_vectorized = property(lambda self: True)
+    monkeypatch.setattr(
+        type(pf_estimator), "is_vectorized", property(lambda self: False)
+    )
+    nvec = get_trajectory_pfs(
+        pf_estimator,
+        trajectories,
+        recalculate_all_logprobs=True,
+    )
 
     torch.testing.assert_close(vec, nvec)
 
 
-def test_trajectory_pb_vectorized_vs_nonvectorized_parity():
+def test_trajectory_pb_vectorized_vs_nonvectorized_parity(monkeypatch):
     env, _, pb_estimator, pf_sampler = _build_env_pf_pb()
 
     trajectories = pf_sampler.sample_trajectories(
@@ -288,11 +287,10 @@ def test_trajectory_pb_vectorized_vs_nonvectorized_parity():
     vec = get_trajectory_pbs(pb_estimator, trajectories)
 
     # Per-step path: temporarily override is_vectorized.
-    pb_estimator.__class__.is_vectorized = property(lambda self: False)
-    try:
-        nvec = get_trajectory_pbs(pb_estimator, trajectories)
-    finally:
-        pb_estimator.__class__.is_vectorized = property(lambda self: True)
+    monkeypatch.setattr(
+        type(pb_estimator), "is_vectorized", property(lambda self: False)
+    )
+    nvec = get_trajectory_pbs(pb_estimator, trajectories)
 
     torch.testing.assert_close(vec, nvec)
 

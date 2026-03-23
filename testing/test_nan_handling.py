@@ -19,7 +19,7 @@ from gfn.utils.modules import MLP
 
 def _make_hypergrid_tb(debug=True):
     """Creates a HyperGrid env + TBGFlowNet with debug=True for testing."""
-    env = HyperGrid(ndim=2, height=4, debug=debug)
+    env = HyperGrid(ndim=2, height=4, debug=debug, validate_modes=False)
     preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
     pf_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     pb_module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
@@ -111,7 +111,7 @@ def test_nan_module_output_raises():
     This catches exploding gradients or numerical instability at the source,
     before NaN can propagate through log_softmax -> Categorical -> log_prob.
     """
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     states = env.reset(batch_shape=(3,))
     masks = states.forward_masks
 
@@ -133,7 +133,7 @@ def test_nan_module_output_raises():
 
 def test_finite_module_output_ok():
     """Normal (finite) module outputs pass through without error."""
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     states = env.reset(batch_shape=(3,))
     masks = states.forward_masks
 
@@ -164,7 +164,7 @@ def test_fm_loss_raises_on_nan_scores():
     -inf (no valid flow paths), producing logsumexp(-inf) - logsumexp(-inf)
     = -inf - (-inf) = NaN.
     """
-    env = HyperGrid(ndim=2, height=4, debug=True)
+    env = HyperGrid(ndim=2, height=4, debug=True, validate_modes=False)
     preprocessor = KHotPreprocessor(ndim=env.ndim, height=env.height)
     module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
     estimator = DiscretePolicyEstimator(

@@ -47,9 +47,9 @@ from gfn.utils.training import states_actions_tns_to_traj
 def _make_env(env_name: str, delta: float = 0.1, height: int = 8) -> Env:
     """Creates an environment instance by name."""
     if env_name == "HyperGrid":
-        return HyperGrid(ndim=2, height=height)
+        return HyperGrid(ndim=2, height=height, validate_modes=False)
     elif env_name == "ConditionalHyperGrid":
-        return ConditionalHyperGrid(ndim=2, height=height)
+        return ConditionalHyperGrid(ndim=2, height=height, validate_modes=False)
     elif env_name == "DiscreteEBM":
         return DiscreteEBM(ndim=8)
     elif env_name == "Box":
