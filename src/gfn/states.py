@@ -1753,6 +1753,16 @@ class GraphStates(States):
 
         return out.view(self.batch_shape)
 
+    def _compare_reference(self, ref: "GeometricData") -> torch.Tensor:
+        """Compares batch against a reference graph (s0 or sf), handling device mismatch."""
+        if isinstance(ref.x, torch.Tensor):
+            try:
+                ensure_same_device(self.device, cast(torch.Tensor, ref.x).device)
+            except ValueError:
+                ref = ref.clone()
+                ref.to(str(self.device))
+        return self._compare(ref)
+
     @property
     def is_sink_state(self) -> torch.Tensor:
         r"""Returns a boolean tensor indicating which graphs are sink states ($s_f$).
@@ -1760,19 +1770,7 @@ class GraphStates(States):
         Returns:
             A boolean tensor of shape (*batch_shape,) that is True for sink states.
         """
-        g = self.sf
-
-        if isinstance(g.x, torch.Tensor):
-            try:
-                ensure_same_device(self.device, cast(torch.Tensor, g.x).device)
-                other = g
-            except ValueError:
-                other = g.clone()
-                other.to(str(self.device))
-        else:
-            other = g
-
-        return self._compare(other)
+        return self._compare_reference(self.sf)
 
     @property
     def is_initial_state(self) -> torch.Tensor:
@@ -1781,17 +1779,7 @@ class GraphStates(States):
         Returns:
             A boolean tensor of shape (*batch_shape,) that is True for initial states.
         """
-        g = self.s0
-        if getattr(g, "x", None) is not None:
-            try:
-                ensure_same_device(self.device, cast(torch.Tensor, g.x).device)  # type: ignore[attr-defined]
-                other = g
-            except ValueError:
-                other = g.clone()
-                other.to(str(self.device))
-        else:
-            other = g
-        return self._compare(other)
+        return self._compare_reference(self.s0)
 
     @classmethod
     def stack(cls, states: List[GraphStates]) -> GraphStates:
