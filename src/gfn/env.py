@@ -794,7 +794,9 @@ class DiscreteEnv(Env, ABC):
         indices = self.get_terminating_states_indices(states)
         n_bins = self.n_terminating_states
 
-        flat_indices = indices.reshape(-1).long()
+        # Histogram on CPU to avoid allocating a potentially large (n_bins)
+        # tensor on GPU just to immediately .cpu() the result.
+        flat_indices = indices.reshape(-1).long().cpu()
         n_samples = flat_indices.shape[0]
 
         if n_samples == 0:
@@ -802,13 +804,11 @@ class DiscreteEnv(Env, ABC):
                 "No terminating states provided to compute empirical distribution."
             )
 
-        counts = torch.zeros(
-            n_bins, dtype=torch.get_default_dtype(), device=flat_indices.device
-        )
+        counts = torch.zeros(n_bins, dtype=torch.get_default_dtype())
         ones = torch.ones_like(flat_indices, dtype=torch.get_default_dtype())
         counts.scatter_add_(0, flat_indices, ones)
 
-        return (counts / n_samples).cpu()
+        return counts / n_samples
 
     def _warn_if_insufficient_samples(self, n_validation_samples: int) -> None:
         """Emit a warning if validation sample count is too low for the state space."""
