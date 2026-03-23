@@ -208,7 +208,8 @@ class ReplayBuffer:
         # Adds the objects to the buffer. Skip extend for empty buffers to avoid
         # dropping conditions (empty containers have no conditions to merge with).
         if len(self.training_container) == 0:
-            self.training_container = cast(ContainerUnion, training_container)
+            # Copy the container to avoid aliasing and mutating the caller's object.
+            self.training_container = cast(ContainerUnion, training_container[:])
         else:
             self.training_container.extend(training_container)  # type: ignore
 
