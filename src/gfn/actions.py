@@ -32,12 +32,9 @@ class Actions(ABC):
             the action to transition to the sink state.
     """
 
-    # The following class variable represents the shape of a single action.
-    action_shape: ClassVar[tuple[int, ...]]  # All actions need to have the same shape.
-    # The following class variable is padded to shorter trajectories.
-    dummy_action: ClassVar[torch.Tensor]  # Dummy action for the environment.
-    # The following class variable corresponds to $s \rightarrow s_f$ transitions.
-    exit_action: ClassVar[torch.Tensor]  # Action to exit the environment.
+    action_shape: ClassVar[tuple[int, ...]]
+    dummy_action: ClassVar[torch.Tensor]  # Padded to shorter trajectories.
+    exit_action: ClassVar[torch.Tensor]  # Corresponds to $s \rightarrow s_f$.
 
     def __init__(self, tensor: torch.Tensor, debug: bool = False):
         """Initializes an Actions object with a batch of actions.

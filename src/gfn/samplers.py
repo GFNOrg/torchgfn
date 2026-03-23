@@ -124,7 +124,6 @@ class Sampler:
 
         return actions, log_probs, estimator_output
 
-    # TODO: How to avoid "Sampler.sample_trajectories' is too complex" error?
     def sample_trajectories(  # noqa: C901
         self,
         env: Env,

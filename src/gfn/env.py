@@ -550,24 +550,22 @@ class DiscreteEnv(Env, ABC):
             debug: If True, States created by this env will run runtime guards
                 (not torch.compile friendly). Keep False in compiled runs.
         """
-        # Add validation/warnings for advanced usage
-        if dummy_action is not None or exit_action is not None or sf is not None:
+        if debug and (
+            dummy_action is not None or exit_action is not None or sf is not None
+        ):
             import warnings
 
-            expert_parameters_used = []
-            if dummy_action is not None:
-                expert_parameters_used.append("dummy_action")
-            if exit_action is not None:
-                expert_parameters_used.append("exit_action")
-            if sf is not None:
-                expert_parameters_used.append("sf")
-
+            params = [
+                name
+                for name, val in [
+                    ("dummy_action", dummy_action),
+                    ("exit_action", exit_action),
+                    ("sf", sf),
+                ]
+                if val is not None
+            ]
             warnings.warn(
-                "You're using advanced parameters: ({}). "
-                "These are only needed for custom action handling. "
-                "For basic environments, you can omit these.".format(
-                    ", ".join(expert_parameters_used)
-                ),
+                f"Overriding DiscreteEnv defaults: {', '.join(params)}.",
                 UserWarning,
             )
 
