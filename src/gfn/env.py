@@ -377,7 +377,9 @@ class Env(ABC):
         # are not included in the valid_states_idx.
         new_valid_states_idx = valid_states_idx & ~actions.is_exit  # boolean mask.
 
-        # Clone to ensure new states are independent (required by sampler for trajectories).
+        # IMPORTANT: .clone() ensures new states are a distinct object from the
+        # old states. The sampler requires this when building trajectories. If you
+        # override this method, you must ensure the returned states are independent.
         not_done_states = states[new_valid_states_idx].clone()
         not_done_actions = actions[new_valid_states_idx]
 
@@ -417,7 +419,9 @@ class Env(ABC):
         if self.debug:
             assert states.batch_shape == actions.batch_shape
 
-        # Clone to ensure new states are independent (required by sampler for trajectories).
+        # IMPORTANT: .clone() ensures new states are a distinct object from the
+        # old states. The sampler requires this when building trajectories. If you
+        # override this method, you must ensure the returned states are independent.
         new_states = states.clone()
 
         valid_states_idx: torch.Tensor = ~new_states.is_initial_state
