@@ -1,5 +1,5 @@
 from math import prod
-from typing import Callable, Literal, Tuple, cast
+from typing import Callable, Literal, Tuple
 
 import numpy as np
 import torch
@@ -308,8 +308,11 @@ class GraphBuilding(GraphEnv):
         Returns:
             A `GraphStates` object with random states.
         """
-        s0_x = cast(torch.Tensor, self.s0.x)
-        s0_edge_attr = cast(torch.Tensor, self.s0.edge_attr)
+        if self.debug:
+            assert self.s0.x is not None
+            assert self.s0.edge_attr is not None
+        s0_x = self.s0.x  # Guaranteed non-None by GraphEnv.__init__.
+        s0_edge_attr = self.s0.edge_attr
         device = self.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
@@ -605,8 +608,11 @@ class GraphBuildingOnEdges(GraphBuilding):
         Returns:
             A `GraphStates` object containing random graph states.
         """
-        s0_x = cast(torch.Tensor, self.s0.x)
-        s0_edge_attr = cast(torch.Tensor, self.s0.edge_attr)
+        if self.debug:
+            assert self.s0.x is not None
+            assert self.s0.edge_attr is not None
+        s0_x = self.s0.x  # Guaranteed non-None by GraphEnv.__init__.
+        s0_edge_attr = self.s0.edge_attr
         device = self.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)

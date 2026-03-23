@@ -1145,7 +1145,9 @@ class GraphEnv(Env):
         Returns:
             The device of the initial graph state's node features.
         """
-        return cast(torch.Tensor, self.s0.x).device
+        if self.debug:
+            assert self.s0.x is not None
+        return self.s0.x.device  # type: ignore[union-attr]
 
     def make_states_class(self) -> type[GraphStates]:
         """Returns the GraphStates class for this environment.

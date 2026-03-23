@@ -1,5 +1,5 @@
 from math import prod
-from typing import Callable, Literal, Tuple, cast
+from typing import Callable, Literal, Tuple
 
 import numpy as np
 import torch
@@ -278,7 +278,9 @@ class BayesianStructure(GraphBuilding):
         Returns:
             A PyG Batch object containing random DAG states.
         """
-        s0_x = cast(torch.Tensor, self.s0.x)
+        if self.debug:
+            assert self.s0.x is not None
+        s0_x = self.s0.x  # Guaranteed non-None by GraphEnv.__init__.
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
         num_graphs = prod(batch_shape)
@@ -327,7 +329,9 @@ class BayesianStructure(GraphBuilding):
                 adjacency[src, dst] = True
 
             # Create random edge attributes
-            s0_edge_attr = cast(torch.Tensor, self.s0.edge_attr)
+            if self.debug:
+                assert self.s0.edge_attr is not None
+            s0_edge_attr = self.s0.edge_attr  # Guaranteed non-None by GraphEnv.__init__.
             edge_attr = torch.rand(n_edges, s0_edge_attr.size(1), device=device)
 
             data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)

@@ -205,13 +205,7 @@ class ReplayBuffer:
         assert self.training_container is not None
         assert isinstance(training_container, type(self.training_container))  # type: ignore
 
-        # Adds the objects to the buffer. Skip extend for empty buffers to avoid
-        # dropping conditions (empty containers have no conditions to merge with).
-        if len(self.training_container) == 0:
-            # Copy the container to avoid aliasing and mutating the caller's object.
-            self.training_container = cast(ContainerUnion, training_container[:])
-        else:
-            self.training_container.extend(training_container)  # type: ignore
+        self.training_container.extend(training_container)  # type: ignore
 
         # Clear fields that must be recomputed for Trajectories and Transitions.
         # Otherwise, we might accidentally use the old values.
