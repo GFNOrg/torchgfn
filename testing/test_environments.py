@@ -1130,9 +1130,7 @@ def _make_tb_gflownet(env, debug=True):
 
 def test_validate_hypergrid():
     """validate() returns L1 distance and logZ_diff for HyperGrid."""
-    env = HyperGrid(
-        ndim=2, height=4, store_all_states=True, validate_modes=False
-    )
+    env = HyperGrid(ndim=2, height=4, store_all_states=True, validate_modes=False)
     gflownet = _make_tb_gflownet(env)
 
     torch.manual_seed(42)
@@ -1226,9 +1224,7 @@ def test_validate_conditional_hypergrid():
 
 def test_validate_visited_states_deprecated():
     """validate() emits DeprecationWarning when visited_terminating_states is passed."""
-    env = HyperGrid(
-        ndim=2, height=4, store_all_states=True, validate_modes=False
-    )
+    env = HyperGrid(ndim=2, height=4, store_all_states=True, validate_modes=False)
     gflownet = _make_tb_gflownet(env)
 
     torch.manual_seed(42)
@@ -1249,9 +1245,7 @@ def test_validate_visited_states_deprecated():
 
 def test_validate_no_true_dist_raises():
     """validate() raises ValueError when true_dist is not implemented."""
-    env = HyperGrid(
-        ndim=2, height=4, store_all_states=True, validate_modes=False
-    )
+    env = HyperGrid(ndim=2, height=4, store_all_states=True, validate_modes=False)
     gflownet = _make_tb_gflownet(env)
 
     # Temporarily make true_dist raise NotImplementedError.
@@ -1266,9 +1260,7 @@ def test_validate_no_true_dist_raises():
 
 def test_validate_zero_samples_raises():
     """validate() raises ValueError with n_validation_samples=0."""
-    env = HyperGrid(
-        ndim=2, height=4, store_all_states=True, validate_modes=False
-    )
+    env = HyperGrid(ndim=2, height=4, store_all_states=True, validate_modes=False)
     gflownet = _make_tb_gflownet(env)
 
     with pytest.raises(ValueError, match="must be > 0"):
@@ -1348,9 +1340,7 @@ class TestJSD:
         """JSD(p, q) == JSD(q, p)."""
         p = torch.tensor([0.7, 0.2, 0.1])
         q = torch.tensor([0.1, 0.3, 0.6])
-        assert DiscreteEnv._jsd(p, q) == pytest.approx(
-            DiscreteEnv._jsd(q, p), abs=1e-10
-        )
+        assert DiscreteEnv._jsd(p, q) == pytest.approx(DiscreteEnv._jsd(q, p), abs=1e-10)
 
     def test_bounded(self):
         """JSD is always in [0, ln(2)]."""
