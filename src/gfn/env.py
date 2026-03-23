@@ -377,15 +377,9 @@ class Env(ABC):
         # are not included in the valid_states_idx.
         new_valid_states_idx = valid_states_idx & ~actions.is_exit  # boolean mask.
 
-        # IMPORTANT: .clone() is used to ensure that the new states are a
-        # distinct object from the old states. This is important for the sampler to
-        # work correctly when building the trajectories. If you want to override this
-        # method in your custom environment, you must ensure that the `new_states`
-        # returned is a distinct object from the submitted states.
+        # Clone to ensure new states are independent (required by sampler for trajectories).
         not_done_states = states[new_valid_states_idx].clone()
-        not_done_actions = actions[
-            new_valid_states_idx
-        ]  # NOTE: boolean indexing creates a copy!
+        not_done_actions = actions[new_valid_states_idx]
 
         not_done_states = self.step(not_done_states, not_done_actions)
         if self.debug:
@@ -401,8 +395,7 @@ class Env(ABC):
             states.batch_shape, device=states.device
         )
         new_states[new_valid_states_idx] = not_done_states
-        # Bypass conditions setter: avoids redundant shape/dtype/device
-        # validation since conditions are unchanged from the source states.
+        # Propagate conditions without re-validation (unchanged from source).
         if states._conditions is not None:
             new_states._conditions = states._conditions
         return new_states
@@ -424,11 +417,7 @@ class Env(ABC):
         if self.debug:
             assert states.batch_shape == actions.batch_shape
 
-        # IMPORTANT: states.clone() is used to ensure that the new states are a
-        # distinct object from the old states. This is important for the sampler to
-        # work correctly when building the trajectories. If you want to override this
-        # method in your custom environment, you must ensure that the `new_states`
-        # returned is a distinct object from the submitted states.
+        # Clone to ensure new states are independent (required by sampler for trajectories).
         new_states = states.clone()
 
         valid_states_idx: torch.Tensor = ~new_states.is_initial_state
@@ -447,8 +436,7 @@ class Env(ABC):
 
         # Calculate the backward step, and update only the states which are not Done.
         new_states[valid_states_idx] = self.backward_step(valid_states, valid_actions)
-        # Bypass conditions setter: avoids redundant shape/dtype/device
-        # validation since conditions are unchanged from the source states.
+        # Propagate conditions without re-validation (unchanged from source).
         if states._conditions is not None:
             new_states._conditions = states._conditions
         return new_states
@@ -529,8 +517,8 @@ class DiscreteEnv(Env, ABC):
         is_discrete: Class variable, whether the environment is discrete.
     """
 
-    s0: torch.Tensor  # this tells the type checker that s0 is a torch.Tensor
-    sf: torch.Tensor  # this tells the type checker that sf is a torch.Tensor
+    s0: torch.Tensor
+    sf: torch.Tensor
     is_discrete: bool = True
 
     def __init__(
@@ -579,11 +567,9 @@ class DiscreteEnv(Env, ABC):
                 UserWarning,
             )
 
-        # The default dummy action is -1.
         if dummy_action is None:
             dummy_action = torch.tensor([-1], device=s0.device)
 
-        # The default exit action index is the final element of the action space.
         if exit_action is None:
             exit_action = torch.tensor([n_actions - 1], device=s0.device)
 

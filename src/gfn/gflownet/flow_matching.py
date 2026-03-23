@@ -122,7 +122,6 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         Args:
             env: The discrete environment where the states are sampled from.
             states: The DiscreteStates object to evaluate (should not include $s_0$).
-            conditions: Optional conditions tensor for conditional environments.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
 
         Returns:

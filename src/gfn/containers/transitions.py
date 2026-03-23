@@ -77,9 +77,11 @@ class Transitions(Container):
         # Assert that all tensors are on the same device as the environment.
         device = self.env.device
         for obj in [states, actions, next_states]:
-            ensure_same_device(obj.device, device) if obj is not None else True
+            if obj is not None:
+                ensure_same_device(obj.device, device)
         for tensor in [is_terminating, log_rewards, log_probs]:
-            ensure_same_device(tensor.device, device) if tensor is not None else True
+            if tensor is not None:
+                ensure_same_device(tensor.device, device)
 
         self.states = states if states is not None else env.states_from_batch_shape((0,))
         assert len(self.states.batch_shape) == 1

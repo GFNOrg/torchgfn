@@ -109,7 +109,6 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
             The computed trajectory balance loss as a tensor. The shape depends on the
             reduction method.
         """
-        del env  # unused
         if self.debug:
             warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         scores = self.get_scores(
@@ -599,7 +598,6 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
             The computed log partition variance loss as a tensor. The shape depends on
             the reduction method.
         """
-        del env  # unused
         if self.debug:
             warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
         scores = self.get_scores(

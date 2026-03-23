@@ -54,7 +54,8 @@ class StatesContainer(Container, Generic[StateType]):
         if states is not None:
             ensure_same_device(states.device, device)
         for tensor in [is_terminating, log_rewards]:
-            ensure_same_device(tensor.device, device) if tensor is not None else True
+            if tensor is not None:
+                ensure_same_device(tensor.device, device)
 
         self.states = (
             states
