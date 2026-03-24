@@ -3,7 +3,13 @@ from typing import Literal
 import pytest
 import torch
 
+from gfn.actions import GraphActions
+from gfn.estimators import DiscreteGraphPolicyEstimator
+from gfn.gflownet.trajectory_balance import TBGFlowNet
+from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.utils.modules import (
+    GraphActionGNN,
+    GraphEdgeActionMLP,
     RecurrentDiscreteSequenceModel,
     TransformerDiscreteSequenceModel,
 )
@@ -172,3 +178,127 @@ def test_transformer_smoke(
             == carry_all[f"value_{idx}"].size(2)
             == total_steps
         )
+
+
+# ---------------------------------------------------------------------------
+# Graph module tests
+# ---------------------------------------------------------------------------
+
+N_NODES = 6
+NUM_NODE_CLASSES = 6
+NUM_EDGE_CLASSES = 1
+EMBEDDING_DIM = 32
+
+
+def _make_graph_env(directed: bool = False) -> GraphBuildingOnEdges:
+    return GraphBuildingOnEdges(
+        n_nodes=N_NODES,
+        state_evaluator=lambda s: torch.ones(len(s)),
+        directed=directed,
+        device=torch.device("cpu"),
+    )
+
+
+def _make_module(module_cls, is_backward: bool, directed: bool):
+    """Instantiate either GraphActionGNN or GraphEdgeActionMLP."""
+    if module_cls is GraphActionGNN:
+        return module_cls(
+            num_node_classes=NUM_NODE_CLASSES,
+            directed=directed,
+            num_edge_classes=NUM_EDGE_CLASSES,
+            embedding_dim=EMBEDDING_DIM,
+            is_backward=is_backward,
+        )
+    else:
+        return module_cls(
+            n_nodes=N_NODES,
+            directed=directed,
+            num_node_classes=NUM_NODE_CLASSES,
+            num_edge_classes=NUM_EDGE_CLASSES,
+            embedding_dim=EMBEDDING_DIM,
+            is_backward=is_backward,
+        )
+
+
+def _sample_valid_states(module_cls, directed, n=4):
+    """Sample trajectories and return non-sink terminating states."""
+    env = _make_graph_env(directed)
+    pf = DiscreteGraphPolicyEstimator(module=_make_module(module_cls, False, directed))
+    pb = DiscreteGraphPolicyEstimator(
+        module=_make_module(module_cls, True, directed),
+        is_backward=True,
+    )
+    gflownet = TBGFlowNet(pf, pb)
+    traj = gflownet.sample_trajectories(env, n=n, save_logprobs=True)
+    return env, gflownet, traj
+
+
+@pytest.mark.parametrize("module_cls", [GraphActionGNN, GraphEdgeActionMLP])
+@pytest.mark.parametrize("is_backward", [False, True])
+@pytest.mark.parametrize("directed", [False, True])
+def test_graph_module_output_shapes(module_cls, is_backward, directed):
+    """Forward pass returns TensorDict with correct keys and 2D shapes."""
+    env, _, traj = _sample_valid_states(module_cls, directed)
+    module = _make_module(module_cls, is_backward, directed)
+
+    # Use terminating states — guaranteed to be valid (non-sink) graphs.
+    states = traj.terminating_states
+    states_tensor = states.tensor
+
+    with torch.no_grad():
+        out = module(states_tensor)
+
+    expected_keys = {
+        GraphActions.ACTION_TYPE_KEY,
+        GraphActions.NODE_CLASS_KEY,
+        GraphActions.NODE_INDEX_KEY,
+        GraphActions.EDGE_CLASS_KEY,
+        GraphActions.EDGE_INDEX_KEY,
+    }
+    assert set(out.keys()) == expected_keys
+
+    B = len(states)
+    for key in expected_keys:
+        assert out[key].ndim == 2, f"{key} has ndim={out[key].ndim}, expected 2"
+        assert (
+            out[key].shape[0] == B
+        ), f"{key} batch dim is {out[key].shape[0]}, expected {B}"
+
+
+@pytest.mark.parametrize("module_cls", [GraphActionGNN, GraphEdgeActionMLP])
+@pytest.mark.parametrize("directed", [False, True])
+def test_graph_module_output_shapes_on_empty_graphs(module_cls, directed):
+    """Forward pass works on initial (empty) states."""
+    env = _make_graph_env(directed)
+    module = _make_module(module_cls, False, directed)
+
+    states = env.states_from_batch_shape((4,))
+    with torch.no_grad():
+        out = module(states.tensor)
+
+    B = 4
+    for key in out.keys():
+        assert out[key].ndim == 2, f"{key} has ndim={out[key].ndim}, expected 2"
+        assert out[key].shape[0] == B
+
+
+@pytest.mark.parametrize("module_cls", [GraphActionGNN, GraphEdgeActionMLP])
+@pytest.mark.parametrize("directed", [False, True])
+def test_graph_tb_pipeline(module_cls, directed):
+    """Full TB training step works with both GNN and MLP modules."""
+    env = _make_graph_env(directed)
+    pf = DiscreteGraphPolicyEstimator(module=_make_module(module_cls, False, directed))
+    pb = DiscreteGraphPolicyEstimator(
+        module=_make_module(module_cls, True, directed),
+        is_backward=True,
+    )
+    gflownet = TBGFlowNet(pf, pb)
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=1e-3)
+
+    traj = gflownet.sample_trajectories(env, n=8, save_logprobs=True)
+    samples = gflownet.to_training_samples(traj)
+    optimizer.zero_grad()
+    loss = gflownet.loss(env, samples, recalculate_all_logprobs=True)
+    loss.backward()
+    optimizer.step()
+    assert torch.isfinite(loss)
