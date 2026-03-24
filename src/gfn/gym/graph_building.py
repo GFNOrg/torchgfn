@@ -198,8 +198,14 @@ class GraphBuilding(GraphEnv):
                 mask = torch.arange(len(graph.x)) != node_idx
                 graph.x = graph.x[mask]
 
-                # Update edge indices
-                assert torch.all(graph.edge_index != node_idx)
+                # Remove edges incident to the deleted node, then re-index.
+                edge_mask = torch.logical_and(
+                    graph.edge_index[0] != node_idx,
+                    graph.edge_index[1] != node_idx,
+                )
+                graph.edge_index = graph.edge_index[:, edge_mask]
+                if graph.edge_attr is not None:
+                    graph.edge_attr = graph.edge_attr[edge_mask]
                 graph.edge_index[graph.edge_index > node_idx] -= 1
 
         # Handle ADD_EDGE action
