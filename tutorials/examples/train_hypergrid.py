@@ -975,6 +975,9 @@ def main(args) -> dict:  # noqa: C901
                     if distributed_context.dc_mpi4py is not None
                     else MPI.COMM_WORLD
                 )
+                assert (
+                    mpi4py_train_group is not None
+                ), "train_global_group must not be None for MPI dist_lib"
                 if args.mpi_sa_mode == "general":
                     averaging_policy_mpi4py = AsyncSelectiveAveragingPolicympi4pyGeneral(  # type: ignore[abstract]
                         model_builder=_model_builder,
@@ -1141,6 +1144,7 @@ def main(args) -> dict:  # noqa: C901
             elif averaging_policy_mpi4py is not None:
                 assert args.dist_lib == "mpi"
                 assert distributed_context.dc_mpi4py is not None
+                assert distributed_context.dc_mpi4py.train_global_group is not None
                 gflownet, optimizer, averaging_info = averaging_policy_mpi4py(
                     iteration=iteration,
                     model=gflownet,

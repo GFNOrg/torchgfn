@@ -1,14 +1,25 @@
+from __future__ import annotations
+
 import datetime
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, cast
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Dict, List, Optional, cast
 
 import torch
 import torch.distributed as dist
-from mpi4py import MPI
+
+if TYPE_CHECKING:
+    from mpi4py import MPI
 
 logger = logging.getLogger(__name__)
+
+
+def _get_MPI():
+    """Lazily import and return the mpi4py MPI module."""
+    from mpi4py import MPI
+
+    return MPI
 
 
 def report_load_imbalance(
@@ -124,7 +135,7 @@ def average_models(model, training_group=None):
 
 
 @dataclass
-class DistributedContextmpi4py:
+class DistributedContextMPI4Py:
     """Holds all distributed training/replay buffer groups and ranks."""
 
     my_rank: int
@@ -133,7 +144,7 @@ class DistributedContextmpi4py:
     agent_group_size: int
     agent_groups: Optional[List[MPI.Comm]] = None
     agent_group_id: Optional[int] = None
-    train_global_group: MPI.Comm = field(default_factory=lambda: MPI.COMM_WORLD)
+    train_global_group: Optional[MPI.Comm] = None
     assigned_buffer: Optional[int] = None
     buffer_group: Optional[MPI.Comm] = None
     assigned_training_ranks: Optional[List[int]] = None
@@ -150,26 +161,28 @@ class DistributedContextmpi4py:
 def initialize_distributed_compute_mpi4py(
     num_remote_buffers: int,
     num_agent_groups: int,
-) -> DistributedContextmpi4py:
+) -> DistributedContextMPI4Py:
     """Initializes distributed compute using mpi4py.
 
     Args:
         num_remote_buffers: The number of remote buffers to use.
         num_agent_groups: The number of agent groups.
     """
+    MPI = _get_MPI()
+
     pmi_size = MPI.COMM_WORLD.Get_size()
-    print(f"+ Initializing distributed compute, PMI_SIZE={pmi_size}")
+    logger.info("Initializing distributed compute (mpi4py), PMI_SIZE=%d", pmi_size)
 
     if pmi_size <= 1:
-        print("+ PMI_SIZE <= 1, running in single process mode.")
-        return DistributedContextmpi4py(
+        logger.info("PMI_SIZE <= 1, running in single process mode.")
+        return DistributedContextMPI4Py(
             my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
         )
 
     os.environ["RANK"] = str(MPI.COMM_WORLD.Get_rank())
     os.environ["WORLD_SIZE"] = str(pmi_size)
 
-    print("+ OMP_NUM_THREADS = ", os.getenv("OMP_NUM_THREADS"))
+    logger.info("OMP_NUM_THREADS = %s", os.getenv("OMP_NUM_THREADS"))
 
     world_size = MPI.COMM_WORLD.Get_size()
     if world_size is None:
@@ -179,7 +192,7 @@ def initialize_distributed_compute_mpi4py(
         raise ValueError("RANK is not set")
 
     dist.barrier()
-    print("+ Distributed compute initialized")
+    logger.info("Distributed compute initialized")
 
     my_rank = rank  # dist.get_rank()  # Global!
     # world_size = dist.get_world_size()  # Global!
@@ -188,8 +201,8 @@ def initialize_distributed_compute_mpi4py(
 
     # make sure that we have atmost 1 remote buffer per training rank.
     assert num_training_ranks >= num_remote_buffers
-    print("num_train = ", num_training_ranks)
-    print("num_remote_buffers = ", num_remote_buffers)
+    logger.info("num_train = %d", num_training_ranks)
+    logger.info("num_remote_buffers = %d", num_remote_buffers)
 
     # for now, let us enforce that each agent gets equal number of ranks.
     # TODO: later, we can relax this condition.
@@ -199,7 +212,7 @@ def initialize_distributed_compute_mpi4py(
         list(range(i * agent_group_size, (i + 1) * agent_group_size))
         for i in range(num_agent_groups)
     ]
-    print(f"Agent group ranks: {agent_group_rank_list}")
+    logger.info("Agent group ranks: %s", agent_group_rank_list)
     world_group = MPI.COMM_WORLD.Get_group()
     agent_group_list = []
     for i in range(num_agent_groups):
@@ -211,15 +224,8 @@ def initialize_distributed_compute_mpi4py(
         r for r in range(num_training_ranks)
     ]  # e.g., 0..num_training_ranks-1
 
-    # train_global_group = dist.new_group(
-    #    ranks=training_ranks,
-    #    backend=dist_backend,
-    #    timeout=datetime.timedelta(minutes=5),
-    # )
     grp = world_group.Incl(training_ranks)
     train_global_group = MPI.COMM_WORLD.Create(grp)
-    # print(f"Training global group ranks: {training_ranks},  {train_global_group}")
-    # assert train_global_group != MPI.COMM_NULL
 
     buffer_group = None
     assigned_buffer = None
@@ -228,17 +234,9 @@ def initialize_distributed_compute_mpi4py(
         buffer_ranks = list(
             range(num_training_ranks, num_training_ranks + num_remote_buffers)
         )
-        # buffer_group = dist.new_group(
-        #    buffer_ranks,
-        #    backend=dist_backend,
-        #    timeout=datetime.timedelta(minutes=5),
-        # )
         grp = world_group.Incl(buffer_ranks)
         buffer_group = MPI.COMM_WORLD.Create(grp)
-        print(f" >>>>>>>>>>>>>>>>. Buffer group ranks: {buffer_ranks}, {buffer_group}")
-        # assert buffer_group != MPI.COMM_NULL
-
-        print(f"Buffer group ranks: {buffer_ranks}")
+        logger.info("Buffer group ranks: %s, %s", buffer_ranks, buffer_group)
 
         # Each training rank gets assigned to a buffer rank
         if my_rank < (num_training_ranks):
@@ -250,16 +248,17 @@ def initialize_distributed_compute_mpi4py(
                 if (ranks % num_remote_buffers) == (my_rank - num_training_ranks)
             ]
 
-        print(f"+ My rank: {my_rank} size: {world_size}")
+        logger.info("My rank: %d size: %d", my_rank, world_size)
         if my_rank < (num_training_ranks):
-            print(f"  -> Training group, assigned buffer rank = {assigned_buffer}")
+            logger.info(
+                "  -> Training group, assigned buffer rank = %s", assigned_buffer
+            )
         else:
-            print("  -> Buffer group")
+            logger.info("  -> Buffer group")
 
-    # dist.barrier()
-    print("+ Distributed compute initialized, rank = ", my_rank)
+    logger.info("Distributed compute initialized (mpi4py), rank = %d", my_rank)
 
-    return DistributedContextmpi4py(
+    return DistributedContextMPI4Py(
         my_rank=my_rank,
         world_size=world_size,
         num_training_ranks=num_training_ranks,
@@ -287,7 +286,7 @@ class DistributedContext:
     assigned_buffer: Optional[int] = None
     buffer_group: Optional[dist.ProcessGroup] = None
     assigned_training_ranks: Optional[List[int]] = None
-    dc_mpi4py: Optional[DistributedContextmpi4py] = None
+    dc_mpi4py: Optional[DistributedContextMPI4Py] = None
 
     def is_buffer_rank(self) -> bool:
         """Check if the current rank is part of the buffer group."""
@@ -308,7 +307,7 @@ class DistributedContext:
             if self.dc_mpi4py.agent_groups is not None:
                 for ag in self.dc_mpi4py.agent_groups:
                     ag.Free()
-            MPI.Finalize()
+            _get_MPI().Finalize()
 
     def get_train_group(self, backend: str = "mpi"):
         if backend == "mpi":
@@ -614,6 +613,7 @@ def send(data, dst_rank, backend=default_backend):
         dist.send(tensor=length_tensor, dst=dst_rank, tag=0)
         dist.send(tensor=data, dst=dst_rank, tag=1)
     elif backend == "mpi":
+        MPI = _get_MPI()
         comm = MPI.COMM_WORLD
         arr = data.detach().cpu().contiguous().numpy()
         comm.Send(arr, dest=dst_rank)
@@ -637,6 +637,7 @@ def recv(src_rank=None, backend=default_backend):
         return src_rank, data
 
     elif backend == "mpi":
+        MPI = _get_MPI()
         comm = MPI.COMM_WORLD
         status = MPI.Status()
         source = MPI.ANY_SOURCE if src_rank is None else src_rank
@@ -655,6 +656,7 @@ def barrier(backend=default_backend, group=None):
         group = dist.group.WORLD if group is None else group
         dist.barrier(group=group)
     elif backend == "mpi":
+        MPI = _get_MPI()
         group = MPI.COMM_WORLD if group is None else group
         group.Barrier()
     else:
@@ -665,6 +667,6 @@ def get_rank(backend=default_backend):
     if backend == "torch":
         return dist.get_rank()
     elif backend == "mpi":
-        return MPI.COMM_WORLD.Get_rank()
+        return _get_MPI().COMM_WORLD.Get_rank()
     else:
         raise ValueError(f"Unknown backend: {backend}")
