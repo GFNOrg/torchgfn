@@ -108,9 +108,11 @@ class HypergridArgs(CommonArgs):
     replay_buffer_size: int = 0
     timing: bool = True
     half_precision: bool = False
-    remote_buffer_freq = 1
+    remote_buffer_freq: int = 1
     validate_environment: bool = True
     weight_decay: float = 0.0
+    dist_lib: str = "torch"
+    use_selective_averaging: bool = False
 
 
 @dataclass
