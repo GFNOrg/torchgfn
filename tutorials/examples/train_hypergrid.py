@@ -1310,7 +1310,11 @@ def main(args) -> dict:  # noqa: C901
                 pass
 
         # log replay buffer times
-        if distributed_context.my_rank == 0:
+        if (
+            distributed_context.my_rank == 0
+            and replay_buffer is not None
+            and hasattr(replay_buffer, "timing_log")
+        ):
             logger.info("=" * 80)
             logger.info("\n" + "=" * 80)
             logger.info("\n Timing information for Replay Buffer:")
