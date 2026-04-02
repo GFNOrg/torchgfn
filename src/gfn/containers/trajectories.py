@@ -216,7 +216,10 @@ class Trajectories(Container):
         Returns:
             The terminating states.
         """
-        return self.states[self.terminating_idx - 1, torch.arange(self.batch_size)]
+        return self.states[
+            self.terminating_idx - 1,
+            torch.arange(self.batch_size, device=self.device),
+        ]
 
     @property
     def log_rewards(self) -> torch.Tensor | None:
