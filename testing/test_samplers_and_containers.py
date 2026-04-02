@@ -440,7 +440,7 @@ def test_sub_sampling(
         n_components_s0=1,
     )
     sampled = trajectories.sample(n_samples=2)
-    assert sampled.n_trajectories == 2
+    assert sampled.batch_size == 2
     assert sampled.states is not None
     assert sampled.actions is not None
 

@@ -259,7 +259,6 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
             log_pf_prior = get_trajectory_pfs(
                 self.prior_pf,
                 trajectories,
-                fill_value=0.0,
                 recalculate_all_logprobs=True,
             ).sum(dim=0)
 

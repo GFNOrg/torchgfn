@@ -299,11 +299,7 @@ def test_subtb_get_scores_vectorized_matches_original(seed: int):
         assert isinstance(masks, (list, tuple))
 
         max_len = trajectories.max_length
-        n_traj = (
-            trajectories.n_trajectories
-            if hasattr(trajectories, "n_trajectories")
-            else len(trajectories)
-        )
+        n_traj = trajectories.batch_size
         device = trajectories.terminating_idx.device
         dtype = scores[0].dtype
 

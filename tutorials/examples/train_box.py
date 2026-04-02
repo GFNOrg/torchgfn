@@ -123,7 +123,7 @@ def plot_trajectories(
 
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Get all states: shape is (max_length+1, n_trajectories, state_dim)
+    # Get all states: shape is (max_length+1, batch_size, state_dim)
     all_states = trajectories.states.tensor.cpu().numpy()
     terminating_idx = trajectories.terminating_idx.cpu().numpy()
 
