@@ -53,7 +53,12 @@ class AverageAllPolicy(SpawnPolicy):
         if not dist.is_available() or not dist.is_initialized():
             return model, optimizer, {}
         if iteration % self.average_every != 0:
-            return model, optimizer, {"averaged_this_iteration": False}
+            return model, optimizer, {
+                "averaged_this_iteration": False,
+                "is_replaced": False,
+                "agent_replaced_this_iteration": False,
+                "replacement_iteration": -1,
+            }
 
         world_size = float(dist.get_world_size())
         logger.info(
@@ -64,7 +69,12 @@ class AverageAllPolicy(SpawnPolicy):
             dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=group)
             param.data.copy_(param_tensor / world_size)
 
-        return model, optimizer, {"averaged_this_iteration": True}
+        return model, optimizer, {
+            "averaged_this_iteration": True,
+            "is_replaced": False,
+            "agent_replaced_this_iteration": False,
+            "replacement_iteration": -1,
+        }
 
 
 class AsyncSelectiveAveragingPolicy(SpawnPolicy):
@@ -224,7 +234,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                         param.data.copy_(new_weights[name])
                 averaged_this_iteration = True
 
-        return model, optimizer, {"averaged_this_iteration": averaged_this_iteration}
+        return model, optimizer, {
+            "averaged_this_iteration": averaged_this_iteration,
+            "is_replaced": averaged_this_iteration,
+            "agent_replaced_this_iteration": averaged_this_iteration,
+            "replacement_iteration": int(iteration) if averaged_this_iteration else -1,
+        }
 
     # ---------------- Rank 0 metric aggregation and dispatch ----------------
     def _rank0_post_metric_recvs(self) -> None:
@@ -926,6 +941,8 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             "averaged_this_iteration": bool(should_replace),
             "replacement_mode": self.replacement_mode,
             "is_replaced": bool(should_replace),
+            "agent_replaced_this_iteration": bool(should_replace),
+            "replacement_iteration": int(iteration) if should_replace else -1,
             "num_replacements_so_far": int(self.num_replacements),
             "local_metric": float(local_metric),
             "replacement_check_every": int(self.average_every),
@@ -1031,6 +1048,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         model: GFlowNet,
         average_every: int,
         threshold_metric: float = 0.0,
+        cooldown: int = 200,
         replacement_ratio: float = 0.2,
         averaging_strategy: str = "mean",
         momentum: float = 0.0,
@@ -1049,6 +1067,10 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
 
         self._model: Optional[GFlowNet] = None
         self.threshold_metric = float(threshold_metric)
+        self.cooldown = int(cooldown)
+        if self.cooldown < 0:
+            raise ValueError(f"cooldown must be non-negative, got {self.cooldown}")
+        self._last_threshold_trigger_iter = -self.cooldown
         self.replacement_mode = str(replacement_mode)
         if self.replacement_mode not in {"age", "threshold", "worst_ratio"}:
             raise ValueError(
@@ -1144,10 +1166,21 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         self.age = 0
 
     def is_agent_dying(
-        self, local_metric: float, threshold_metric: float, check_policy=0
+        self,
+        local_metric: float,
+        threshold_metric: float,
+        check_policy: int = 0,
+        iteration: Optional[int] = None,
     ) -> bool:
         if check_policy == 0:  # static theshold
-            return local_metric < threshold_metric
+            if local_metric >= threshold_metric:
+                return False
+            if iteration is None:
+                raise ValueError("iteration must be provided for threshold policy checks")
+            if iteration - self._last_threshold_trigger_iter < self.cooldown:
+                return False
+            self._last_threshold_trigger_iter = iteration
+            return True
 
         elif check_policy == 1:  # dynamic threshold based on age
             if self.age >= self.max_age:
@@ -1186,7 +1219,12 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
             )
         if self.replacement_mode == "threshold":
             return (
-                self.is_agent_dying(local_metric, self.threshold_metric, check_policy=0),
+                self.is_agent_dying(
+                    local_metric,
+                    self.threshold_metric,
+                    check_policy=0,
+                    iteration=iteration,
+                ),
                 None,
             )
         if self.replacement_mode == "worst_ratio":
@@ -1341,6 +1379,8 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
             "averaged_this_iteration": bool(should_replace),
             "replacement_mode": self.replacement_mode,
             "is_replaced": bool(should_replace),
+            "agent_replaced_this_iteration": bool(should_replace),
+            "replacement_iteration": int(iteration) if should_replace else -1,
             "num_replacements_so_far": int(self.num_replacements),
             "local_metric": float(local_metric),
             "replacement_check_every": int(self.average_every),
@@ -1400,7 +1440,12 @@ class AverageAllPolicympi4py(SpawnPolicy):
         if not dist.is_available() or not dist.is_initialized():
             return model, optimizer, {}
         if iteration % self.average_every != 0:
-            return model, optimizer, {"averaged_this_iteration": False}
+            return model, optimizer, {
+                "averaged_this_iteration": False,
+                "is_replaced": False,
+                "agent_replaced_this_iteration": False,
+                "replacement_iteration": -1,
+            }
 
         # print("AverageAll mpi4py model parameters across all ranks ...", flush=True)
         world_size = group.Get_size()
@@ -1413,4 +1458,9 @@ class AverageAllPolicympi4py(SpawnPolicy):
             param_tensor /= world_size
             param.data.copy_(torch.from_numpy(param_tensor))
 
-        return model, optimizer, {"averaged_this_iteration": True}
+        return model, optimizer, {
+            "averaged_this_iteration": True,
+            "is_replaced": False,
+            "agent_replaced_this_iteration": False,
+            "replacement_iteration": -1,
+        }

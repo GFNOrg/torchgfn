@@ -75,6 +75,7 @@ class ReplayBuffer:
         self.prioritized_capacity = prioritized_capacity
         self.prioritized_sampling = prioritized_sampling
         self.pending_container: ContainerUnion | None = None
+        self.remote_score_context: dict[str, float] = {}
 
         # Remote buffer fields
         self.remote_manager_rank = remote_manager_rank
@@ -127,13 +128,28 @@ class ReplayBuffer:
             if isinstance(self.pending_container, Trajectories):
                 self.pending_container.estimator_outputs = None
             if self._add_counter % self.remote_buffer_freq == 0:
-                score = self._send_objs(self.pending_container)
+                score = self._send_objs(
+                    self.pending_container,
+                    score_context=self.remote_score_context,
+                )
                 self.pending_container = None
                 return score
 
-    def _send_objs(self, training_container: ContainerUnion) -> dict[str, float]:
+    def set_remote_score_context(self, context: dict[str, float] | None) -> None:
+        """Set lightweight metadata sent with next remote scoring request."""
+        self.remote_score_context = dict(context or {})
+
+    def _send_objs(
+        self,
+        training_container: ContainerUnion,
+        score_context: dict[str, float] | None = None,
+    ) -> dict[str, float]:
         """Sends a training container to the remote manager."""
-        msg = Message(MessageType.DATA, training_container)
+        payload = {
+            "training_container": training_container,
+            "score_context": dict(score_context or {}),
+        }
+        msg = Message(MessageType.DATA, payload)
         msg_tensor = msg.serialize()
 
         # First send the length so the receiver knows how many bytes

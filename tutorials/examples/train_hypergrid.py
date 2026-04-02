@@ -74,9 +74,20 @@ from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 logger = logging.getLogger(__name__)
 
 
+def _extract_mode_state_tuples(
+    env: HyperGrid, states: DiscreteStates
+) -> set[tuple[int, ...]]:
+    """Return unique terminating mode states as coordinate tuples."""
+    mask = env.mode_mask(states)
+    if not bool(mask.any()):
+        return set()
+    mode_states = states.tensor[mask].detach().cpu()
+    return {tuple(int(x) for x in row.tolist()) for row in mode_states}
+
+
 def build_mode_discovery_figure(
     env: HyperGrid,
-    discovered_indices: set[int],
+    discovered_state_tuples: set[tuple[int, ...]],
 ):
     """Build a matplotlib figure showing discovered vs undiscovered mode states.
 
@@ -104,8 +115,9 @@ def build_mode_discovery_figure(
         return None
 
     mode_coords = all_states.tensor[mask].cpu().numpy()  # (n_mode, ndim)
-    mode_idx = env.get_states_indices(all_states)[mask].cpu()
-    is_disc = np.array([int(idx.item()) in discovered_indices for idx in mode_idx])
+    is_disc = np.array(
+        [tuple(int(v) for v in coord.tolist()) in discovered_state_tuples for coord in mode_coords]
+    )
     n_discovered = int(is_disc.sum())
     h = env.height
 
@@ -195,7 +207,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
             capacity=capacity,
             remote_manager_rank=remote_manager_rank,
         )
-        self.discovered_modes = set()
+        self.discovered_mode_states: set[tuple[int, ...]] = set()
         self.env = env
         self._ema_decay: float = float(ema_decay)
         self._score_ema: Optional[float] = None
@@ -207,138 +219,49 @@ class ModesReplayBufferManager(ReplayBufferManager):
         self.p_norm_novelty = p_norm_novelty
         self.cdist_max_bytes = cdist_max_bytes
 
-    def scoring_function(self, obj: ContainerUnion) -> dict[str, float]:
+    def scoring_function(self, obj: ContainerUnion | dict) -> dict[str, float]:
+        score_context: dict[str, float] = {}
+        container_obj = obj
+        if isinstance(obj, dict) and "training_container" in obj:
+            container_obj = obj["training_container"]
+            raw_context = obj.get("score_context", {})
+            if isinstance(raw_context, dict):
+                score_context = {
+                    str(k): float(v)
+                    for k, v in raw_context.items()
+                    if isinstance(v, (int, float))
+                }
 
-        # print("Score - Computing score for object:", obj)
-        # print("Score - Terminating states:", obj.terminating_states)
-        # print("Score - Log rewards:", obj.log_rewards)
-
-        # A) Retention (usefulness)
-        if not self.replay_buffer.prioritized_capacity:
-            retained_count = 0
-
-        # If the buffer is empty, retain all the new objects.
-        if self.replay_buffer.training_container is None:
-            retained_count = len(obj)
-
-        # If the buffer isn't full yet, we retain all the new objects.
-        elif (
-            len(self.replay_buffer.training_container) + len(obj)
-            <= self.replay_buffer.capacity
-        ):
-            retained_count = len(obj)
-
-        # If the buffer is full, we keep the high reward items only.
-        elif self.replay_buffer.prioritized_capacity:
-            assert self.replay_buffer.training_container.log_rewards is not None
-            assert obj.log_rewards is not None
-
-            # The old log_rewards are already sorted in ascending order.
-            old_log_rewards = self.replay_buffer.training_container.log_rewards
-
-            threshold = old_log_rewards.min()
-            new_log_rewards = obj.log_rewards
-            retained_new_log_rewards = new_log_rewards[new_log_rewards >= threshold]
-            retained_count = len(retained_new_log_rewards)
-
-        logger.debug("Score - Retained count: %s", retained_count)
-
-        # B) Novelty (sum of min-distances vs pre-add buffer). Higher min-distances are better.
-        if (
-            self.replay_buffer.training_container is None
-            or len(self.replay_buffer.training_container) == 0
-        ):
-            novelty_sum = float(len(obj))  # Placeholder value when the buffer is empty.
-
-        else:
-            # Compute the batch x buffer distances of the terminating states.
-            batch = obj.terminating_states.tensor.to(torch.get_default_dtype())
-            buf = self.replay_buffer.training_container.terminating_states.tensor.to(
-                torch.get_default_dtype()
-            )
-
-            m_ = batch.shape[0]
-            n_ = buf.shape[0]
-
-            batch = batch.view(m_, -1)
-            buf = buf.view(n_, -1)
-
-            # Compute the chunk size based on the max bytes per chunk.
-            bytes_per = 8 if batch.dtype == torch.float64 else 4
-            chunk = max(
-                1,
-                int(self.cdist_max_bytes // max(1, (m_ * bytes_per))),
-            )
-            min_dist = torch.full(
-                (m_,),
-                torch.finfo(batch.dtype).max,
-                dtype=batch.dtype,
-                device=batch.device,
-            )
-            for start in range(0, n_, chunk):
-                end = min(start + chunk, n_)
-
-                # Loop over chunks of the buffer to compute batch x buffer distances.
-                distances = torch.cdist(
-                    batch,
-                    buf[start:end],
-                    p=self.p_norm_novelty,
-                )
-                min_dist = torch.minimum(min_dist, distances.min(dim=1).values)
-
-            # Sum the minimum batch x buffer distances for each batch element.
-            novelty_sum = float(min_dist.sum().item())
-            logger.debug("Score - Min distances: %s", min_dist)
-
-        logger.debug("Score - Novelty sum: %s", novelty_sum)
-
-        # C) High reward term (sum over batch)
-        assert (
-            obj.log_rewards is not None
-        ), "log_rewards is None in submitted trajectories!"
-        reward_sum = float(obj.log_rewards.exp().sum().item())
-        logger.debug("Score - Reward sum: %s", reward_sum)
-
-        # D) Mode bonus
-        logger.debug("Score - Modes discovered before update: %s", self.discovered_modes)
+        assert isinstance(container_obj, ContainerUnion)
+        logger.debug(
+            "Score - Modes discovered before update: %s", self.discovered_mode_states
+        )
 
         n_new_modes = 0.0
-        assert isinstance(obj.terminating_states, DiscreteStates)
-        modes_found = self.env.modes_found(obj.terminating_states)
-        if isinstance(modes_found, set):
-            new_modes = modes_found - self.discovered_modes
-            if new_modes:
-                n_new_modes = float(len(new_modes))
-                self.discovered_modes.update(new_modes)
+        assert isinstance(container_obj.terminating_states, DiscreteStates)
+        mode_states_found = _extract_mode_state_tuples(
+            self.env, container_obj.terminating_states
+        )
+        new_mode_states = mode_states_found - self.discovered_mode_states
+        if new_mode_states:
+            n_new_modes = float(len(new_mode_states))
+            self.discovered_mode_states.update(new_mode_states)
 
+        agent_lifetime_iters = max(1.0, float(score_context.get("agent_lifetime_iters", 1.0)))
+        final_score = n_new_modes / agent_lifetime_iters
         logger.debug("Score - New modes found: %s", n_new_modes)
-        logger.debug("Score - Modes discovered after update: %s", self.discovered_modes)
-
-        # Compute the final score.
-        final_score = self.w_retained * float(retained_count)
-        final_score += self.w_novelty * novelty_sum
-        final_score += self.w_reward * reward_sum
-        final_score += self.w_mode_bonus * n_new_modes
-        logger.debug("Score - Final score: %s", final_score)
-        # Update and return EMA of the score
-        if self._score_ema is None:
-            self._score_ema = final_score
-        else:
-            self._score_ema = self._ema_decay * self._score_ema + (
-                1.0 - self._ema_decay
-            ) * float(final_score)
-        logger.debug("Score - EMA score: %s", self._score_ema)
+        logger.debug(
+            "Score - Modes discovered after update: %s", self.discovered_mode_states
+        )
         return {
-            "score": float(self._score_ema),
-            "score_before_ema": final_score,
-            "retained_count": retained_count,
-            "novelty_sum": novelty_sum,
-            "reward_sum": reward_sum,
+            "score": float(final_score),
+            "score_before_ema": float(final_score),
             "n_new_modes": n_new_modes,
+            "agent_lifetime_iters": float(agent_lifetime_iters),
         }
 
     def _compute_metadata(self) -> dict:
-        return {"n_modes_found": len(self.discovered_modes)}
+        return {"n_modes_found": len(self.discovered_mode_states)}
 
 
 def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
@@ -904,8 +827,11 @@ def main(args) -> dict:  # noqa: C901
         f"num_training_ranks ({distributed_context.num_training_ranks})"
     )
     per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
-    modes_found = set()
-    local_modes_found = set()
+    modes_found: set[tuple[int, ...]] = set()
+    local_modes_found_full_run: set[tuple[int, ...]] = set()
+    local_modes_found_current_policy: set[tuple[int, ...]] = set()
+    local_new_modes_count = 0.0
+    agent_birth_iteration = 0
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
 
     logger.info("n_iterations = %d", n_iterations)
@@ -980,6 +906,7 @@ def main(args) -> dict:  # noqa: C901
                         model=gflownet,
                         average_every=args.average_every,
                         threshold_metric=args.performance_tracker_threshold,
+                        cooldown=args.performance_tracker_cooldown,
                         replacement_ratio=args.replacement_ratio,
                         averaging_strategy=args.averaging_strategy,
                         momentum=args.momentum,
@@ -1008,6 +935,8 @@ def main(args) -> dict:  # noqa: C901
     pbar = trange(n_iterations)
     for iteration in pbar:
         iteration_start = time.time()
+        local_new_modes_this_iter = 0.0
+        agent_lifetime_iters = max(1, iteration - agent_birth_iteration + 1)
 
         # Keep track of visited terminating states on this node.
         with Timer(
@@ -1040,6 +969,17 @@ def main(args) -> dict:  # noqa: C901
                 epsilon=float(getattr(args, "agent_epsilon", 0.0)),
                 temperature=float(getattr(args, "agent_temperature", 1.0)),
             )
+            iter_mode_states_found = _extract_mode_state_tuples(
+                env, cast(DiscreteStates, trajectories.terminating_states)
+            )
+            new_local_modes = (
+                iter_mode_states_found - local_modes_found_current_policy
+            )
+            if new_local_modes:
+                local_modes_found_current_policy.update(new_local_modes)
+                local_modes_found_full_run.update(new_local_modes)
+                local_new_modes_this_iter = float(len(new_local_modes))
+                local_new_modes_count += local_new_modes_this_iter
 
         # Training objects (incl. possible replay buffer sampling).
         with Timer(
@@ -1049,6 +989,9 @@ def main(args) -> dict:  # noqa: C901
 
             score_dict = None
             if replay_buffer is not None:
+                replay_buffer.set_remote_score_context(
+                    {"agent_lifetime_iters": float(agent_lifetime_iters)}
+                )
                 with torch.no_grad():
                     score_dict = replay_buffer.add(training_samples)
                     training_objects = replay_buffer.sample(
@@ -1104,6 +1047,7 @@ def main(args) -> dict:  # noqa: C901
 
         # Model averaging.
         averaging_info = {}
+        local_policy_score = local_new_modes_count / float(agent_lifetime_iters)
         with Timer(
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
@@ -1114,9 +1058,7 @@ def main(args) -> dict:  # noqa: C901
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=(
-                        score_dict["score"] if score_dict is not None else -loss.item()
-                    ),
+                    local_metric=local_policy_score,
                     group=distributed_context.train_global_group,
                 )
             elif averaging_policy_mpi4py is not None:
@@ -1126,11 +1068,15 @@ def main(args) -> dict:  # noqa: C901
                     iteration=iteration,
                     model=gflownet,
                     optimizer=optimizer,
-                    local_metric=(
-                        score_dict["score"] if score_dict is not None else -loss.item()
-                    ),
+                    local_metric=local_policy_score,
                     group=distributed_context.dc_mpi4py.train_global_group,
                 )
+        if bool(averaging_info.get("agent_replaced_this_iteration", False)):
+            # Replacement happens during this iteration's averaging step; the new
+            # model lifetime starts counting from the following iteration.
+            agent_birth_iteration = iteration + 1
+            local_modes_found_current_policy.clear()
+            local_new_modes_count = 0.0
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
         rest_time = iteration_time - sum(
@@ -1159,13 +1105,6 @@ def main(args) -> dict:  # noqa: C901
         visited_terminating_states.extend(
             cast(DiscreteStates, trajectories.terminating_states)
         )
-        iter_modes_found = env.modes_found(
-            cast(DiscreteStates, trajectories.terminating_states)
-        )
-        new_local_modes = iter_modes_found - local_modes_found
-        if new_local_modes:
-            local_modes_found.update(new_local_modes)
-
         # If we are on the master node, calculate the validation metrics.
         assert visited_terminating_states is not None
         all_visited_terminating_states.extend(visited_terminating_states)
@@ -1179,9 +1118,14 @@ def main(args) -> dict:  # noqa: C901
             "model_averaging_time": model_averaging_timer.elapsed,
             "rest_time": rest_time,
             "l1_dist": None,  # only logged if calculate_partition.
+            "score": float(local_policy_score),
+            "local_new_modes_this_iter": local_new_modes_this_iter,
+            "local_new_modes_current_policy": float(local_new_modes_count),
+            "agent_lifetime_iters": float(agent_lifetime_iters),
+            "local_policy_score": float(local_policy_score),
         }
         to_log.update(averaging_info)
-        local_n_modes_found = len(local_modes_found)
+        local_n_modes_found = len(local_modes_found_full_run)
         to_log["local_n_modes_found"] = local_n_modes_found
         n_total = env.n_modes
         if n_total:
@@ -1193,7 +1137,10 @@ def main(args) -> dict:  # noqa: C901
                     key: value / score_dict_count
                     for key, value in score_dict_accum.items()
                 }
-                to_log.update(score_dict_avg)
+                replay_buffer_score_dict_avg = {
+                    f"replay_buffer_{key}": value for key, value in score_dict_avg.items()
+                }
+                to_log.update(replay_buffer_score_dict_avg)
                 score_dict_accum.clear()
                 score_dict_count = 0
 
@@ -1214,7 +1161,7 @@ def main(args) -> dict:  # noqa: C901
                         to_log.update(metadata)
                     else:
                         modes_found.update(
-                            env.modes_found(all_visited_terminating_states)
+                            _extract_mode_state_tuples(env, all_visited_terminating_states)
                         )
                         n_modes_found = len(modes_found)
                         to_log["n_modes_found"] = n_modes_found
@@ -1226,7 +1173,7 @@ def main(args) -> dict:  # noqa: C901
                     )
 
                 if use_wandb:
-                    fig = build_mode_discovery_figure(env, local_modes_found)
+                    fig = build_mode_discovery_figure(env, local_modes_found_full_run)
                     if fig is not None:
                         to_log["mode_discovery_map"] = wandb.Image(fig)
                         plt.close(fig)

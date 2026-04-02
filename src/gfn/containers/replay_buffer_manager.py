@@ -71,8 +71,26 @@ class ReplayBufferManager:
 
             # Recieved some data to add to the buffer.
             if msg.message_type == MessageType.DATA:
-                self.replay_buffer.add(msg.message_data)
-                score_dict = self.scoring_function(msg.message_data)
+                msg_data = msg.message_data
+                score_input: ContainerUnion | dict
+                if (
+                    isinstance(msg_data, dict)
+                    and "training_container" in msg_data
+                    and isinstance(msg_data["training_container"], ContainerUnion)
+                ):
+                    training_container = msg_data["training_container"]
+                    score_context = msg_data.get("score_context", {})
+                    self.replay_buffer.add(training_container)
+                    score_input = {
+                        "training_container": training_container,
+                        "score_context": score_context,
+                    }
+                else:
+                    assert isinstance(msg_data, ContainerUnion)
+                    self.replay_buffer.add(msg_data)
+                    score_input = msg_data
+
+                score_dict = self.scoring_function(score_input)
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()
                 length_message_tensor = torch.IntTensor([len(message_tensor)])
