@@ -79,6 +79,64 @@ class PerfectBinaryTree(DiscreteEnv):
             self.term_states,
         ) = self._build_tree()
 
+    def make_states_class(self) -> type[DiscreteStates]:
+        """Returns the DiscreteStates class for the PerfectBinaryTree environment."""
+        env = self
+
+        class PerfectBinaryTreeStates(DiscreteStates):
+            state_shape = (1,)
+            s0 = env.s0
+            sf = env.sf
+            make_random_states = env.make_random_states
+            n_actions = env.n_actions
+
+            def _compute_forward_masks(self) -> torch.Tensor:
+                """Computes forward masks for PerfectBinaryTree states."""
+                forward_masks = torch.ones(
+                    (*self.batch_shape, self.n_actions),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+
+                # Flatten the states and terminating states tensors for efficient comparison.
+                states_flat = self.tensor.view(-1, 1)
+                term_tensor = env.term_states.tensor.view(1, -1)
+                terminating_states_mask = (states_flat == term_tensor).any(dim=1)
+
+                # Going from any node, we can choose action 0 or 1
+                # Except terminating states where we must end the trajectory
+                # Reshape mask to match batch shape
+                terminating_states_mask = terminating_states_mask.view(self.batch_shape)
+
+                # Non-terminating states: can take actions 0 or 1, but not exit
+                forward_masks[~terminating_states_mask, -1] = False
+
+                # Terminating states: only exit action allowed
+                forward_masks[terminating_states_mask, :] = False
+                forward_masks[terminating_states_mask, -1] = True
+
+                return forward_masks
+
+            def _compute_backward_masks(self) -> torch.Tensor:
+                """Computes backward masks for PerfectBinaryTree states."""
+                backward_masks = torch.zeros(
+                    (*self.batch_shape, self.n_actions - 1),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+
+                initial_state_mask = (self.tensor == env.s0).view(self.batch_shape)
+                even_states = (self.tensor % 2 == 0).view(self.batch_shape)
+
+                # Even states are to the right, so tied to action 1
+                # Uneven states are to the left, tied to action 0
+                backward_masks[even_states & ~initial_state_mask, 1] = True
+                backward_masks[~even_states & ~initial_state_mask, 0] = True
+
+                return backward_masks
+
+        return PerfectBinaryTreeStates
+
     def _build_tree(self) -> tuple[dict, dict, DiscreteStates]:
         """Builds the tree and the transition tables.
 
@@ -150,46 +208,6 @@ class PerfectBinaryTree(DiscreteEnv):
             next_states_tns, device=states.tensor.device, dtype=torch.int64
         ).reshape(-1, 1)
         return self.States(next_states_tns)
-
-    def update_masks(self, states: DiscreteStates) -> None:
-        """Updates the masks of the states.
-
-        Args:
-            states: The states to update the masks of.
-        """
-        # Flatten the states and terminating states tensors for efficient comparison.
-        states_flat = states.tensor.view(-1, 1)
-        term_tensor = self.term_states.tensor.view(1, -1)
-        terminating_states_mask = (states_flat == term_tensor).any(dim=1)
-        initial_state_mask = (states.tensor == self.s0).view(-1)
-        even_states = (states.tensor % 2 == 0).view(-1)
-
-        # Going from any node, we can choose action 0 or 1
-        # Except terminating states where we must end the trajectory
-        not_term_mask = states.forward_masks[~terminating_states_mask]
-        not_term_mask[:, -1] = False
-
-        term_mask = states.forward_masks[terminating_states_mask]
-        term_mask[:, :] = False
-        term_mask[:, -1] = True
-
-        states.forward_masks[~terminating_states_mask] = not_term_mask
-        states.forward_masks[terminating_states_mask] = term_mask
-
-        # Even states are to the right, so tied to action 1
-        # Uneven states are to the left, tied to action 0
-        even_mask = states.backward_masks[even_states]
-        odd_mask = states.backward_masks[~even_states]
-
-        even_mask[:, 0] = False
-        even_mask[:, 1] = True
-        odd_mask[:, 0] = True
-        odd_mask[:, 1] = False
-        states.backward_masks[even_states] = even_mask
-        states.backward_masks[~even_states] = odd_mask
-
-        # Initial state has no available backward action
-        states.backward_masks[initial_state_mask] = False
 
     def get_states_indices(self, states: States):
         """Returns the indices of the states.

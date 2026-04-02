@@ -98,7 +98,7 @@ class ScaledGaussianWithOptionalExit(Distribution):
         return actions
 
     def log_prob(self, sampled_actions):
-        """TODO"""
+        """Computes log-probabilities, returning 0 for deterministic exit/BTS transitions."""
         # The default value of logprobs is 0, because these represent the p=1 event
         # of either the terminal forward (Sn->Sf) or backward (S1->S0) transition.
         # We do not explicitly fill these values, but rather set the appropriate
@@ -222,14 +222,6 @@ def train(
     set_seed(seed)
     n_iterations = int(n_trajectories // batch_size)
 
-    # TODO: Add in the uniform pb demo?
-    # uniform_pb = False
-    #
-    # if uniform_pb:
-    #    pb_module = BoxPBUniform()
-    # else:
-    #    pb_module = BoxPBMLP(hidden_dim, n_hidden_layers, n_components)
-
     # 3. Create the optimizer and scheduler.
     optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=lr_base)
     lr_logZ = lr_base * 100
@@ -272,7 +264,7 @@ def train(
                 gflownet.logz_parameters()[
                     0
                 ].item(),  # Assumes only one estimate of logZ.
-                env.log_partition,
+                env.log_partition(),
             )
         )
 
@@ -295,7 +287,7 @@ def main(args):
 
     # Hyperparameters.
     hid_dim = 64
-    n_hidden_layers = 2
+    n_hidden_layers = 3
     policy_std_min = 0.1  # Lower bound of sigma that can be predicted by policy.
     policy_std_max = 1  # Upper bound of sigma that can be predicted by policy.
 

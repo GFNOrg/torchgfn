@@ -1,5 +1,6 @@
 """This file contains some examples of modules that can be used with GFN."""
 
+import logging
 import math
 from abc import ABC, abstractmethod
 from typing import Literal, Optional
@@ -15,6 +16,8 @@ from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import is_int_dtype
 from gfn.utils.graphs import GeometricBatch, get_edge_indices
+
+logger = logging.getLogger(__name__)
 
 ACTIVATION_FNS = {
     "relu": nn.ReLU,
@@ -51,9 +54,11 @@ class MLP(nn.Module):
             input_dim: The dimension of the input.
             output_dim: The dimension of the output.
             hidden_dim: The dimension of the hidden layers.
-            n_hidden_layers: The number of hidden layers.
-            n_noisy_layers: The number of layers which are noisy, including the
-                input and output layers.
+            n_hidden_layers: The number of hidden layers (including the input
+                projection). With n_hidden_layers=2, the architecture is
+                [input→H1→H2→output] (3 Linear layers total).
+            n_noisy_layers: The number of noisy layers (from the output end).
+                The input projection is never noisy. Must be <= n_hidden_layers.
             activation_fn: The activation function to use.
             trunk: A custom trunk to use. If None, a new trunk will be created.
             add_layer_norm: Whether to add layer normalization to the hidden layers.
@@ -81,10 +86,13 @@ class MLP(nn.Module):
         # to the end of the network.
         else:
             assert n_hidden_layers is not None, "n_hidden_layers must be provided"
-            assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative (>= 0)."
+            assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1."
+            # The input projection is always non-noisy. At most (n_hidden_layers - 1)
+            # extra hidden layers plus the output layer can be noisy, giving a maximum
+            # of n_hidden_layers noisy layers.
             assert (
-                n_noisy_layers <= n_hidden_layers + 1
-            ), "n_noisy_layers must be <= n_hidden_layers + the output layer."
+                n_noisy_layers <= n_hidden_layers
+            ), "n_noisy_layers must be <= n_hidden_layers."
             assert hidden_dim is not None, "hidden_dim must be provided"
             assert (
                 activation_fn in ACTIVATION_FNS
@@ -105,9 +113,12 @@ class MLP(nn.Module):
                     activation(),
                 ]
 
-            # Add the hidden layers. Put all noisy layers near the output.
+            # Add hidden-to-hidden layers. The input projection above counts as
+            # the first hidden layer, so we add (n_hidden_layers - 1) more.
+            # Put all noisy layers near the output.
+            n_extra_hidden = max(0, n_hidden_layers - 1)
             n_noisy_hidden_layers = max(0, n_noisy_layers - 1)
-            n_noiseless_hidden_layers = n_hidden_layers - n_noisy_hidden_layers
+            n_noiseless_hidden_layers = n_extra_hidden - n_noisy_hidden_layers
             hidden_layer_types = [nn.Linear] * n_noiseless_hidden_layers + [
                 NoisyLinear
             ] * n_noisy_hidden_layers
@@ -204,38 +215,78 @@ class Tabular(nn.Module):
         return outputs
 
 
-class DiscreteUniform(nn.Module):
-    """Implements a uniform distribution over discrete actions.
+class UniformModule(nn.Module):
+    """Constant-output module for non-learned (uniform/fixed) policies.
 
-    It uses a zero function approximator (a function that always outputs 0) to be used as
-    logits by a DiscretePBEstimator.
+    Outputs a constant tensor for all inputs.  Plug into any ``Estimator`` as the
+    ``module`` argument to get a non-learned policy.
+
+    Typical fill values:
+
+    * ``0.0`` — equal logits → uniform categorical (discrete environments).
+    * ``1.0`` — fixed params for sigmoid-based continuous estimators.
 
     Attributes:
-        output_dim: The size of the output space.
+        output_dim: Output dimension matching the estimator's expected_output_dim.
+        fill_value: Constant value to fill the output tensor.
+        skip_normalization: If True, signals to estimators that outputs should be
+            used directly without normalization transforms (e.g. sigmoid scaling
+            of concentration parameters).
     """
 
-    def __init__(self, output_dim: int) -> None:
-        """Initializes a new DiscreteUniform module.
+    def __init__(
+        self,
+        output_dim: int,
+        input_dim: int | None = None,
+        fill_value: float = 0.0,
+        skip_normalization: bool = False,
+    ) -> None:
+        """Initialize a UniformModule.
 
         Args:
             output_dim: The dimension of the output.
+            input_dim: Input dimension. Set this when no external preprocessor is
+                provided so that ``Estimator`` can create a default
+                ``IdentityPreprocessor``.  May be omitted when a preprocessor is
+                always supplied.
+            fill_value: Constant value for every output element.
+            skip_normalization: If True, downstream estimators should skip
+                normalization of the module output (e.g. don't apply sigmoid
+                scaling to concentration parameters).
         """
         super().__init__()
+        if input_dim is not None:
+            self.input_dim = input_dim
         self.output_dim = output_dim
+        self.fill_value = fill_value
+        self.skip_normalization = skip_normalization
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
-        """Forward method for the uniform distribution.
+        """Return a constant tensor of shape ``(*batch_shape, output_dim)``.
 
         Args:
-            preprocessed_states: a batch of states appropriately preprocessed for
-                ingestion by the uniform distribution. The shape of the tensor should be (*batch_shape, input_dim).
+            preprocessed_states: Tensor of shape ``(*batch_shape, input_dim)``.
 
-        Returns: a tensor of shape (*batch_shape, output_dim).
+        Returns:
+            Tensor of shape ``(*batch_shape, output_dim)`` filled with
+            ``fill_value``.
         """
-        out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
-            preprocessed_states.device
+        return torch.full(
+            (*preprocessed_states.shape[:-1], self.output_dim),
+            self.fill_value,
+            device=preprocessed_states.device,
         )
-        return out
+
+
+class DiscreteUniform(UniformModule):
+    """Uniform distribution over discrete actions.
+
+    Backward-compatible alias for ``UniformModule(output_dim, fill_value=0.0)``.
+    Prefer ``UniformModule`` for new code.
+    """
+
+    def __init__(self, output_dim: int) -> None:
+        super().__init__(output_dim=output_dim, fill_value=0.0)
 
 
 class LinearTransformer(nn.Module):
@@ -779,7 +830,7 @@ class GraphScalarMLP(nn.Module):
         super().__init__()
         assert n_nodes > 0, "n_nodes must be positive"
         assert embedding_dim > 0, "embedding_dim must be positive"
-        assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative"
+        assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1"
         self.n_nodes = n_nodes
         self.is_directed = directed
         self.input_dim = n_nodes**2
@@ -1574,7 +1625,11 @@ class DiffusionPISTimeEncoding(nn.Module):
             nn.Linear(hidden_dim, t_emb_dim),
         )
         self.register_buffer(
-            "pe", torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None]
+            # Frequency range [0.1, 100] spans slow-varying to fast-varying
+            # harmonics, following the PIS/DIS time-encoding convention
+            # (Zhang & Chen 2021, arXiv:2111.15141).
+            "pe",
+            torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None],
         )
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
@@ -1638,7 +1693,7 @@ class DiffusionPISJointPolicy(nn.Module):
         return self.model(s_emb + t_emb)
 
 
-class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward policy
+class DiffusionPISGradNetForward(nn.Module):
     """PISGradNet for diffusion sampling.
 
     This architecture was first introduced in Path Integral Sampler (PIS) (https://arxiv.org/abs/2111.15141)
@@ -1667,6 +1722,11 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         hidden_dim: int = 64,
         joint_layers: int = 2,
         zero_init: bool = False,
+        clipping: bool = False,
+        gfn_clip: float = 1e4,
+        t_scale: float = 1.0,
+        log_var_range: float = 4.0,  # kept for parity with learned-var subclass
+        learn_variance: bool = False,
         # predict_flow: bool,  # TODO: support predict flow for db or subtb
         # share_embeddings: bool = False,
         # flow_harmonics_dim: int = 64,
@@ -1680,7 +1740,6 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         # clipping: bool = False,  # TODO: support clipping
         # out_clip: float = 1e4,
         # lp_clip: float = 1e2,
-        # learn_variance: bool = True,  # TODO: support learnable variance
         # log_var_range: float = 4.0,
     ):
         """Initialize the PISGradNetForward.
@@ -1703,7 +1762,12 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         self.hidden_dim = hidden_dim
         self.joint_layers = joint_layers
         self.zero_init = zero_init
-        self.out_dim = s_dim  # 2 * out_dim if learn_variance is True
+        self.learn_variance = learn_variance
+        self.out_dim = s_dim + 1 if self.learn_variance else s_dim
+        self.clipping = clipping
+        self.gfn_clip = gfn_clip
+        self.t_scale = t_scale
+        self.log_var_range = log_var_range
 
         assert (
             self.s_emb_dim == self.t_emb_dim
@@ -1740,10 +1804,18 @@ class DiffusionPISGradNetForward(nn.Module):  # TODO: support Learnable Backward
         t_emb = self.t_model(t)
         out = self.joint_model(s_emb, t_emb)
 
-        # TODO: learn variance, lp, clipping, ...
+        if self.learn_variance:
+            drift, raw_log_std = out[..., :-1], out[..., [-1]]
+            if self.clipping:
+                drift = torch.clamp(drift, -self.gfn_clip, self.gfn_clip)
+            log_std = torch.tanh(raw_log_std) * self.log_var_range
+            out = torch.cat([drift, log_std], dim=-1)
+        else:
+            if self.clipping:
+                out = torch.clamp(out, -self.gfn_clip, self.gfn_clip)
+
         if torch.isnan(out).any():
-            print("+ out has {} nans".format(torch.isnan(out).sum()))
-            out = torch.nan_to_num(out)
+            raise ValueError("DiffusionPISGradNetForward produced NaNs")
 
         return out
 
@@ -1774,3 +1846,85 @@ class DiffusionFixedBackwardModule(nn.Module):
             The output of the module (shape: (*batch_shape, s_dim)).
         """
         return torch.zeros_like(preprocessed_states[..., :-1])
+
+
+class DiffusionPISGradNetBackward(nn.Module):
+    """Learnable backward correction module (PIS-style) for diffusion.
+
+    Produces mean and optional log-std corrections that are tanh-scaled by
+    `pb_scale_range` to stay close to the analytic Brownian bridge.
+    """
+
+    def __init__(
+        self,
+        s_dim: int,
+        harmonics_dim: int = 64,
+        t_emb_dim: int = 64,
+        s_emb_dim: int = 64,
+        hidden_dim: int = 64,
+        joint_layers: int = 2,
+        zero_init: bool = False,
+        clipping: bool = False,
+        gfn_clip: float = 1e4,
+        pb_scale_range: float = 0.1,
+        log_var_range: float = 4.0,
+        learn_variance: bool = True,
+    ) -> None:
+        super().__init__()
+        self.s_dim = s_dim
+        self.out_dim = s_dim + (1 if learn_variance else 0)
+        self.harmonics_dim = harmonics_dim
+        self.t_emb_dim = t_emb_dim
+        self.s_emb_dim = s_emb_dim
+        self.hidden_dim = hidden_dim
+        self.joint_layers = joint_layers
+        self.zero_init = zero_init
+        self.clipping = clipping
+        self.gfn_clip = gfn_clip
+        self.pb_scale_range = pb_scale_range
+        self.log_var_range = log_var_range
+        self.learn_variance = learn_variance
+
+        assert (
+            self.s_emb_dim == self.t_emb_dim
+        ), "Dimensionality of state embedding and time embedding should be the same!"
+
+        self.t_model = DiffusionPISTimeEncoding(
+            self.harmonics_dim, self.t_emb_dim, self.hidden_dim
+        )
+        self.s_model = DiffusionPISStateEncoding(self.s_dim, self.s_emb_dim)
+        self.joint_model = DiffusionPISJointPolicy(
+            self.s_emb_dim,
+            self.hidden_dim,
+            self.out_dim,
+            self.joint_layers,
+            self.zero_init,
+        )
+
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
+        s = preprocessed_states[..., :-1]
+        t = preprocessed_states[..., -1]
+        s_emb = self.s_model(s)
+        t_emb = self.t_model(t)
+        out = self.joint_model(s_emb, t_emb)
+
+        if self.clipping:
+            out = torch.clamp(out, -self.gfn_clip, self.gfn_clip)
+
+        # Tanh-bound outputs to [-1, 1]; the estimator
+        # (PinnedBrownianMotionBackward.to_probability_distribution) applies the
+        # actual pb_scale_range scaling, so we must NOT scale here.
+        drift_corr = torch.tanh(out[..., : self.s_dim])
+        if self.learn_variance and out.shape[-1] == self.s_dim + 1:
+            log_std_corr = torch.tanh(out[..., [-1]])
+            log_std_corr = torch.clamp(
+                log_std_corr, -self.log_var_range, self.log_var_range
+            )
+            out = torch.cat([drift_corr, log_std_corr], dim=-1)
+        else:
+            out = drift_corr
+
+        if torch.isnan(out).any():
+            raise ValueError("DiffusionPISGradNetBackward produced NaNs")
+
+        return out

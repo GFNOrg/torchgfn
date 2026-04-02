@@ -1,0 +1,8 @@
+[submodule "benchmark/gflownet"]
+	path = benchmark/gflownet
+	url = https://github.com/alexhernandezgarcia/gflownet.git
+	ignore = dirty
+[submodule "benchmark/gfnx"]
+	path = benchmark/gfnx
+	url = https://github.com/d-tiapkin/gfnx.git
+	ignore = dirty

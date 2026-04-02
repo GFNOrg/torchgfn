@@ -5,9 +5,8 @@ import torch
 from gfn.actions import Actions
 from gfn.containers import Trajectories
 from gfn.env import Env
-from gfn.estimators import Estimator, PolicyEstimatorProtocol
+from gfn.estimators import Estimator, PolicyEstimatorProtocol, validate_policy_estimator
 from gfn.states import GraphStates, States
-from gfn.utils.common import ensure_same_device
 from gfn.utils.graphs import graph_states_share_storage
 from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 
@@ -66,13 +65,7 @@ class Sampler:
         # NOTE: Explicitly cast to the policy protocol so static analyzers know
         # the estimator exposes the mixin methods (init_context/compute_dist/log_probs).
         policy_estimator = cast(PolicyEstimatorProtocol, self.estimator)
-        # Runtime guard: ensure the estimator actually implements the required protocol methods.
-        # This keeps helpful error messages when a non‑policy estimator is supplied.
-        for required in ("init_context", "compute_dist", "log_probs"):
-            if not hasattr(policy_estimator, required):
-                raise TypeError(
-                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
-                )
+        validate_policy_estimator(policy_estimator)
 
         if ctx is None:
             ctx = policy_estimator.init_context(
@@ -117,13 +110,14 @@ class Sampler:
                     "Estimator does not support get_current_estimator_output and save_estimator_outputs is True!"
                 )
             estimator_output = policy_estimator.get_current_estimator_output(ctx)
-            assert estimator_output is not None
+            if env.debug:
+                assert estimator_output is not None
 
-        assert log_probs is None or log_probs.shape == actions.batch_shape
+        if env.debug:
+            assert log_probs is None or log_probs.shape == actions.batch_shape
 
         return actions, log_probs, estimator_output
 
-    # TODO: How to avoid "Sampler.sample_trajectories' is too complex" error?
     def sample_trajectories(  # noqa: C901
         self,
         env: Env,
@@ -145,7 +139,7 @@ class Sampler:
             n: Number of trajectories if ``states`` is None.
             states: Starting states (batch shape length 1) or ``None``.
             conditions: Optional condition tensor for conditional environments,
-                with shape (n_trajectories, condition_vector_dim); each row is the
+                with shape (batch_size, condition_dim); each row is the
                 condition vector for each trajectory.
             save_estimator_outputs: If True, store per‑step estimator outputs. Useful
                 for off-policy training with tempered policies.
@@ -160,15 +154,8 @@ class Sampler:
             For backward trajectories, the reward is computed at the initial state
             (s0) rather than the terminal state (sf).
         """
-        # NOTE: Cast to the policy protocol for static typing across mixin methods/properties.
         policy_estimator = cast(PolicyEstimatorProtocol, self.estimator)
-        # Runtime guard: ensure the estimator actually implements the required protocol
-        # method and raises an error when a non‑policy estimator is supplied.
-        for required in ("init_context", "compute_dist", "log_probs"):
-            if not hasattr(policy_estimator, required):
-                raise TypeError(
-                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
-                )
+        validate_policy_estimator(policy_estimator)
 
         if policy_estimator.is_backward:
             # [ASSUMPTION] When backward sampling, all provided states are the
@@ -187,12 +174,14 @@ class Sampler:
                     len(states.batch_shape) == 1
                 ), "States should have a batch_shape of length 1, w/ no trajectory dim!"
 
-        n_trajectories = states.batch_shape[0]
-        device = states.device
+        if conditions is not None:  # Explicitly set conditions if provided.
+            assert (
+                conditions.shape[:-1] == states.batch_shape
+            ), "Conditions must match states batch shape"
+            states.conditions = conditions
 
-        if conditions is not None:
-            assert states.batch_shape == conditions.shape[: len(states.batch_shape)]
-            ensure_same_device(states.device, conditions.device)
+        batch_size = states.batch_shape[0]
+        device = states.device
 
         if policy_estimator.is_backward:
             dones = states.is_initial_state
@@ -202,21 +191,28 @@ class Sampler:
         # Define dummy actions to avoid errors when stacking empty lists.
         trajectories_states: List[States] = [states]
         trajectories_actions: List[Actions] = [
-            env.actions_from_batch_shape((n_trajectories,))
+            env.actions_from_batch_shape((batch_size,))
         ]
         # Placeholder kept for backward-compatibility of shapes; logprobs are
         # recorded and stacked by the estimator via the context.
         trajectories_terminating_idx = torch.zeros(
-            n_trajectories, dtype=torch.long, device=device
+            batch_size, dtype=torch.long, device=device
         )
 
         step = 0
         if not hasattr(policy_estimator, "init_context"):
             raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
-        ctx = policy_estimator.init_context(n_trajectories, device, conditions)
+        ctx = policy_estimator.init_context(batch_size, device, states.conditions)
+
+        # Pre-allocate dummy actions tensor once. Each step clones it instead
+        # of calling actions_from_batch_shape(), which internally does
+        # dummy_action.repeat() (stride computation + copy) and
+        # make_dummy_actions() (shape resolution + .to(device)) — all
+        # redundant when shape and device are constant across steps.
+        _dummy_actions_tensor = env.actions_from_batch_shape((batch_size,)).tensor
 
         while not all(dones):
-            actions = env.actions_from_batch_shape((n_trajectories,))
+            actions = env.Actions(_dummy_actions_tensor.clone(), debug=env.debug)
             step_mask = ~dones
 
             # Compute distribution on active rows
@@ -252,17 +248,24 @@ class Sampler:
             else:
                 new_states = env._step(states, actions)  # type: ignore[attr-defined]
 
+            # Propagate conditions to new states. Bypass the conditions
+            # property setter to avoid redundant shape/dtype/device validation
+            # — conditions are immutable within a trajectory and were already
+            # validated at trajectory start.
+            if states._conditions is not None:
+                new_states._conditions = states._conditions
+
             # Ensure that the new state is a distinct object from the old state.
-            assert new_states is not states
-            assert isinstance(new_states, States)
-            if isinstance(new_states, GraphStates) and isinstance(states, GraphStates):
-                # Asserts that there exists no shared storage between the two
-                # GraphStates.
-                assert not graph_states_share_storage(new_states, states)
-            else:
-                # Asserts that there exists no shared storage between the two
-                # States.
-                assert new_states.tensor.data_ptr() != states.tensor.data_ptr()
+            # Gated behind env.debug to avoid per-step overhead in production.
+            if env.debug:
+                assert new_states is not states
+                assert isinstance(new_states, States)
+                if isinstance(new_states, GraphStates) and isinstance(
+                    states, GraphStates
+                ):
+                    assert not graph_states_share_storage(new_states, states)
+                else:
+                    assert new_states.tensor.data_ptr() != states.tensor.data_ptr()
 
             # Increment the step, determine which trajectories are finished, and eval
             # rewards.
@@ -310,29 +313,9 @@ class Sampler:
             if len(stacked_estimator_outputs) == 0:
                 stacked_estimator_outputs = None
 
-        # Broadcast condition tensor to match states batch shape if needed
-        if conditions is not None:
-            # The states have batch shape (max_length, n_trajectories). The
-            # conditions tensor should have shape (n_trajectories,) or
-            # (n_trajectories, 1). We need to broadcast it to (max_length,
-            # n_trajectories, 1) for the estimator
-            if len(conditions.shape) == 1:
-                # conditions has shape (n_trajectories,)
-                conditions = (
-                    conditions.unsqueeze(0)
-                    .unsqueeze(-1)
-                    .expand(stacked_states.batch_shape[0], -1, 1)
-                )
-            elif len(conditions.shape) == 2 and conditions.shape[1] == 1:
-                # conditions has shape (n_trajectories, 1)
-                conditions = conditions.unsqueeze(0).expand(
-                    stacked_states.batch_shape[0], -1, -1
-                )
-
         trajectories = Trajectories(
             env=env,
             states=stacked_states,
-            conditions=conditions,
             actions=stacked_actions,
             terminating_idx=trajectories_terminating_idx,
             is_backward=policy_estimator.is_backward,
@@ -381,7 +364,6 @@ class LocalSearchSampler(Sampler):
         self,
         env: Env,
         trajectories: Trajectories,
-        conditions: torch.Tensor | None = None,
         save_estimator_outputs: bool = False,
         save_logprobs: bool = False,
         back_steps: torch.Tensor | None = None,
@@ -401,8 +383,6 @@ class LocalSearchSampler(Sampler):
         Args:
             env: The environment to sample trajectories from.
             trajectories: The batch of trajectories to perform local search on.
-            conditions: Optional tensor of conditions information for conditional
-                policies. Must match the batch shape of states.
             save_estimator_outputs: If True, saves the estimator outputs for each
                 step. Useful for off-policy training with tempered policies.
             save_logprobs: If True, calculates and saves the log probabilities of
@@ -446,7 +426,6 @@ class LocalSearchSampler(Sampler):
         prev_trajectories = self.backward_sampler.sample_trajectories(
             env,
             states=trajectories.terminating_states,
-            conditions=conditions,
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
             **policy_kwargs,
@@ -466,10 +445,17 @@ class LocalSearchSampler(Sampler):
             0,
             (n_prevs).view(1, -1, 1).expand(-1, -1, *trajectories.states.state_shape),
         ).squeeze(0)
+        if prev_trajectories.states.conditions is not None:
+            # assumption: conditions are not changing within a trajectory
+            junction_conditions = prev_trajectories.states.conditions[0]
+        else:
+            junction_conditions = None
+
         recon_trajectories = super().sample_trajectories(
             env,
-            states=env.states_from_tensor(junction_states_tsr),
-            conditions=conditions,
+            states=env.states_from_tensor(
+                junction_states_tsr, conditions=junction_conditions
+            ),
             save_estimator_outputs=save_estimator_outputs,
             save_logprobs=save_logprobs,
             **policy_kwargs,
@@ -541,7 +527,7 @@ class LocalSearchSampler(Sampler):
                 0.0,
             )
             is_updated = torch.rand(
-                new_trajectories.n_trajectories, device=log_accept_ratio.device
+                new_trajectories.batch_size, device=log_accept_ratio.device
             ) < torch.exp(log_accept_ratio)
         else:
             assert prev_trajectories.log_rewards is not None
@@ -556,8 +542,8 @@ class LocalSearchSampler(Sampler):
         n: Optional[int] = None,
         states: Optional[States] = None,
         conditions: Optional[torch.Tensor] = None,
-        save_estimator_outputs: bool = False,  # FIXME: currently not work if this is True
-        save_logprobs: bool = False,  # FIXME: currently not work if this is True
+        save_estimator_outputs: bool = False,
+        save_logprobs: bool = False,
         n_local_search_loops: int = 0,
         back_steps: torch.Tensor | None = None,
         back_ratio: float | None = None,
@@ -603,6 +589,11 @@ class LocalSearchSampler(Sampler):
             The final trajectories container contains both the initial trajectories
             and the improved trajectories from local search.
         """
+        if save_estimator_outputs:
+            raise NotImplementedError(
+                "save_estimator_outputs is not yet supported in LocalSearchSampler"
+            )
+
         trajectories = super().sample_trajectories(
             env,
             n,
@@ -614,7 +605,7 @@ class LocalSearchSampler(Sampler):
         )
 
         if n is None:
-            n = int(trajectories.n_trajectories)
+            n = int(trajectories.batch_size)
 
         search_indices = torch.arange(n, device=trajectories.states.device)
 
@@ -623,7 +614,6 @@ class LocalSearchSampler(Sampler):
             ls_trajectories, is_updated = self.local_search(
                 env,
                 trajectories[search_indices],
-                conditions,
                 save_estimator_outputs,
                 save_logprobs,
                 back_steps,
@@ -688,7 +678,7 @@ class LocalSearchSampler(Sampler):
         new_trajectories_log_pf = None
         new_trajectories_log_pb = None
 
-        bs = prev_trajectories.n_trajectories
+        bs = prev_trajectories.batch_size
         device = prev_trajectories.states.device
         env = prev_trajectories.env
 
@@ -881,7 +871,6 @@ class LocalSearchSampler(Sampler):
         new_trajectories = Trajectories(
             env=env,
             states=env.states_from_tensor(new_trajectories_states_tsr),
-            conditions=prev_trajectories.conditions,
             actions=env.actions_from_tensor(new_trajectories_actions_tsr),
             terminating_idx=new_trajectories_dones,
             is_backward=False,

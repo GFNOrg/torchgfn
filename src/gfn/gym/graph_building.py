@@ -292,6 +292,7 @@ class GraphBuilding(GraphEnv):
     def make_random_states(
         self,
         batch_shape: Tuple,
+        conditions: torch.Tensor | None = None,
         device: torch.device | None = None,
         debug: bool = False,
     ) -> GraphStates:
@@ -299,14 +300,19 @@ class GraphBuilding(GraphEnv):
 
         Args:
             batch_shape: The shape of the batch.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
             debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A `GraphStates` object with random states.
         """
-        assert self.s0.edge_attr is not None
-        assert self.s0.x is not None
+        if self.debug:
+            assert self.s0.x is not None
+            assert self.s0.edge_attr is not None
+        s0_x = self.s0.x  # Guaranteed non-None by GraphEnv.__init__.
+        s0_edge_attr = self.s0.edge_attr
         device = self.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
@@ -322,7 +328,7 @@ class GraphBuilding(GraphEnv):
             )
 
             # Create random node features
-            x = torch.rand(n_nodes, self.s0.x.size(1), device=device)
+            x = torch.rand(n_nodes, s0_x.size(1), device=device)
 
             # Create random edges (not all possible edges to keep it sparse)
             n_edges = np.random.randint(0, n_possible_edges + 1)
@@ -333,7 +339,7 @@ class GraphBuilding(GraphEnv):
             edge_index = torch.stack([src[selected_indices], dst[selected_indices]])
 
             # Create random edge attributes
-            edge_attr = torch.rand(n_edges, self.s0.edge_attr.size(1), device=device)
+            edge_attr = torch.rand(n_edges, s0_edge_attr.size(1), device=device)
 
             data = GeometricData(
                 x=x,
@@ -342,7 +348,7 @@ class GraphBuilding(GraphEnv):
             )
             data_array.flat[i] = data
 
-        return self.States(data_array, device=device, debug=debug)
+        return self.States(data_array, conditions=conditions, device=device, debug=debug)
 
     def make_states_class(self) -> type[GraphStates]:
         """Creates a `GraphStates` class for this environment."""
@@ -586,6 +592,7 @@ class GraphBuildingOnEdges(GraphBuilding):
     def make_random_states(
         self,
         batch_shape: Tuple,
+        conditions: torch.Tensor | None = None,
         device: torch.device | None = None,
         debug: bool = False,
     ) -> GraphStates:
@@ -593,14 +600,19 @@ class GraphBuildingOnEdges(GraphBuilding):
 
         Args:
             batch_shape: Shape of the batch dimensions.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
             debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A `GraphStates` object containing random graph states.
         """
-        assert self.s0.edge_attr is not None
-        assert self.s0.x is not None
+        if self.debug:
+            assert self.s0.x is not None
+            assert self.s0.edge_attr is not None
+        s0_x = self.s0.x  # Guaranteed non-None by GraphEnv.__init__.
+        s0_edge_attr = self.s0.edge_attr
         device = self.device if device is None else device
 
         batch_shape = batch_shape if isinstance(batch_shape, Tuple) else (batch_shape,)
@@ -612,7 +624,7 @@ class GraphBuildingOnEdges(GraphBuilding):
             n_nodes = self.n_nodes
 
             # Create node features
-            x = self.s0.x.clone()
+            x = s0_x.clone()
 
             # Create random edges using get_edge_indices
             n_edges = np.random.randint(0, self.n_possible_edges + 1)
@@ -623,12 +635,12 @@ class GraphBuildingOnEdges(GraphBuilding):
             edge_index = torch.stack([src[selected_indices], dst[selected_indices]])
 
             # Create random edge attributes
-            edge_attr = torch.rand(n_edges, self.s0.edge_attr.size(1), device=device)
+            edge_attr = torch.rand(n_edges, s0_edge_attr.size(1), device=device)
 
             data = GeometricData(x=x, edge_index=edge_index, edge_attr=edge_attr)
             data_array.flat[i] = data
 
-        return self.States(data_array, device=device, debug=debug)
+        return self.States(data_array, conditions=conditions, device=device, debug=debug)
 
     def is_action_valid(
         self, states: GraphStates, actions: GraphActions, backward: bool = False

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Iterable
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 def try_compile_gflownet(
@@ -40,16 +43,15 @@ def try_compile_gflownet(
                 results[name] = False
                 continue
 
-        try:
-            # Attempt to compile the module.
-            assert isinstance(estimator.module, torch.nn.Module)
-            estimator.module = torch.compile(module, mode=mode)
-            results[name] = True
-        except Exception:
-            results[name] = False
+            try:
+                assert isinstance(estimator.module, torch.nn.Module)
+                estimator.module = torch.compile(module, mode=mode)
+                results[name] = True
+            except Exception:
+                results[name] = False
 
     # Print the results.
     formatted = ", ".join(
         f"{name}:{'✓' if success else 'x'}" for name, success in results.items()
     )
-    print(f"[compile] {formatted}")
+    logger.info(f"[compile] {formatted}")

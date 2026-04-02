@@ -1,4 +1,4 @@
-from __future__ import annotations  # This allows to use the class name in type hints
+from __future__ import annotations
 
 import enum
 from abc import ABC
@@ -32,12 +32,9 @@ class Actions(ABC):
             the action to transition to the sink state.
     """
 
-    # The following class variable represents the shape of a single action.
-    action_shape: ClassVar[tuple[int, ...]]  # All actions need to have the same shape.
-    # The following class variable is padded to shorter trajectories.
-    dummy_action: ClassVar[torch.Tensor]  # Dummy action for the environment.
-    # The following class variable corresponds to $s \rightarrow s_f$ transitions.
-    exit_action: ClassVar[torch.Tensor]  # Action to exit the environment.
+    action_shape: ClassVar[tuple[int, ...]]
+    dummy_action: ClassVar[torch.Tensor]  # Padded to shorter trajectories.
+    exit_action: ClassVar[torch.Tensor]  # Corresponds to $s \rightarrow s_f$.
 
     def __init__(self, tensor: torch.Tensor, debug: bool = False):
         """Initializes an Actions object with a batch of actions.
@@ -175,9 +172,9 @@ class Actions(ABC):
 
         The individual actions need to have the same batch shape. An example application
         is when the individual actions represent per-step actions of a batch of
-        trajectories (in which case, the common batch_shape would be (n_trajectories,),
+        trajectories (in which case, the common batch_shape would be (batch_size,),
         and the resulting Actions object would have batch_shape
-        (n_steps, n_trajectories)).
+        (n_steps, batch_size)).
 
         Args:
             actions_list: List of Actions objects to stack.

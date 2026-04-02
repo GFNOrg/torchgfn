@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import json
+import logging
+import random
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple, cast
 
+import mpi4py.MPI as MPI
+import numpy as np
 import torch
 import torch.distributed as dist
 
 from gfn.gflownet.base import GFlowNet
+from gfn.utils.common import Timer
+
+logger = logging.getLogger(__name__)
 
 
 class SpawnPolicy(ABC):
@@ -48,6 +56,9 @@ class AverageAllPolicy(SpawnPolicy):
             return model, optimizer, {"averaged_this_iteration": False}
 
         world_size = float(dist.get_world_size())
+        logger.info(
+            "Iteration %d: Averaging model across %d ranks", iteration, int(world_size)
+        )
         for param in model.parameters():
             param_tensor = param.data.clone()
             dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=group)
@@ -84,6 +95,7 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         poll_interval_s: float = 0.01,
         threshold: Optional[float] = None,
         cooldown: int = 200,
+        timing: Optional[dict] = None,  # timing is a dict to capture timing info
     ) -> None:
         super().__init__(average_every)
         self.replacement_ratio = float(replacement_ratio)
@@ -130,13 +142,26 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         )
         self._model = model
         self._initialized = True
+        rank = dist.get_rank()
+        logger.info(
+            "Rank %d: Initializing AsyncSelectiveAveragingPolicy "
+            "(replacement_ratio=%.2f, strategy=%s, threshold=%s, cooldown=%d)",
+            rank,
+            self.replacement_ratio,
+            self.averaging_strategy,
+            self.threshold,
+            self.cooldown,
+        )
         self._bg_thread = threading.Thread(target=self._background_loop, daemon=True)
         self._bg_thread.start()
+        logger.debug("Rank %d: Background thread started", rank)
 
     def shutdown(self) -> None:
+        logger.debug("Shutting down AsyncSelectiveAveragingPolicy")
         self._shutdown.set()
         if self._bg_thread is not None and self._bg_thread.is_alive():
             self._bg_thread.join(timeout=1.0)
+        logger.debug("AsyncSelectiveAveragingPolicy shutdown complete")
 
     @torch.no_grad()
     def __call__(
@@ -159,6 +184,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 payload = torch.tensor(
                     [float(iteration), float(local_metric)], dtype=torch.float32
                 )
+                logger.debug(
+                    "Rank %d: Sending metric %.4f for iteration %d",
+                    rank,
+                    local_metric,
+                    iteration,
+                )
                 try:
                     if rank != 0:
                         dist.isend(payload, dst=0, tag=self._TAG_METRIC)
@@ -168,8 +199,8 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                         self._rank0_record_metric(
                             iteration, rank, float(local_metric), world_size
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Rank %d: Failed to send metric: %s", rank, e)
 
         # If a spawn (full rebuild) has been requested, build a fresh model + optimizer
         # and seed it with the averaged weights received in the background thread.
@@ -180,6 +211,12 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 new_weights = self._new_weights
                 self._new_weights = None
             if new_weights is not None:
+                rank = dist.get_rank() if dist.is_initialized() else 0
+                logger.info(
+                    "Rank %d: Rebuilding model with averaged weights (%d params)",
+                    rank,
+                    len(new_weights),
+                )
                 model, optimizer = self._model_builder()
                 # Copy averaged params by name into the new model
                 for name, param in model.named_parameters():
@@ -222,19 +259,41 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
             bucket = {}
             self._rank0_buckets[iteration] = bucket
         bucket[rank] = metric
+        logger.debug(
+            "Rank 0: Received metric %.4f from rank %d for iteration %d (%d/%d)",
+            metric,
+            rank,
+            iteration,
+            len(bucket),
+            world_size,
+        )
         if len(bucket) == world_size:
             all_metrics = torch.zeros(world_size, dtype=torch.float32)
             for r, m in bucket.items():
                 all_metrics[r] = m
+            logger.debug(
+                "Rank 0: All metrics collected for iteration %d: %s",
+                iteration,
+                all_metrics.tolist(),
+            )
             # Gate dispatch using threshold and cooldown if configured
             should_dispatch = True
             if self.threshold is not None:
                 # Cooldown window
                 if iteration - self._last_trigger_iter < self.cooldown:
+                    logger.debug(
+                        "Rank 0: Skipping dispatch (cooldown: %d iters remaining)",
+                        self.cooldown - (iteration - self._last_trigger_iter),
+                    )
                     should_dispatch = False
                 else:
                     # Trigger only if any metric falls below threshold
                     if torch.min(all_metrics).item() >= float(self.threshold):
+                        logger.debug(
+                            "Rank 0: Skipping dispatch (min metric %.4f >= threshold %.4f)",
+                            torch.min(all_metrics).item(),
+                            self.threshold,
+                        )
                         should_dispatch = False
 
             if should_dispatch:
@@ -243,6 +302,13 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                     world_size,
                     self.replacement_ratio,
                     self.averaging_strategy,
+                )
+                logger.info(
+                    "Rank 0: Dispatching averaging for iteration %d - "
+                    "replacing %s with average of %s",
+                    iteration,
+                    sorted(ranks_to_replace),
+                    sorted(ranks_to_average),
                 )
                 weights = self._compute_averaging_weights(
                     all_metrics, ranks_to_average, self.averaging_strategy
@@ -314,18 +380,42 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
     # ---------------- Donor / Replacer roles on non-zero ranks ----------------
     def _handle_donor(self, iteration: int, replacers: List[int]) -> None:
         assert self._model is not None
+        rank = dist.get_rank()
+        logger.info(
+            "Rank %d: Acting as DONOR for iteration %d, sending to %s",
+            rank,
+            iteration,
+            replacers,
+        )
+        param_count = 0
         for name, param in self._model.named_parameters():
             tensor = param.data.detach().clone()
             for dst in replacers:
                 try:
                     dist.isend(tensor, dst=dst, tag=self._TAG_PARAM_BASE)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(
+                        "Rank %d: Failed to send param %s to rank %d: %s",
+                        rank,
+                        name,
+                        dst,
+                        e,
+                    )
+            param_count += 1
+        logger.debug("Rank %d: Sent %d parameters to replacers", rank, param_count)
 
     def _handle_replacer(
         self, iteration: int, donors: List[int], weights: Optional[torch.Tensor]
     ) -> None:
         assert self._model is not None
+        rank = dist.get_rank()
+        logger.info(
+            "Rank %d: Acting as REPLACER for iteration %d, receiving from %s (strategy=%s)",
+            rank,
+            iteration,
+            donors,
+            self.averaging_strategy,
+        )
         avg_state: Dict[str, torch.Tensor] = {}
         named_params = list(self._model.named_parameters())
 
@@ -339,7 +429,14 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 buf = torch.zeros(param_shape, dtype=param.data.dtype, device=device)
                 try:
                     dist.recv(buf, src=src, tag=self._TAG_PARAM_BASE)
-                except Exception:
+                except Exception as e:
+                    logger.warning(
+                        "Rank %d: Failed to receive param %s from rank %d: %s",
+                        rank,
+                        name,
+                        src,
+                        e,
+                    )
                     continue
                 if self.averaging_strategy == "mean":
                     acc.add_(buf)
@@ -357,6 +454,9 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                 acc = acc / len(donors)
             avg_state[name] = acc
 
+        logger.debug(
+            "Rank %d: Received and averaged %d parameters", rank, len(avg_state)
+        )
         with self._pending_lock:
             self._pending_spawn_avg_state = avg_state
 
@@ -365,15 +465,17 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         if not dist.is_available() or not dist.is_initialized():
             return
         rank = dist.get_rank()
+        logger.debug("Rank %d: Background loop started", rank)
         if rank == 0:
             self._rank0_post_metric_recvs()
             while not self._shutdown.is_set():
                 try:
                     self._rank0_poll_metrics()
                     self._rank0_post_metric_recvs()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Rank 0: Error in background loop: %s", e)
                 time.sleep(self.poll_interval_s)
+            logger.debug("Rank 0: Background loop exiting")
             return
 
         # Other ranks: poll for control messages
@@ -402,6 +504,14 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                         iteration = int(header[0].item())
                         strategy_code = int(header[1].item())
 
+                        logger.debug(
+                            "Rank %d: Received control message - role=%d, iteration=%d, strategy=%d",
+                            rank,
+                            role,
+                            iteration,
+                            strategy_code,
+                        )
+
                         # list length
                         size_t = torch.zeros(1, dtype=torch.int64)
                         dist.recv(size_t, src=0, tag=self._TAG_CONTROL)
@@ -418,6 +528,11 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                         elif role == self._OP_ROLE_REPLACER:
                             donors = [d for d in ids if d != dist.get_rank()]
                             if strategy_code == 3:  # reset_weights
+                                logger.info(
+                                    "Rank %d: Reset weights requested for iteration %d",
+                                    rank,
+                                    iteration,
+                                )
                                 with self._pending_lock:
                                     # Signal a local rebuild with fresh random weights
                                     self._new_weights = {}
@@ -430,10 +545,14 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
                                     dist.recv(wbuf, src=0, tag=self._TAG_CONTROL)
                                 self._handle_replacer(iteration, donors, wbuf)
                         else:
-                            pass
+                            logger.debug(
+                                "Rank %d: Unknown role %d, ignoring", rank, role
+                            )
                 time.sleep(self.poll_interval_s)
-            except Exception:
+            except Exception as e:
+                logger.warning("Rank %d: Error in background loop: %s", rank, e)
                 time.sleep(self.poll_interval_s)
+        logger.debug("Rank %d: Background loop exiting", rank)
 
     # ---------------- Local helpers (copied from selective policy to avoid lints) ----------------
     @staticmethod
@@ -490,3 +609,808 @@ class AsyncSelectiveAveragingPolicy(SpawnPolicy):
         )
         weights = 1.0 / (contributing_metrics + 1e-8)
         return weights / weights.sum()
+
+
+"""
+Selective averaging based on async mpi-3 comms
+ Version 1 (fast-general): One buffer with all the params, hence utilizes the network BW much better than general version.
+ Hence different model param dtypes can be handled.
+ Comments:
+      - Need a fix where there is one buffer for all params but in byte format,
+      after comms, the buffer can be converted to appropriate dtypes for corr params dtypes.
+      - Right now each param has its own buffer and window, which may produce incorrect output.
+ Notes:
+      - Only mean averaging strategy is implemented here for now.
+      - Neighbors are randomly selected from all ranks except self.
+      - Agents are killed based on age only for now.
+"""
+
+
+def _compute_worst_ranks_by_ratio(
+    metrics: List[float], replacement_ratio: float
+) -> Set[int]:
+    """Return the set of globally worst ranks to replace."""
+    n_ranks = len(metrics)
+    if n_ranks <= 1:
+        return set()
+    n_replace = max(1, int(n_ranks * replacement_ratio))
+    # Keep at least one donor rank.
+    n_replace = min(n_replace, n_ranks - 1)
+    sorted_ranks = np.argsort(np.asarray(metrics, dtype=np.float64))
+    return set(int(x) for x in sorted_ranks[:n_replace].tolist())
+
+
+class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
+    r"""
+    Asynchronous selective averaging version 2, uses mpi one-sided comms to get the
+    selectively averaged parameters from a random set of ranks.
+    """
+
+    def __init__(
+        self,
+        model_builder: Callable[[], Tuple[GFlowNet, torch.optim.Optimizer]],
+        model: GFlowNet,
+        average_every: int,
+        threshold_metric: float = 0.0,
+        replacement_ratio: float = 0.2,
+        averaging_strategy: str = "mean",
+        momentum: float = 0.0,
+        poll_interval_s: float = 0.01,
+        age_range: Tuple[int, int] = (50, 150),
+        replacement_mode: str = "age",
+        group: MPI.Comm = MPI.COMM_WORLD,
+    ) -> None:
+        super().__init__(average_every)
+        self.myrank = group.Get_rank()
+        self.comm_size = group.Get_size()
+
+        self.replacement_ratio = float(replacement_ratio)
+        self.averaging_strategy = str(averaging_strategy)
+        self.momentum = float(momentum)
+        self._model_builder = model_builder
+
+        self._model: Optional[GFlowNet] = None
+        self.threshold_metric = float(threshold_metric)
+        self.replacement_mode = str(replacement_mode)
+        if self.replacement_mode not in {"age", "threshold", "worst_ratio"}:
+            raise ValueError(
+                f"Unknown replacement_mode: {self.replacement_mode}. "
+                "Expected one of: age, threshold, worst_ratio."
+            )
+
+        # timers
+        self.timing = {}
+        self.stats = {}
+
+        self._model = model
+        self.train_comm_group = group
+        self._expose = False
+
+        # new agents' stats
+        self.agents_killed = 0
+        self.averaging_ranks = 0
+        self._count = 0
+        self.total_iterations = 0
+        self.num_replacements = 0
+
+        self.debug_mode = False
+        self.age = 0
+        self.age_range = age_range
+        self.max_age = random.randint(self.age_range[0], self.age_range[1])
+
+        if self.debug_mode:
+            self.logfile = f"debug/selective_averaging_rank_{self.myrank}.log"
+            with open(self.logfile, "w") as f:
+                f.write(f"Selective Averaging Log for Rank {self.myrank}\n")
+                f.write("=" * 50 + "\n")
+
+    def shutdown(self) -> None:
+        for _, v in self._mpi_tensor_wins.items():
+            v[0].Free()
+
+    def print_time(self) -> None:
+        print("Selective Averaging timings:", flush=True)
+        for k, v in self.timing.items():
+            # here v is a list, avg over the list
+            # avg = sum(v) / len(v) if len(v) > 0 else 0
+            print(f"{k:<35}: {sum(v):>10.4f} seconds")
+
+    def print_stats(self) -> None:
+        print("Selective Averaging comms stats:", flush=True)
+        avg_donors, num_calls = 0.0, 0
+        for k, v in self.stats.items():
+            # v is a list, print min, max ,avg, and len of it
+            minimum = min(v) if len(v) > 0 else 0
+            maximum = max(v) if len(v) > 0 else 0
+            avg = sum(v) / len(v) if len(v) > 0 else 0
+            length = len(v)
+            print(
+                f"Rank {self.myrank} - Stat {k:30}: min={minimum}, max={maximum}, avg={avg:.6f}, count={length}"
+            )
+            if k == "donors":
+                avg_donors = avg
+                num_calls = length
+
+        _named_params = (
+            list(self._model.named_parameters()) if self._model is not None else []
+        )
+        named_params = [
+            (name, param) for name, param in _named_params if param.dim() != 0
+        ]
+        print(
+            f"Rank {self.myrank:<10} -  {'param elements':<15} {'iter':<10} {'total params elements commd':<25}"
+        )
+        for name, param in named_params:
+            param.device
+            param_shape = param.data.shape
+            print(
+                f"Rank {self.myrank:<10} -  {np.prod(param_shape):<15} {avg_donors*num_calls:<10} {np.prod(param_shape)*avg_donors*num_calls:<15}"
+            )
+
+    def capture_comm(self, name: str, size: int) -> None:
+        if name not in self.stats:
+            self.stats[name] = []
+        self.stats[name].append(size)
+
+    def _ensure_initialized(self, model: GFlowNet) -> None:
+        self._model = model
+        self._initialized = True
+        # export model parameters to mpi windows (should do that periodically to keep them fresh)
+        self._expose_model_parameters(model)
+
+    def reset_age(self) -> None:
+        self.max_age = random.randint(self.age_range[0], self.age_range[1])
+        self.age = 0
+
+    def is_agent_dying(
+        self, local_metric: float, threshold_metric: float, check_agent=0
+    ) -> bool:
+        if check_agent == 0:  # static theshold
+            return local_metric < threshold_metric
+
+        elif check_agent == 1:  # dynamic threshold based on age
+            if self.age >= self.max_age:
+                print(
+                    "+ Agent killed due to age: ",
+                    self.age,
+                    " max_age: ",
+                    self.max_age,
+                    flush=True,
+                )
+                self.reset_age()
+                return True
+
+            self.age += 1
+            return False
+
+        else:
+            raise ValueError(f"Unknown is_agent_dying version: {check_agent}")
+
+    def _is_worst_rank_this_iteration(
+        self, iteration: int, local_metric: float
+    ) -> Tuple[bool, Optional[List[float]]]:
+        if iteration % self.average_every != 0:
+            return False, None
+        all_metrics = self.train_comm_group.allgather(float(local_metric))
+        worst_ranks = _compute_worst_ranks_by_ratio(all_metrics, self.replacement_ratio)
+        return self.myrank in worst_ranks, all_metrics
+
+    def _should_replace(
+        self, iteration: int, local_metric: float
+    ) -> Tuple[bool, Optional[List[float]]]:
+        if self.replacement_mode == "age":
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_agent=1),
+                None,
+            )
+        if self.replacement_mode == "threshold":
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_agent=0),
+                None,
+            )
+        if self.replacement_mode == "worst_ratio":
+            return self._is_worst_rank_this_iteration(iteration, local_metric)
+        raise ValueError(f"Unknown replacement_mode: {self.replacement_mode}")
+
+    # Execute this function regularly to copy model params to mpi windows
+    # for recepotrs to get recent params
+    def _copy_model_params_to_buf(
+        self,
+        model: GFlowNet,
+    ) -> None:
+        for name, param in model.named_parameters():
+            win = self._mpi_tensor_wins[name][0]
+            win.Lock(rank=self.myrank, lock_type=MPI.LOCK_EXCLUSIVE)
+            self._mpi_tensor_wins[name][1][:] = param.data.cpu().numpy().flatten()
+            win.Unlock(rank=self.myrank)
+
+    def _expose_model_parameters(self, model: GFlowNet) -> None:
+
+        # Serialize model parameters to a contiguous numpy array
+        param_tensors = {}
+        for name, param in model.named_parameters():
+            param_tensors[name] = np.zeros_like(param.data.cpu().numpy().flatten())
+
+        # Create MPI windows for each parameter and its shape (2 separate windows set)
+        self._mpi_tensor_wins = {}
+        self._mpi_shape_wins = {}
+        assert isinstance(self.train_comm_group, MPI.Intracomm)
+        comm = cast(MPI.Intracomm, self.train_comm_group)
+        for name, tensor in param_tensors.items():
+            buf = tensor
+            win = MPI.Win.Create(buf, comm=comm)
+            self._mpi_tensor_wins[name] = (win, buf)
+
+        self._copy_model_params_to_buf(model)
+
+    def _get_donors(self, n, k, d) -> List[int]:
+        if k > n - 1:
+            raise ValueError("k must be ≤ n-1 when excluding one value")
+
+        # All values from 0..n-1 except d
+        candidates = [x for x in range(n) if x != d]
+        # Pick k distinct values
+        return random.sample(candidates, k)
+
+    def __call__(
+        self,
+        iteration: int,
+        model: GFlowNet,
+        optimizer: torch.optim.Optimizer,
+        local_metric: float,
+        expose_params: bool = True,
+        group: MPI.Comm = MPI.COMM_WORLD,
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:
+
+        if self._expose is False:
+            self._expose_model_parameters(model)
+            self._expose = True
+
+        self._count += 1
+        self.total_iterations += 1
+        self._model = model
+
+        # validation info
+        layer_name = None
+        if self.debug_mode:
+            layer_name = "pb.module.last_layer.bias"
+
+        should_replace, all_metrics = self._should_replace(iteration, local_metric)
+        if should_replace:
+            self.num_replacements += 1
+            with Timer(self.timing, "sa get_params_from_donors"):
+                if self.debug_mode:
+                    with open(self.logfile, "a") as f:
+                        # kill this model and rebuild model with fresh weights
+                        num_donors = max(
+                            1, int(self.comm_size * 0.5)
+                        )  # * self.replacement_ratio))
+                        donors = self._get_donors(
+                            self.comm_size, num_donors, self.myrank
+                        )
+                        new_avg_params = self._get_model_params_from_donors(
+                            donors, layer_name, f
+                        )
+
+                        if layer_name is not None:
+                            json.dump(
+                                {
+                                    self._count: [
+                                        self._mpi_tensor_wins[layer_name][1].tolist(),
+                                        donors,
+                                        new_avg_params[layer_name].tolist(),
+                                    ]
+                                },
+                                f,
+                            )
+                        f.write("\n")
+                else:
+                    num_donors = max(
+                        1, int(self.comm_size * 0.5)
+                    )  # self.replacement_ratio))
+                    donors = self._get_donors(self.comm_size, num_donors, self.myrank)
+                    new_avg_params = self._get_model_params_from_donors(
+                        donors, layer_name, None
+                    )
+
+            with Timer(self.timing, "sa new_agent_model_rebuild"):
+                model, optimizer = self._model_builder()
+                for name, param in model.named_parameters():
+                    if name in new_avg_params:
+                        param.data.copy_(new_avg_params[name])
+
+        if expose_params is True:
+            with Timer(self.timing, "sa copy_params_to_buf"):
+                self._copy_model_params_to_buf(model)
+        averaging_info = {
+            "averaged_this_iteration": bool(should_replace),
+            "replacement_mode": self.replacement_mode,
+            "is_replaced": bool(should_replace),
+            "num_replacements_so_far": int(self.num_replacements),
+            "local_metric": float(local_metric),
+            "replacement_check_every": int(self.average_every),
+        }
+        if all_metrics is not None and len(all_metrics) > 0:
+            averaging_info["global_min_metric"] = float(min(all_metrics))
+            averaging_info["global_max_metric"] = float(max(all_metrics))
+        return model, optimizer, averaging_info
+
+    def _get_model_params_from_donors(
+        self, donors: List[int], layer_name, f
+    ) -> Dict[str, torch.Tensor]:
+        avg_state: Dict[str, torch.Tensor] = {}
+        _named_params = (
+            list(self._model.named_parameters()) if self._model is not None else []
+        )
+        named_params = [
+            (name, param) for name, param in _named_params if param.dim() != 0
+        ]
+        tot_comm_ele = 0
+
+        self.capture_comm("donors", len(donors))
+        for name, param in named_params:
+            device = param.device
+            param_shape = param.data.shape
+            acc = torch.zeros_like(param.data)
+            all_donors = []
+
+            for i, src in enumerate(donors):
+                tensor_win, tensor_buf = self._mpi_tensor_wins[name]
+                tensor_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
+                flat_size = np.prod(param_shape)
+                assert flat_size > 0
+                tot_comm_ele += flat_size
+                donor_tensor_flat = np.zeros(
+                    flat_size, dtype=param.data.cpu().numpy().dtype
+                )
+                tensor_win.Get([donor_tensor_flat, MPI.FLOAT], target_rank=src)
+                tensor_win.Unlock(rank=src)
+
+                donor_tensor = torch.tensor(
+                    donor_tensor_flat.reshape(param_shape), device=device
+                )
+                # Adding all the donor tensors/params
+                acc.add_(donor_tensor)
+
+                if self.debug_mode and name == layer_name:
+                    all_donors.append(donor_tensor.tolist())
+                # Additions: Other averaging strategies can be implemented here
+
+            if self.debug_mode and name == layer_name:
+                json.dump({self._count: all_donors}, f)
+                f.write("\n")
+
+            # default to mean averaging
+            acc = acc / len(donors)
+            avg_state[name] = acc
+
+        self.capture_comm("num_param_tensors_received", int(tot_comm_ele))
+        return avg_state
+
+    def _average_received_params(
+        self,
+    ) -> Dict[str, torch.Tensor]:
+        avg_state: Dict[str, torch.Tensor] = {}
+        for name, param in self.avg_state.items():
+            # device = param.device
+            # param_shape = param.data.shape
+            acc = torch.zeros_like(param[0].data)
+
+            for i, donor_tensor in enumerate(param):
+                # Adding all the donor tensors/params
+                acc.add_(donor_tensor)
+
+            # default to mean averaging
+            if self.averaging_strategy == "mean":
+                acc = acc / len(param)
+                avg_state[name] = acc
+
+        return avg_state
+
+
+"""
+Selective averaging based on async mpi-3 comms
+ Version 2 (fast): One buffer with all the params, hence utilizes the network BW much better than general version.
+ It assumes all the params are of same dtype (float32)
+Notes:
+      - Only mean averaging strategy is implemented here for now.
+      - Neighbors are randomly selected from all ranks except self.
+      - Agents are killed based on age only for now.
+"""
+
+
+class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
+    r"""
+    Asynchronous selective averaging version 2, uses mpi one-sided comms to get the
+    selectively averaged parameters from a random set of ranks.
+    """
+
+    def __init__(
+        self,
+        model_builder: Callable[[], Tuple[GFlowNet, torch.optim.Optimizer]],
+        model: GFlowNet,
+        average_every: int,
+        threshold_metric: float = 0.0,
+        replacement_ratio: float = 0.2,
+        averaging_strategy: str = "mean",
+        momentum: float = 0.0,
+        age_range: Tuple[int, int] = (50, 150),
+        replacement_mode: str = "age",
+        group: MPI.Comm = MPI.COMM_WORLD,
+    ) -> None:
+        super().__init__(average_every)
+        self.myrank = group.Get_rank()
+        self.comm_size = group.Get_size()
+
+        self.replacement_ratio = float(replacement_ratio)
+        self.averaging_strategy = str(averaging_strategy)
+        self.momentum = float(momentum)
+        self._model_builder = model_builder
+
+        self._model: Optional[GFlowNet] = None
+        self.threshold_metric = float(threshold_metric)
+        self.replacement_mode = str(replacement_mode)
+        if self.replacement_mode not in {"age", "threshold", "worst_ratio"}:
+            raise ValueError(
+                f"Unknown replacement_mode: {self.replacement_mode}. "
+                "Expected one of: age, threshold, worst_ratio."
+            )
+        # timers
+        self.timing = {}
+        self.stats = {}
+
+        self._model = model
+        self.train_comm_group = group
+        # self._expose_model_parameters(model)
+        self._expose = False
+
+        # **** new agents' stats ****
+        self.agents_killed = 0
+        self.averaging_ranks = 0
+        self._count = 0
+
+        self.total_iterations = 0
+        self.num_replacements = 0
+        self.debug_mode = False
+
+        self.age = 0
+        self.age_range = age_range
+        self.max_age = random.randint(self.age_range[0], self.age_range[1])
+
+        # test code, remove it later
+        if self.debug_mode:
+            self.logfile = f"debug/selective_averaging_rank_{self.myrank}.log"
+            with open(self.logfile, "w") as f:
+                f.write(f"Selective Averaging Log for Rank {self.myrank}\n")
+                f.write("=" * 50 + "\n")
+
+    def shutdown(self) -> None:
+        self._mpi_tensor_wins[0].Free()
+
+    def print_time(self) -> None:
+        print("Selective Averaging timings:", flush=True)
+        for k, v in self.timing.items():
+            # here v is a list, avg over the list
+            print(f"{k:<35}: {sum(v):>10.4f} seconds")
+
+    def print_stats(self) -> None:
+        print("Selective Averaging comms stats:", flush=True)
+        print(
+            f"Rank {self.myrank} - Agent replaced for {self.num_replacements} out of {self.total_iterations} iterations."
+        )
+        avg_donors, num_calls = 0.0, 0
+        for k, v in self.stats.items():
+            # v is a list, print min, max ,avg, and len of it
+            minimum = min(v) if len(v) > 0 else 0
+            maximum = max(v) if len(v) > 0 else 0
+            avg = sum(v) / len(v) if len(v) > 0 else 0
+            length = len(v)
+            print(
+                f"Rank {self.myrank:<10} - Stat {k:30}: min={minimum}, max={maximum}, avg={avg:.6f}, across {length} iters"
+            )
+            if k == "donors":
+                avg_donors = avg
+                num_calls = length
+
+        _named_params = (
+            list(self._model.named_parameters()) if self._model is not None else []
+        )
+        named_params = [
+            (name, param) for name, param in _named_params if param.dim() != 0
+        ]
+        print(
+            f"Rank {self.myrank:<10} -  {'param elements':<15} {'#comm_iters':<10} {'total params elements communicated':<25}"
+        )
+        for name, param in named_params:
+            param.device
+            param_shape = param.data.shape
+            print(
+                f"Rank {self.myrank:<10} -  {np.prod(param_shape):<15} {avg_donors*num_calls:<10} {np.prod(param_shape)*avg_donors*num_calls:<15}"
+            )
+
+    def capture_comm(self, name: str, size: int) -> None:
+        if name not in self.stats:
+            self.stats[name] = []
+        self.stats[name].append(size)
+
+    def _ensure_initialized(self, model: GFlowNet) -> None:
+        self._model = model
+        self._initialized = True
+        # export model parameters to mpi windows (should do that periodically to keep them fresh)
+        self._expose_model_parameters(model)
+
+    def reset_age(self) -> None:
+        self.max_age = random.randint(self.age_range[0], self.age_range[1])
+        self.age = 0
+
+    def is_agent_dying(
+        self, local_metric: float, threshold_metric: float, check_policy=0
+    ) -> bool:
+        if check_policy == 0:  # static theshold
+            return local_metric < threshold_metric
+
+        elif check_policy == 1:  # dynamic threshold based on age
+            if self.age >= self.max_age:
+                print(
+                    "+ Agent killed due to age: ",
+                    self.age,
+                    " max_age: ",
+                    self.max_age,
+                    flush=True,
+                )
+                self.reset_age()
+                return True
+
+            self.age += 1
+            return False
+
+        else:
+            raise ValueError(f"Unknown is_agent_dying version: {check_policy}")
+
+    def _is_worst_rank_this_iteration(
+        self, iteration: int, local_metric: float
+    ) -> Tuple[bool, Optional[List[float]]]:
+        if iteration % self.average_every != 0:
+            return False, None
+        all_metrics = self.train_comm_group.allgather(float(local_metric))
+        worst_ranks = _compute_worst_ranks_by_ratio(all_metrics, self.replacement_ratio)
+        return self.myrank in worst_ranks, all_metrics
+
+    def _should_replace(
+        self, iteration: int, local_metric: float
+    ) -> Tuple[bool, Optional[List[float]]]:
+        if self.replacement_mode == "age":
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_policy=1),
+                None,
+            )
+        if self.replacement_mode == "threshold":
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_policy=0),
+                None,
+            )
+        if self.replacement_mode == "worst_ratio":
+            return self._is_worst_rank_this_iteration(iteration, local_metric)
+        raise ValueError(f"Unknown replacement_mode: {self.replacement_mode}")
+
+    # Execute this function regularly to copy model params to mpi windows
+    # for recepotrs to get recent params
+    def _copy_model_params_to_buf(
+        self,
+        model: GFlowNet,
+    ) -> None:
+        offset = 0
+        for name, param in model.named_parameters():
+            win = self._mpi_tensor_wins[0]
+            win.Lock(rank=self.myrank, lock_type=MPI.LOCK_EXCLUSIVE)
+            size = param.data.numel()
+            self._mpi_tensor_wins[1][offset : offset + size] = (
+                param.data.cpu().numpy().flatten()
+            )
+            offset += size
+            win.Unlock(rank=self.myrank)
+
+    def _expose_model_parameters(self, model: GFlowNet) -> None:
+        print("+ Exposing model parameters via MPI windows...", flush=True)
+        # Serialize model parameters to a contiguous numpy array
+        param_size = 0
+        {param.dtype for param in model.parameters()}
+        # todo: enable this to work with any dtypes for the model
+        # print('model dtypes: ', dtypes)
+        param_dtype = np.float32
+        th_param_dtype = torch.float32
+
+        # self.param_shapes = {}
+        for _, param in model.named_parameters():
+            param_size += param.data.numel()
+            param_dtype = param.data.cpu().numpy().dtype
+
+        param_tensors_flat = np.zeros(param_size, dtype=param_dtype)
+        self.donor_tensor_flat = torch.zeros(param_size, dtype=th_param_dtype)
+        self.acc = torch.zeros(param_size, dtype=th_param_dtype)
+
+        # Create MPI windows for the flat parameter tensor
+        buf = param_tensors_flat
+        assert isinstance(self.train_comm_group, MPI.Intracomm)
+        cast(MPI.Intracomm, self.train_comm_group)
+        win = MPI.Win.Create(buf, comm=self.train_comm_group)
+        # buffer attached to the win, used to copy data in/out of the win
+        self._mpi_tensor_wins = (win, buf)
+
+        self._copy_model_params_to_buf(model)
+
+    def _get_donors(self, n, k, d) -> List[int]:
+        if k > n - 1:
+            raise ValueError("k must be ≤ n-1 when excluding one value")
+
+        # All values from 0..n-1 except d
+        candidates = [x for x in range(n) if x != d]
+        # Random policy Pick k distinct random values
+        return random.sample(candidates, k)
+
+    def __call__(
+        self,
+        iteration: int,
+        model: GFlowNet,
+        optimizer: torch.optim.Optimizer,
+        local_metric: float,
+        expose_params: bool = True,
+        group: MPI.Comm = MPI.COMM_WORLD,
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:
+
+        if self._expose is False:
+            self._expose_model_parameters(model)
+            self._expose = True
+
+        self._count += 1
+        self._model = model
+        named_params = list(model.named_parameters())
+        for name, param in named_params:
+            param.data.shape
+
+        # validation info
+        layer_name = None
+        if self.debug_mode:
+            layer_name = "pb.module.last_layer.bias"
+
+        self.total_iterations += 1
+        should_replace, all_metrics = self._should_replace(iteration, local_metric)
+        if should_replace:
+            self.num_replacements += 1
+            with Timer(self.timing, "sa get_params_from_donors"):
+                # kill this model and rebuild model with fresh weights
+                num_donors = max(
+                    1, int(self.comm_size * 0.5)
+                )  # <<<<< parameterize this one
+                donors = self._get_donors(self.comm_size, num_donors, self.myrank)
+                _new_avg_params = self._get_model_params_from_donors(
+                    donors, layer_name, None
+                )
+
+            with Timer(self.timing, "sa param_list_to_dict_convert"):
+                # conver the flat tensor to model param dict
+                new_avg_params: Dict[str, torch.Tensor] = {}
+                win_buf: Dict[str, torch.Tensor] = {}
+
+                offset = 0
+                for name, param in model.named_parameters():
+                    device = param.device
+                    flat_size = param.data.numel()
+                    assert flat_size == np.prod(param.data.shape)
+                    donor_tensor_flat = _new_avg_params[offset : offset + flat_size]
+                    donor_tensor = torch.tensor(
+                        donor_tensor_flat.reshape(param.data.shape), device=device
+                    )
+                    if self.debug_mode:
+                        buf_tensor_flat = self._mpi_tensor_wins[1][
+                            offset : offset + flat_size
+                        ]
+                        buf_tensor = torch.tensor(
+                            buf_tensor_flat.reshape(param.data.shape), device=device
+                        )
+                        win_buf[name] = buf_tensor
+
+                    new_avg_params[name] = donor_tensor
+                    offset += flat_size
+
+            if self.debug_mode:
+                with open(self.logfile, "a") as f:
+                    if layer_name is not None:
+                        json.dump(
+                            {
+                                self._count: [
+                                    win_buf[layer_name].tolist(),
+                                    donors,
+                                    new_avg_params[layer_name].tolist(),
+                                ]
+                            },
+                            f,
+                        )
+                        f.write("\n")
+
+            with Timer(self.timing, "sa new_agent_model_rebuild"):
+                model, optimizer = self._model_builder()
+                for name, param in model.named_parameters():
+                    if name in new_avg_params:
+                        param.data.copy_(new_avg_params[name])
+
+        if expose_params is True:
+            with Timer(self.timing, "sa copy_params_to_buf"):
+                self._copy_model_params_to_buf(model)
+        averaging_info = {
+            "averaged_this_iteration": bool(should_replace),
+            "replacement_mode": self.replacement_mode,
+            "is_replaced": bool(should_replace),
+            "num_replacements_so_far": int(self.num_replacements),
+            "local_metric": float(local_metric),
+            "replacement_check_every": int(self.average_every),
+        }
+        if all_metrics is not None and len(all_metrics) > 0:
+            averaging_info["global_min_metric"] = float(min(all_metrics))
+            averaging_info["global_max_metric"] = float(max(all_metrics))
+        return model, optimizer, averaging_info
+
+    def _get_model_params_from_donors(
+        self, donors: List[int], layer_name, f
+    ) -> torch.Tensor:
+        # avg_state: Dict[str, torch.Tensor] = {}
+        # _named_params = list(self._model.named_parameters())
+        # named_params = [(name, param) for name, param in _named_params if param.dim() != 0]
+        tot_comm_ele = 0
+
+        self.capture_comm("donors", len(donors))
+        tensor_win, tensor_buf = self._mpi_tensor_wins
+        flat_size = tensor_buf.size
+        self.donor_tensor_flat.zero_()
+        self.acc.zero_()
+
+        if self.averaging_strategy == "mean":
+            for i, src in enumerate(donors):
+                tensor_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
+                tensor_win.Get([self.donor_tensor_flat, MPI.FLOAT], target_rank=src)
+                tensor_win.Unlock(rank=src)
+
+                # Adding all the donor tensors/params
+                self.acc.add_(self.donor_tensor_flat)
+                tot_comm_ele = tot_comm_ele + flat_size
+
+            self.acc = self.acc / len(donors)
+        else:
+            raise ValueError(f"Unknown averaging strategy: {self.averaging_strategy}")
+
+        self.capture_comm("num_param_tensors_received", tot_comm_ele)
+        return self.acc
+
+
+class AverageAllPolicympi4py(SpawnPolicy):
+    """Standard model averaging across all ranks every N iterations."""
+
+    def __init__(self, average_every: int) -> None:
+        super().__init__(average_every)
+
+    @torch.no_grad()
+    def __call__(
+        self,
+        iteration: int,
+        model: GFlowNet,
+        optimizer: torch.optim.Optimizer,
+        local_metric: Optional[float] = None,
+        group: MPI.Comm = MPI.COMM_WORLD,
+    ) -> Tuple[GFlowNet, torch.optim.Optimizer, dict]:
+        if not dist.is_available() or not dist.is_initialized():
+            return model, optimizer, {}
+        if iteration % self.average_every != 0:
+            return model, optimizer, {"averaged_this_iteration": False}
+
+        # print("AverageAll mpi4py model parameters across all ranks ...", flush=True)
+        world_size = group.Get_size()
+        for param in model.parameters():
+            param_tensor = (
+                param.detach().cpu().numpy().copy()
+            )  # param.data.clone().numpy()
+            # dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=group)
+            group.Allreduce(MPI.IN_PLACE, param_tensor, op=MPI.SUM)
+            param_tensor /= world_size
+            param.data.copy_(torch.from_numpy(param_tensor))
+
+        return model, optimizer, {"averaged_this_iteration": True}

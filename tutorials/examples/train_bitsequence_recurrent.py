@@ -35,7 +35,7 @@ def estimated_dist(gflownet: PFBasedGFlowNet, env: BitSequence):
     )
     pf = torch.exp(log_pf_trajectories.sum(dim=0))
 
-    l1_dist = torch.abs(pf - env.true_dist).mean().item()
+    l1_dist = torch.abs(pf - env.true_dist()).mean().item()
 
     return l1_dist
 
