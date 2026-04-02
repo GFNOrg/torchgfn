@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Sequence
 
 import torch
@@ -188,6 +189,16 @@ class Trajectories(Container):
             The number of trajectories.
         """
         return self.states.batch_shape[1]
+
+    @property
+    def n_trajectories(self) -> int:
+        """Deprecated alias for :attr:`batch_size`."""
+        warnings.warn(
+            "Trajectories.n_trajectories is deprecated, use batch_size instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.batch_size
 
     def __len__(self) -> int:
         """Returns the number of trajectories in the container.
