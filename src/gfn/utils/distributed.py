@@ -248,10 +248,15 @@ def initialize_distributed_compute(
     training_ranks = [
         r for r in range(num_training_ranks)
     ]  # e.g., 0..num_training_ranks-1
-    train_global_group = dist.new_group(
-        ranks=training_ranks,
-        backend=dist_backend,
-        timeout=datetime.timedelta(minutes=5),
+    # cast needed: dist.new_group() is typed as returning ProcessGroup | int | None
+    # in torch's stubs, but in practice always returns a ProcessGroup here.
+    train_global_group = cast(
+        dist.ProcessGroup,
+        dist.new_group(
+            ranks=training_ranks,
+            backend=dist_backend,
+            timeout=datetime.timedelta(minutes=5),
+        ),
     )
 
     buffer_group = None
@@ -261,10 +266,14 @@ def initialize_distributed_compute(
         buffer_ranks = list(
             range(num_training_ranks, num_training_ranks + num_remote_buffers)
         )
-        buffer_group = dist.new_group(
-            buffer_ranks,
-            backend=dist_backend,
-            timeout=datetime.timedelta(minutes=5),
+        # cast needed: same as train_global_group above (torch stub imprecision).
+        buffer_group = cast(
+            dist.ProcessGroup,
+            dist.new_group(
+                buffer_ranks,
+                backend=dist_backend,
+                timeout=datetime.timedelta(minutes=5),
+            ),
         )
         print(f"Buffer group ranks: {buffer_ranks}")
 
