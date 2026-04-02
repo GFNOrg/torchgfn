@@ -3,7 +3,12 @@ from typing import Any, Tuple, cast
 import torch
 
 from gfn.containers import Trajectories, Transitions
-from gfn.estimators import Estimator, PolicyEstimatorProtocol, RecurrentPolicyMixin
+from gfn.estimators import (
+    Estimator,
+    PolicyEstimatorProtocol,
+    RecurrentPolicyMixin,
+    validate_policy_estimator,
+)
 
 # ------------
 # Trajectories
@@ -88,13 +93,7 @@ def get_trajectory_pfs(
         # Decide vectorized vs non-vectorized based on estimator capability
         # Tell the type-checker we expect the Policy mixin surface here.
         policy_pf = cast(PolicyEstimatorProtocol, pf)
-        # Runtime guard: ensure the estimator actually implements the required protocol
-        # method and raises an error when a non‑policy estimator is supplied.
-        for required in ("init_context", "compute_dist", "log_probs"):
-            if not hasattr(policy_pf, required):
-                raise TypeError(
-                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
-                )
+        validate_policy_estimator(policy_pf, "pf")
         is_vectorized = bool(getattr(policy_pf, "is_vectorized", True))
 
         if not is_vectorized:
@@ -170,10 +169,12 @@ def get_trajectory_pfs(
             valid_actions = trajectories.actions[action_mask]
 
             # Vectorized path.
-            log_pf_trajectories = torch.full_like(
-                trajectories.actions.tensor[..., 0],
+            # Allocate log_pf explicitly as floating point to avoid silent int casts.
+            log_pf_trajectories = torch.full(
+                trajectories.actions.tensor[..., 0].shape,
                 fill_value=0.0,
                 dtype=torch.get_default_dtype(),
+                device=trajectories.states.device,
             )
 
             if len(valid_states) == 0:
@@ -247,10 +248,12 @@ def get_trajectory_pbs(
     if trajectories.is_backward:
         raise ValueError("Backward trajectories are not supported")
 
-    log_pb_trajectories = torch.full_like(
-        trajectories.actions.tensor[..., 0],
+    # Allocate log_pb explicitly as floating point to avoid silent int casts.
+    log_pb_trajectories = torch.full(
+        trajectories.actions.tensor[..., 0].shape,
         fill_value=0.0,
-        dtype=torch.get_default_dtype(),  # Floating point dtype.
+        dtype=torch.get_default_dtype(),
+        device=trajectories.states.device,
     )
 
     # Note the different mask for valid states and actions compared to the pf case.
@@ -274,7 +277,9 @@ def get_trajectory_pbs(
     if pb is None:
         # If pb is None, we assume that the gflownet DAG is a tree, and therefore
         # the backward policy probability is always 1 (log probs are 0).
-        valid_log_pb_actions = torch.zeros_like(valid_actions.tensor)
+        valid_log_pb_actions = torch.zeros_like(
+            valid_actions.tensor, dtype=torch.get_default_dtype()
+        )
         valid_log_pb_actions = valid_log_pb_actions.squeeze(-1)  # no padding.
         log_pb_trajectories[action_mask] = valid_log_pb_actions.to(
             log_pb_trajectories.dtype, copy=False
@@ -289,13 +294,7 @@ def get_trajectory_pbs(
 
     # There is a backward policy.
     policy_pb = cast(PolicyEstimatorProtocol, pb)
-    # Runtime guard: ensure the estimator actually implements the required protocol
-    # method and raises an error when a non‑policy estimator is supplied.
-    for required in ("init_context", "compute_dist", "log_probs"):
-        if not hasattr(policy_pb, required):
-            raise TypeError(
-                f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
-            )
+    validate_policy_estimator(policy_pb, "pb")
     is_vectorized = bool(getattr(policy_pb, "is_vectorized", True))
 
     if not is_vectorized:
@@ -454,13 +453,7 @@ def get_transition_pfs(
 
         # For static typing, cast to the policy protocol before calling mixin methods.
         policy_pf = cast(PolicyEstimatorProtocol, pf)
-        # Runtime guard: ensure the estimator actually implements the required protocol
-        # method and raises an error when a non‑policy estimator is supplied.
-        for required in ("init_context", "compute_dist", "log_probs"):
-            if not hasattr(policy_pf, required):
-                raise TypeError(
-                    f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
-                )
+        validate_policy_estimator(policy_pf, "pf")
         ctx = policy_pf.init_context(int(N), device, cond)
         mask = torch.ones(N, dtype=torch.bool, device=device)
 
@@ -510,13 +503,7 @@ def get_transition_pbs(
 
     # For static typing, cast to the policy protocol before calling mixin methods.
     policy_pb = cast(PolicyEstimatorProtocol, pb)
-    # Runtime guard: ensure the estimator actually implements the required protocol
-    # method and raises an error when a non‑policy estimator is supplied.
-    for required in ("init_context", "compute_dist", "log_probs"):
-        if not hasattr(policy_pb, required):
-            raise TypeError(
-                f"Estimator is not policy-capable (missing PolicyMixin method: {required})"
-            )
+    validate_policy_estimator(policy_pb, "pb")
     ctx = policy_pb.init_context(
         int(transitions.n_transitions),
         transitions.states.device,

@@ -626,15 +626,9 @@ def test_stack_1d(datas):
     assert torch.equal(stacked.tensor.batch[:4], state1.tensor.batch)
     assert torch.equal(stacked.tensor.batch[4:], state2.tensor.batch + 2)
 
-    assert torch.all(stacked[0, 0].tensor.x == datas[0].x)
-    assert torch.all(stacked[0, 1].tensor.x == datas[1].x)
-    assert torch.all(stacked[1, 0].tensor.x == datas[2].x)
-    assert torch.all(stacked[1, 1].tensor.x == datas[3].x)
-
-    assert (stacked[0, 0].tensor.edge_index == datas[0].edge_index).all()
-    assert (stacked[0, 1].tensor.edge_index == datas[1].edge_index).all()
-    assert (stacked[1, 0].tensor.edge_index == datas[2].edge_index).all()
-    assert (stacked[1, 1].tensor.edge_index == datas[3].edge_index).all()
+    for (i, j), d in zip([(0, 0), (0, 1), (1, 0), (1, 1)], range(4)):
+        assert torch.all(stacked[i, j].tensor.x == datas[d].x)
+        assert (stacked[i, j].tensor.edge_index == datas[d].edge_index).all()
 
 
 def test_stack_2d(datas):
@@ -657,23 +651,19 @@ def test_stack_2d(datas):
     assert torch.equal(stacked.tensor.batch[:8], state1.tensor.batch)
     assert torch.equal(stacked.tensor.batch[8:], state2.tensor.batch + 4)
 
-    assert torch.all(stacked[0, 0, 0].tensor.x == datas[0].x)
-    assert torch.all(stacked[0, 0, 1].tensor.x == datas[1].x)
-    assert torch.all(stacked[0, 1, 0].tensor.x == datas[2].x)
-    assert torch.all(stacked[0, 1, 1].tensor.x == datas[3].x)
-    assert torch.all(stacked[1, 0, 0].tensor.x == datas[4].x)
-    assert torch.all(stacked[1, 0, 1].tensor.x == datas[5].x)
-    assert torch.all(stacked[1, 1, 0].tensor.x == datas[6].x)
-    assert torch.all(stacked[1, 1, 1].tensor.x == datas[7].x)
-
-    assert (stacked[0, 0, 0].tensor.edge_index == datas[0].edge_index).all()
-    assert (stacked[0, 0, 1].tensor.edge_index == datas[1].edge_index).all()
-    assert (stacked[0, 1, 0].tensor.edge_index == datas[2].edge_index).all()
-    assert (stacked[0, 1, 1].tensor.edge_index == datas[3].edge_index).all()
-    assert (stacked[1, 0, 0].tensor.edge_index == datas[4].edge_index).all()
-    assert (stacked[1, 0, 1].tensor.edge_index == datas[5].edge_index).all()
-    assert (stacked[1, 1, 0].tensor.edge_index == datas[6].edge_index).all()
-    assert (stacked[1, 1, 1].tensor.edge_index == datas[7].edge_index).all()
+    indices_to_data = [
+        ((0, 0, 0), 0),
+        ((0, 0, 1), 1),
+        ((0, 1, 0), 2),
+        ((0, 1, 1), 3),
+        ((1, 0, 0), 4),
+        ((1, 0, 1), 5),
+        ((1, 1, 0), 6),
+        ((1, 1, 1), 7),
+    ]
+    for idx, d in indices_to_data:
+        assert torch.all(stacked[idx].tensor.x == datas[d].x)
+        assert (stacked[idx].tensor.edge_index == datas[d].edge_index).all()
 
 
 def test_discrete_masks_device_consistency_construct(simple_discrete_state):

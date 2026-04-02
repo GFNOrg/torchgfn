@@ -22,6 +22,7 @@ from numpy.typing import NDArray
 from scipy.special import logsumexp
 from sklearn.neighbors import KernelDensity
 from tqdm import tqdm, trange
+from tutorials.examples import EXAMPLES_OUTPUTS
 
 from gfn.estimators import ScalarEstimator
 from gfn.gflownet import (
@@ -110,13 +111,12 @@ def plot_trajectories(
         sampler: The sampler to use for generating trajectories.
         n_trajectories: Number of trajectories to sample and plot.
         output_path: Path to save the output plot. If None, defaults to
-            'output/train_box_trajectories.png' relative to this script.
+            EXAMPLES_OUTPUTS / 'train_box_trajectories.png'.
         alpha: Transparency for each trajectory line.
     """
     # Default output path relative to script location
     if output_path is None:
-        script_dir = Path(__file__).parent
-        output_path = str(script_dir / "output" / "train_box_trajectories.png")
+        output_path = str(EXAMPLES_OUTPUTS / "train_box_trajectories.png")
 
     # Sample trajectories
     trajectories = sampler.sample_trajectories(env, n=n_trajectories)

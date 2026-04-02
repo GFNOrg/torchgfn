@@ -32,11 +32,13 @@ import os
 import random
 import time
 from argparse import ArgumentParser
+from itertools import combinations
 from math import ceil
 from typing import Optional, Tuple, cast
 
 import matplotlib.pyplot as plt
 import mpi4py.MPI as MPI
+import numpy as np
 import torch
 import torch.distributed as dist
 from matplotlib.gridspec import GridSpec
@@ -72,70 +74,98 @@ from gfn.utils.modules import MLP, DiscreteUniform, Tabular
 logger = logging.getLogger(__name__)
 
 
-def mode_heatmap_side(n_modes: int) -> int:
-    """Compute side length of the square heatmap covering all mode IDs."""
-    return ceil(n_modes**0.5)
+def build_mode_discovery_figure(
+    env: HyperGrid,
+    discovered_indices: set[int],
+):
+    """Build a matplotlib figure showing discovered vs undiscovered mode states.
 
+    Projects mode states onto 2D planes of the first min(ndim, 3) dimensions.
+    For ndim=1, shows a single row; for ndim=2, a single 2D heatmap; for
+    ndim>=3, three pairwise projections of the first 3 dimensions.
 
-def update_mode_heatmap(mode_heatmap: torch.Tensor, mode_ids: set[int]) -> None:
-    """Mark discovered mode IDs in a square occupancy heatmap."""
-    if not mode_ids:
-        return
+    Color coding:
+      - Light gray: no mode state at this position
+      - Red: mode state(s) exist but none discovered
+      - Green: at least one mode state discovered
 
-    side = mode_heatmap.shape[0]
+    Returns None if ``env.all_states`` is unavailable.
+    """
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+    from matplotlib.patches import Patch
 
-    ids_tensor = torch.tensor(
-        list(mode_ids), dtype=torch.long, device=mode_heatmap.device
-    )
-    rows = ids_tensor // side
-    cols = ids_tensor % side
-    mode_heatmap[rows, cols] = 1.0
+    all_states = env.all_states
+    if all_states is None:
+        return None
 
+    mask = env.mode_mask(all_states)
+    n_mode = int(mask.sum().item())
+    if n_mode == 0:
+        return None
 
-def build_mode_heatmap_figure(mode_heatmap: torch.Tensor):
-    """Create a matplotlib heatmap figure for wandb image logging."""
-    mode_heatmap_np = mode_heatmap.detach().cpu().numpy()
-    fig, ax = plt.subplots(figsize=(4, 4))
-    image = ax.imshow(
-        mode_heatmap_np, cmap="viridis", vmin=0.0, vmax=1.0, interpolation="nearest"
-    )
-    ax.set_xlabel("mode_id % side")
-    ax.set_ylabel("mode_id // side")
-    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    mode_coords = all_states.tensor[mask].cpu().numpy()  # (n_mode, ndim)
+    mode_idx = env.get_states_indices(all_states)[mask].cpu()
+    is_disc = np.array([int(idx.item()) in discovered_indices for idx in mode_idx])
+    n_discovered = int(is_disc.sum())
+    h = env.height
+
+    cmap = ListedColormap(["#f0f0f0", "#e74c3c", "#2ecc71"])
+    norm = BoundaryNorm([0, 0.5, 1.5, 2.5], cmap.N)
+
+    n_viz = min(env.ndim, 3)
+
+    if n_viz < 2:
+        # 1D: single horizontal strip.
+        fig, ax = plt.subplots(1, 1, figsize=(max(4, h // 4), 1.5))
+        grid = np.zeros(h, dtype=np.float32)
+        x = mode_coords[:, 0].astype(int)
+        np.maximum.at(grid, x, 1.0)
+        if is_disc.any():
+            np.maximum.at(grid, x[is_disc], 2.0)
+        ax.imshow(
+            grid[np.newaxis, :],
+            cmap=cmap,
+            norm=norm,
+            aspect="auto",
+            interpolation="nearest",
+        )
+        ax.set_xlabel("dim 0")
+        ax.set_yticks([])
+    else:
+        pairs = list(combinations(range(n_viz), 2))
+        n_plots = len(pairs)
+        fig, axes = plt.subplots(1, n_plots, figsize=(4 * n_plots + 1, 4))
+        if n_plots == 1:
+            axes = [axes]
+
+        for ax, (di, dj) in zip(axes, pairs):
+            grid = np.zeros((h, h), dtype=np.float32)
+            xi = mode_coords[:, di].astype(int)
+            yj = mode_coords[:, dj].astype(int)
+            # Mark all mode positions as undiscovered (1).
+            np.maximum.at(grid, (yj, xi), 1.0)
+            # Overwrite discovered positions (2).
+            if is_disc.any():
+                np.maximum.at(grid, (yj[is_disc], xi[is_disc]), 2.0)
+            ax.imshow(
+                grid,
+                cmap=cmap,
+                norm=norm,
+                origin="lower",
+                interpolation="nearest",
+            )
+            ax.set_xlabel(f"dim {di}")
+            ax.set_ylabel(f"dim {dj}")
+
+    pct = 100 * n_discovered / n_mode if n_mode > 0 else 0
+    fig.suptitle(f"Modes: {n_discovered}/{n_mode} ({pct:.1f}%)", fontsize=10)
+    legend_elements = [
+        Patch(facecolor="#e74c3c", label="undiscovered"),
+        Patch(facecolor="#2ecc71", label="discovered"),
+    ]
+    fig.legend(handles=legend_elements, loc="lower right", fontsize=8)
     fig.tight_layout()
     return fig
-
-
-def build_mode_heatmap_table(mode_heatmap: torch.Tensor, wandb):
-    """Create a wandb table for heatmap logging with custom chart support."""
-    mode_heatmap_np = mode_heatmap.detach().cpu().numpy()
-    table = wandb.Table(columns=["x", "y", "value"])
-    for y, row in enumerate(mode_heatmap_np):
-        for x, value in enumerate(row):
-            table.add_data(x, y, float(value))
-    return table
-
-
-def build_mode_heatmap_plot(heatmap_table, wandb):
-    """Create a wandb heatmap plot with compatibility across wandb versions."""
-    if hasattr(wandb, "plot") and hasattr(wandb.plot, "heatmap"):
-        return wandb.plot.heatmap(
-            heatmap_table,
-            "x",
-            "y",
-            "value",
-            title="Local Modes Heatmap",
-        )
-
-    if hasattr(wandb, "plot_table"):
-        return wandb.plot_table(
-            "wandb/heatmap/v0",
-            heatmap_table,
-            {"x": "x", "y": "y", "value": "value"},
-            {"title": "Local Modes Heatmap"},
-        )
-
-    return None
 
 
 class ModesReplayBufferManager(ReplayBufferManager):
@@ -258,19 +288,19 @@ class ModesReplayBufferManager(ReplayBufferManager):
 
             # Sum the minimum batch x buffer distances for each batch element.
             novelty_sum = float(min_dist.sum().item())
-            logger.info("Score - Min distances: %s", min_dist)
+            logger.debug("Score - Min distances: %s", min_dist)
 
-        logger.info("Score - Novelty sum: %s", novelty_sum)
+        logger.debug("Score - Novelty sum: %s", novelty_sum)
 
         # C) High reward term (sum over batch)
         assert (
             obj.log_rewards is not None
         ), "log_rewards is None in submitted trajectories!"
         reward_sum = float(obj.log_rewards.exp().sum().item())
-        logger.info("Score - Reward sum: %s", reward_sum)
+        logger.debug("Score - Reward sum: %s", reward_sum)
 
         # D) Mode bonus
-        logger.info("Score - Modes discovered before update: %s", self.discovered_modes)
+        logger.debug("Score - Modes discovered before update: %s", self.discovered_modes)
 
         n_new_modes = 0.0
         assert isinstance(obj.terminating_states, DiscreteStates)
@@ -281,15 +311,15 @@ class ModesReplayBufferManager(ReplayBufferManager):
                 n_new_modes = float(len(new_modes))
                 self.discovered_modes.update(new_modes)
 
-        logger.info("Score - New modes found: %s", n_new_modes)
-        logger.info("Score - Modes discovered after update: %s", self.discovered_modes)
+        logger.debug("Score - New modes found: %s", n_new_modes)
+        logger.debug("Score - Modes discovered after update: %s", self.discovered_modes)
 
         # Compute the final score.
         final_score = self.w_retained * float(retained_count)
         final_score += self.w_novelty * novelty_sum
         final_score += self.w_reward * reward_sum
         final_score += self.w_mode_bonus * n_new_modes
-        logger.info("Score - Final score: %s", final_score)
+        logger.debug("Score - Final score: %s", final_score)
         # Update and return EMA of the score
         if self._score_ema is None:
             self._score_ema = final_score
@@ -297,7 +327,7 @@ class ModesReplayBufferManager(ReplayBufferManager):
             self._score_ema = self._ema_decay * self._score_ema + (
                 1.0 - self._ema_decay
             ) * float(final_score)
-        logger.info("Score - EMA score: %s", self._score_ema)
+        logger.debug("Score - EMA score: %s", self._score_ema)
         return {
             "score": float(self._score_ema),
             "score_before_ema": final_score,
@@ -876,12 +906,6 @@ def main(args) -> dict:  # noqa: C901
     per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
     modes_found = set()
     local_modes_found = set()
-    local_n_modes_total = env.n_modes
-    local_mode_heatmap_side = mode_heatmap_side(local_n_modes_total)
-    local_mode_heatmap = torch.zeros(
-        (local_mode_heatmap_side, local_mode_heatmap_side), dtype=torch.float32
-    )
-    # n_pixels_per_mode = round(env.height / 10) ** env.ndim
     # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
 
     logger.info("n_iterations = %d", n_iterations)
@@ -947,6 +971,7 @@ def main(args) -> dict:  # noqa: C901
                         averaging_strategy=args.averaging_strategy,
                         momentum=args.momentum,
                         age_range=args.age_range,
+                        replacement_mode=args.mpi_replacement_mode,
                         group=mpi4py_train_group,
                     )
                 elif args.mpi_sa_mode == "fast":
@@ -959,6 +984,7 @@ def main(args) -> dict:  # noqa: C901
                         averaging_strategy=args.averaging_strategy,
                         momentum=args.momentum,
                         age_range=args.age_range,
+                        replacement_mode=args.mpi_replacement_mode,
                         group=mpi4py_train_group,
                     )
                 else:
@@ -1139,7 +1165,6 @@ def main(args) -> dict:  # noqa: C901
         new_local_modes = iter_modes_found - local_modes_found
         if new_local_modes:
             local_modes_found.update(new_local_modes)
-            update_mode_heatmap(local_mode_heatmap, new_local_modes)
 
         # If we are on the master node, calculate the validation metrics.
         assert visited_terminating_states is not None
@@ -1158,6 +1183,9 @@ def main(args) -> dict:  # noqa: C901
         to_log.update(averaging_info)
         local_n_modes_found = len(local_modes_found)
         to_log["local_n_modes_found"] = local_n_modes_found
+        n_total = env.n_modes
+        if n_total:
+            to_log["local_mode_coverage"] = local_n_modes_found / n_total
 
         if log_this_iter:
             if score_dict_count > 0:
@@ -1171,12 +1199,10 @@ def main(args) -> dict:  # noqa: C901
 
             if args.validate_environment:
                 with Timer(timing, "validation", enabled=args.timing):
-                    validation_info, all_visited_terminating_states = env.validate(
+                    validation_info, _ = env.validate(
                         gflownet,
                         args.validation_samples,
-                        all_visited_terminating_states,
                     )
-                    assert all_visited_terminating_states is not None
                     to_log.update(validation_info)
 
             with Timer(timing, "log", enabled=args.timing):
@@ -1196,15 +1222,14 @@ def main(args) -> dict:  # noqa: C901
                     pbar.set_postfix(
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
-                        n_modes_found=to_log["n_modes_found"],
+                        n_modes_found=to_log.get("n_modes_found", local_n_modes_found),
                     )
 
                 if use_wandb:
-                    heatmap_table = build_mode_heatmap_table(local_mode_heatmap, wandb)
-                    to_log["local_modes_heatmap_table"] = heatmap_table
-                    heatmap_plot = build_mode_heatmap_plot(heatmap_table, wandb)
-                    if heatmap_plot is not None:
-                        to_log["local_modes_heatmap"] = heatmap_plot
+                    fig = build_mode_discovery_figure(env, local_modes_found)
+                    if fig is not None:
+                        to_log["mode_discovery_map"] = wandb.Image(fig)
+                        plt.close(fig)
                     wandb.log(to_log, step=iteration)
 
         with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
@@ -1403,6 +1428,17 @@ if __name__ == "__main__":
         default=(5, 15),
         help="Age range (iterations) for selective averaging policy as tuple (min_age, max_age), e.g., '5,15'",
     )
+    parser.add_argument(
+        "--mpi_replacement_mode",
+        choices=["age", "threshold", "worst_ratio"],
+        default="age",
+        help=(
+            "Replacement trigger for mpi4py selective averaging: "
+            "'age' uses random-age restarts, 'threshold' replaces local metric below "
+            "--performance_tracker_threshold, and 'worst_ratio' replaces the bottom "
+            "--replacement_ratio fraction based on global per-rank metric."
+        ),
+    )
 
     # Environment settings.
     parser.add_argument(
@@ -1578,13 +1614,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="torchgfn",
+        default="",
         help="Name of the wandb project. If empty, don't use wandb",
     )
     parser.add_argument(
         "--wandb_entity",
         type=str,
-        default="torchgfn",
+        default="",
         help="Name of the wandb entity. If empty, don't use wandb",
     )
     parser.add_argument(
@@ -1683,8 +1719,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--performance_tracker_threshold",
         type=float,
-        default=0.0,
-        help="Threshold for the performance tracker. If None, the performance tracker is not triggered.",
+        default=float("inf"),
+        help="Threshold for the performance tracker. By default, the performance tracker is not triggered.",
     )
     parser.add_argument(
         "--performance_tracker_cooldown",
@@ -1694,6 +1730,10 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    if args.replacement_ratio <= 0.0 or args.replacement_ratio > 1.0:
+        parser.error("--replacement_ratio must be in (0, 1].")
+
     assert (
         args.age_range[1] >= args.age_range[0]
     ), "Invalid age_range: max_age must be ge min_age"

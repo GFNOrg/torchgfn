@@ -1,6 +1,6 @@
-from __future__ import annotations  # This allows to use the class name in type hints
+from __future__ import annotations
 
-from typing import ClassVar, List, Optional, Sequence, Tuple, Union, cast
+from typing import ClassVar, List, Optional, Sequence, Tuple, cast
 
 import torch
 
@@ -35,7 +35,7 @@ class BitSequenceStates(DiscreteStates):
         conditions: Optional[torch.Tensor] = None,
         debug: bool = False,
     ) -> None:
-        """Initializes the BitSequencesStates object.
+        """Initializes the BitSequenceStates object.
 
         Args:
             tensor: The tensor representing the states.
@@ -102,10 +102,10 @@ class BitSequenceStates(DiscreteStates):
         return backward_masks
 
     def clone(self) -> BitSequenceStates:
-        """Returns a clone of the current BitSequencesStates object.
+        """Returns a clone of the current BitSequenceStates object.
 
         Returns:
-            A clone of the current BitSequencesStates object.
+            A clone of the current BitSequenceStates object.
         """
         return self.__class__(
             self.tensor.detach().clone(),
@@ -117,13 +117,13 @@ class BitSequenceStates(DiscreteStates):
     def __getitem__(
         self, index: int | slice | tuple | Sequence[int] | Sequence[bool] | torch.Tensor
     ) -> BitSequenceStates:
-        """Returns a subset of the BitSequencesStates object based on the given index.
+        """Returns a subset of the BitSequenceStates object based on the given index.
 
         Args:
             index: The index to use for subsetting.
 
         Returns:
-            A subset of the BitSequencesStates object.
+            A subset of the BitSequenceStates object.
         """
         return self.__class__(
             self.tensor[index],
@@ -135,7 +135,7 @@ class BitSequenceStates(DiscreteStates):
     def __setitem__(
         self, index: int | Sequence[int] | Sequence[bool], states: BitSequenceStates
     ) -> None:
-        """Sets a subset of the BitSequencesStates object based on the given index and states.
+        """Sets a subset of the BitSequenceStates object based on the given index and states.
 
         Args:
             index: The index to use for subsetting.
@@ -145,10 +145,10 @@ class BitSequenceStates(DiscreteStates):
         self.length[index] = states.length
 
     def flatten(self) -> BitSequenceStates:
-        """Flattens the BitSequencesStates object.
+        """Flattens the BitSequenceStates object.
 
         Returns:
-            The flattened BitSequencesStates object.
+            The flattened BitSequenceStates object.
         """
         states = self.tensor.view(-1, *self.state_shape)
         length = self.length.view(-1)
@@ -159,10 +159,10 @@ class BitSequenceStates(DiscreteStates):
         return self.__class__(states, length, conditions, debug=self.debug)
 
     def extend(self, other: BitSequenceStates) -> None:
-        """Extends the current BitSequencesStates object with another BitSequencesStates object.
+        """Extends the current BitSequenceStates object with another BitSequenceStates object.
 
         Args:
-            other: The BitSequencesStates object to extend with.
+            other: The BitSequenceStates object to extend with.
         """
         super().extend(other)
         self.length = torch.cat(
@@ -170,7 +170,7 @@ class BitSequenceStates(DiscreteStates):
         )
 
     def pad_dim0_with_sf(self, required_first_dim: int) -> None:
-        """Extends the current BitSequencesStates object with sink states.
+        """Extends the current BitSequenceStates object with sink states.
 
         Args:
             required_first_dim: The required first dimension of the extended states.
@@ -192,13 +192,13 @@ class BitSequenceStates(DiscreteStates):
 
     @classmethod
     def stack(cls, states: Sequence[BitSequenceStates]) -> BitSequenceStates:
-        """Stacks a list of BitSequencesStates objects into a single BitSequencesStates object.
+        """Stacks a list of BitSequenceStates objects into a single BitSequenceStates object.
 
         Args:
-            states: A list of BitSequencesStates objects.
+            states: A list of BitSequenceStates objects.
 
         Returns:
-            A single stacked BitSequencesStates object.
+            A single stacked BitSequenceStates object.
         """
         stacked_states = cast(BitSequenceStates, super().stack(states))
         stacked_states.length = torch.stack([s.length for s in states], dim=0)
@@ -338,7 +338,7 @@ class BitSequence(DiscreteEnv):
     # In some cases overwritten by the user to support specific use-cases.
     def reset(
         self,
-        batch_shape: Optional[Union[int, Tuple[int]]] = None,
+        batch_shape: int | Tuple[int] | None = None,
         sink: bool = False,
     ) -> BitSequenceStates:
         """Generates initial or sink states from batch_shape.
@@ -395,13 +395,14 @@ class BitSequence(DiscreteEnv):
         Returns:
             The previous states.
         """
-        assert (
-            actions.tensor.squeeze()
-            == states.tensor[
-                torch.arange(states.tensor.shape[0], device=states.tensor.device),
-                states.length - 1,
-            ]
-        ).all()
+        if self.debug:
+            assert (
+                actions.tensor.squeeze()
+                == states.tensor[
+                    torch.arange(states.tensor.shape[0], device=states.tensor.device),
+                    states.length - 1,
+                ]
+            ).all(), "Backward action must match the last appended token"
         old_tensor = states.tensor
         old_tensor[..., states.length - 1] = -1
         return self.States(old_tensor)
@@ -451,11 +452,6 @@ class BitSequence(DiscreteEnv):
             ValueError: If the number of requested modes exceeds the number of
                 possible unique sequences.
         """
-        # Use a local Generator to avoid clobbering the global RNG state.
-        # Previously this called torch.manual_seed(seed) which would override
-        # any seed set by the caller (e.g. set_seed in training scripts).
-        gen = torch.Generator(device="cpu")
-        gen.manual_seed(seed)
 
         if self.H is None:
             self.H = torch.tensor(
@@ -476,12 +472,15 @@ class BitSequence(DiscreteEnv):
                 "Not enough unique sequences available for the set of modes."
             )
 
+        g = torch.Generator(device=self.device)
+        g.manual_seed(seed)
+
         unique_indices = set()
         unique_sequences = []
 
         while len(unique_sequences) < self.n_modes:
             candidate = tuple(
-                torch.randint(0, self.H.shape[0], (m,), generator=gen).tolist()
+                torch.randint(0, self.H.shape[0], (m,), generator=g).tolist()
             )
             if candidate not in unique_indices:
                 unique_indices.add(candidate)

@@ -349,7 +349,6 @@ def main(args):
                 env,
                 gflownet,
                 args.validation_samples,
-                visited_terminating_states,
             )
             print(f"Iter {it + 1}: L1 distance {validation_info['l1_dist']:.8f}")
             print(

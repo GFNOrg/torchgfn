@@ -164,7 +164,7 @@ class ReplayBuffer:
         if self.training_container is None:
             type_str = "empty"
         else:
-            type_str = self.training_container.__class__.__name__.lower()
+            type_str = self.training_container.__class__.__name__
         return (
             f"ReplayBuffer(capacity={self.capacity}, containing {len(self)} {type_str})"
         )
@@ -205,7 +205,6 @@ class ReplayBuffer:
         assert self.training_container is not None
         assert isinstance(training_container, type(self.training_container))  # type: ignore
 
-        # Adds the objects to the buffer.
         self.training_container.extend(training_container)  # type: ignore
 
         # Clear fields that must be recomputed for Trajectories and Transitions.
@@ -336,6 +335,21 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
 
+    @staticmethod
+    def _diversity_repr(container: ContainerUnion) -> torch.Tensor:
+        """Returns the tensor used for pairwise distance in diversity filtering.
+
+        For conditional GFNs, concatenates conditions with the state tensor so
+        that identical states under different conditions are treated as distinct.
+        """
+        states = container.terminating_states
+        repr_tensor = states.tensor.to(torch.get_default_dtype())
+        if states.conditions is not None:
+            repr_tensor = torch.cat(
+                [repr_tensor, states.conditions.to(repr_tensor.dtype)], dim=-1
+            )
+        return repr_tensor
+
     def add(self, training_container: ContainerUnion):
         """Adds a training object to the buffer with diversity-based prioritization.
 
@@ -374,29 +388,13 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             idx_bigger_rewards = training_container.log_rewards >= min_reward_in_buffer
             training_container = training_container[idx_bigger_rewards]
 
-            # TODO: Concatenate input with final state for conditional GFN.
-            if training_container.states.conditions is not None:
-                raise NotImplementedError(
-                    "{instance.__class__.__name__} does not yet support conditional GFNs."
-                )
-            #     batch = torch.cat(
-            #         [dict_curr_batch["input"], dict_curr_batch["final_state"]],
-            #         dim=-1,
-            #     )
-            #     buffer = torch.cat(
-            #         [self.storage["input"], self.storage["final_state"]],
-            #         dim=-1,
-            #     )
-
             # If all trajectories were filtered, stop there.
             if not len(training_container):
                 return
 
             if self.cutoff_distance >= 0:
                 # Filter the batch for diverse final_states with high reward.
-                batch = training_container.terminating_states.tensor.to(
-                    torch.get_default_dtype()
-                )
+                batch = self._diversity_repr(training_container)
                 batch_dim = training_container.terminating_states.batch_shape[0]
                 batch_batch_dist = torch.cdist(
                     batch.view(batch_dim, -1).unsqueeze(0),
@@ -412,12 +410,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
                 training_container = training_container[idx_batch_batch]
 
                 # Compute all pairwise distances between the remaining batch & buffer.
-                batch = training_container.terminating_states.tensor.to(
-                    torch.get_default_dtype()
-                )
-                buffer = self.training_container.terminating_states.tensor.to(
-                    torch.get_default_dtype()
-                )
+                batch = self._diversity_repr(training_container)
+                buffer = self._diversity_repr(self.training_container)
                 batch_dim = training_container.terminating_states.batch_shape[0]
                 tmp = self.training_container.terminating_states
                 buffer_dim = tmp.batch_shape[0]

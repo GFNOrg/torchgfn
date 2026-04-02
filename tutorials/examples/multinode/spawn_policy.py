@@ -626,6 +626,20 @@ Selective averaging based on async mpi-3 comms
 """
 
 
+def _compute_worst_ranks_by_ratio(
+    metrics: List[float], replacement_ratio: float
+) -> Set[int]:
+    """Return the set of globally worst ranks to replace."""
+    n_ranks = len(metrics)
+    if n_ranks <= 1:
+        return set()
+    n_replace = max(1, int(n_ranks * replacement_ratio))
+    # Keep at least one donor rank.
+    n_replace = min(n_replace, n_ranks - 1)
+    sorted_ranks = np.argsort(np.asarray(metrics, dtype=np.float64))
+    return set(int(x) for x in sorted_ranks[:n_replace].tolist())
+
+
 class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
     r"""
     Asynchronous selective averaging version 2, uses mpi one-sided comms to get the
@@ -643,6 +657,7 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         momentum: float = 0.0,
         poll_interval_s: float = 0.01,
         age_range: Tuple[int, int] = (50, 150),
+        replacement_mode: str = "age",
         group: MPI.Comm = MPI.COMM_WORLD,
     ) -> None:
         super().__init__(average_every)
@@ -656,6 +671,12 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
 
         self._model: Optional[GFlowNet] = None
         self.threshold_metric = float(threshold_metric)
+        self.replacement_mode = str(replacement_mode)
+        if self.replacement_mode not in {"age", "threshold", "worst_ratio"}:
+            raise ValueError(
+                f"Unknown replacement_mode: {self.replacement_mode}. "
+                "Expected one of: age, threshold, worst_ratio."
+            )
 
         # timers
         self.timing = {}
@@ -669,6 +690,8 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         self.agents_killed = 0
         self.averaging_ranks = 0
         self._count = 0
+        self.total_iterations = 0
+        self.num_replacements = 0
 
         self.debug_mode = False
         self.age = 0
@@ -763,6 +786,32 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         else:
             raise ValueError(f"Unknown is_agent_dying version: {check_agent}")
 
+    def _is_worst_rank_this_iteration(
+        self, iteration: int, local_metric: float
+    ) -> Tuple[bool, Optional[List[float]]]:
+        if iteration % self.average_every != 0:
+            return False, None
+        all_metrics = self.train_comm_group.allgather(float(local_metric))
+        worst_ranks = _compute_worst_ranks_by_ratio(all_metrics, self.replacement_ratio)
+        return self.myrank in worst_ranks, all_metrics
+
+    def _should_replace(
+        self, iteration: int, local_metric: float
+    ) -> Tuple[bool, Optional[List[float]]]:
+        if self.replacement_mode == "age":
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_agent=1),
+                None,
+            )
+        if self.replacement_mode == "threshold":
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_agent=0),
+                None,
+            )
+        if self.replacement_mode == "worst_ratio":
+            return self._is_worst_rank_this_iteration(iteration, local_metric)
+        raise ValueError(f"Unknown replacement_mode: {self.replacement_mode}")
+
     # Execute this function regularly to copy model params to mpi windows
     # for recepotrs to get recent params
     def _copy_model_params_to_buf(
@@ -818,15 +867,17 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             self._expose = True
 
         self._count += 1
+        self.total_iterations += 1
         self._model = model
 
-        check_agent = 1  # version of dying agent check
         # validation info
         layer_name = None
         if self.debug_mode:
             layer_name = "pb.module.last_layer.bias"
 
-        if self.is_agent_dying(local_metric, self.threshold_metric, check_agent):
+        should_replace, all_metrics = self._should_replace(iteration, local_metric)
+        if should_replace:
+            self.num_replacements += 1
             with Timer(self.timing, "sa get_params_from_donors"):
                 if self.debug_mode:
                     with open(self.logfile, "a") as f:
@@ -871,8 +922,18 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         if expose_params is True:
             with Timer(self.timing, "sa copy_params_to_buf"):
                 self._copy_model_params_to_buf(model)
-
-        return model, optimizer, {"averaged_this_iteration": True}
+        averaging_info = {
+            "averaged_this_iteration": bool(should_replace),
+            "replacement_mode": self.replacement_mode,
+            "is_replaced": bool(should_replace),
+            "num_replacements_so_far": int(self.num_replacements),
+            "local_metric": float(local_metric),
+            "replacement_check_every": int(self.average_every),
+        }
+        if all_metrics is not None and len(all_metrics) > 0:
+            averaging_info["global_min_metric"] = float(min(all_metrics))
+            averaging_info["global_max_metric"] = float(max(all_metrics))
+        return model, optimizer, averaging_info
 
     def _get_model_params_from_donors(
         self, donors: List[int], layer_name, f
@@ -923,7 +984,7 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             acc = acc / len(donors)
             avg_state[name] = acc
 
-        self.capture_comm("num_param_tensors_received", tot_comm_ele)
+        self.capture_comm("num_param_tensors_received", int(tot_comm_ele))
         return avg_state
 
     def _average_received_params(
@@ -974,6 +1035,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         averaging_strategy: str = "mean",
         momentum: float = 0.0,
         age_range: Tuple[int, int] = (50, 150),
+        replacement_mode: str = "age",
         group: MPI.Comm = MPI.COMM_WORLD,
     ) -> None:
         super().__init__(average_every)
@@ -987,6 +1049,12 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
 
         self._model: Optional[GFlowNet] = None
         self.threshold_metric = float(threshold_metric)
+        self.replacement_mode = str(replacement_mode)
+        if self.replacement_mode not in {"age", "threshold", "worst_ratio"}:
+            raise ValueError(
+                f"Unknown replacement_mode: {self.replacement_mode}. "
+                "Expected one of: age, threshold, worst_ratio."
+            )
         # timers
         self.timing = {}
         self.stats = {}
@@ -1099,6 +1167,32 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         else:
             raise ValueError(f"Unknown is_agent_dying version: {check_policy}")
 
+    def _is_worst_rank_this_iteration(
+        self, iteration: int, local_metric: float
+    ) -> Tuple[bool, Optional[List[float]]]:
+        if iteration % self.average_every != 0:
+            return False, None
+        all_metrics = self.train_comm_group.allgather(float(local_metric))
+        worst_ranks = _compute_worst_ranks_by_ratio(all_metrics, self.replacement_ratio)
+        return self.myrank in worst_ranks, all_metrics
+
+    def _should_replace(
+        self, iteration: int, local_metric: float
+    ) -> Tuple[bool, Optional[List[float]]]:
+        if self.replacement_mode == "age":
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_policy=1),
+                None,
+            )
+        if self.replacement_mode == "threshold":
+            return (
+                self.is_agent_dying(local_metric, self.threshold_metric, check_policy=0),
+                None,
+            )
+        if self.replacement_mode == "worst_ratio":
+            return self._is_worst_rank_this_iteration(iteration, local_metric)
+        raise ValueError(f"Unknown replacement_mode: {self.replacement_mode}")
+
     # Execute this function regularly to copy model params to mpi windows
     # for recepotrs to get recent params
     def _copy_model_params_to_buf(
@@ -1180,8 +1274,8 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
             layer_name = "pb.module.last_layer.bias"
 
         self.total_iterations += 1
-        check_agent = 1  # 0: static thresholding, 1: dynamic based on age
-        if self.is_agent_dying(local_metric, self.threshold_metric, check_agent):
+        should_replace, all_metrics = self._should_replace(iteration, local_metric)
+        if should_replace:
             self.num_replacements += 1
             with Timer(self.timing, "sa get_params_from_donors"):
                 # kill this model and rebuild model with fresh weights
@@ -1243,8 +1337,18 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         if expose_params is True:
             with Timer(self.timing, "sa copy_params_to_buf"):
                 self._copy_model_params_to_buf(model)
-
-        return model, optimizer, {"averaged_this_iteration": True}
+        averaging_info = {
+            "averaged_this_iteration": bool(should_replace),
+            "replacement_mode": self.replacement_mode,
+            "is_replaced": bool(should_replace),
+            "num_replacements_so_far": int(self.num_replacements),
+            "local_metric": float(local_metric),
+            "replacement_check_every": int(self.average_every),
+        }
+        if all_metrics is not None and len(all_metrics) > 0:
+            averaging_info["global_min_metric"] = float(min(all_metrics))
+            averaging_info["global_max_metric"] = float(max(all_metrics))
+        return model, optimizer, averaging_info
 
     def _get_model_params_from_donors(
         self, donors: List[int], layer_name, f

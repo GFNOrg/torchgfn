@@ -14,7 +14,6 @@ Key differences from the full version:
 """
 
 import argparse
-import os
 from typing import cast
 
 import matplotlib.pyplot as plt
@@ -22,6 +21,7 @@ import pandas as pd
 import seaborn as sns
 import torch
 from tqdm import tqdm
+from tutorials.examples import EXAMPLES_OUTPUTS
 
 from gfn.containers import ReplayBuffer
 from gfn.containers.trajectories import Trajectories
@@ -107,7 +107,7 @@ def print_final_results(all_results: pd.DataFrame, width: int = 80):
 
 def _print_mode_stats(env: Env):
     print("\nMode Stats:")
-    print(f"+ Number of modes: {2**env.ndim}")
+    print(f"+ Number of mode states: {env.n_modes}")
 
 
 def build_gflownet(
@@ -257,7 +257,6 @@ def train(
                 env,
                 gflownet,
                 validation_samples,
-                visited_terminating_states,
             )
             modes_found = env.modes_found(visited_terminating_states)
             discovered_modes.update(modes_found)
@@ -265,7 +264,7 @@ def train(
 
             # Format training progress information.
             l1_dist = val_info["l1_dist"]
-            logZ_diff = val_info["logZ_diff"]
+            logZ_diff = val_info.get("logZ_diff", 0.0)
             n_terminating = len(visited_terminating_states)
             # l1_info = f"L1 dist={val_info['l1_dist']:.8f} " if "l1_dist" in val_info else ""
             # print(
@@ -477,8 +476,8 @@ def main(args):
 
         plt.tight_layout()
 
-        home_dir = os.path.expanduser("~")
-        output_path = os.path.join(home_dir, "exploration_comparison.png")
+        EXAMPLES_OUTPUTS.mkdir(parents=True, exist_ok=True)
+        output_path = EXAMPLES_OUTPUTS / "exploration_comparison.png"
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
         plt.close()
 

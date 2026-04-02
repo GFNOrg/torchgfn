@@ -1,6 +1,5 @@
 import warnings
 from abc import ABC, abstractmethod
-from collections import Counter
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, cast
 
 if TYPE_CHECKING:
@@ -375,13 +374,11 @@ class Env(ABC):
         # We only step on states that are not sink states.
         # Note that exit actions directly set the states to the sink state, so they
         # are not included in the valid_states_idx.
-        new_valid_states_idx = valid_states_idx & ~actions.is_exit
+        new_valid_states_idx = valid_states_idx & ~actions.is_exit  # boolean mask.
 
-        # IMPORTANT: .clone() is used to ensure that the new states are a
-        # distinct object from the old states. This is important for the sampler to
-        # work correctly when building the trajectories. If you want to override this
-        # method in your custom environment, you must ensure that the `new_states`
-        # returned is a distinct object from the submitted states.
+        # IMPORTANT: .clone() ensures new states are a distinct object from the
+        # old states. The sampler requires this when building trajectories. If you
+        # override this method, you must ensure the returned states are independent.
         not_done_states = states[new_valid_states_idx].clone()
         not_done_actions = actions[new_valid_states_idx]
 
@@ -399,8 +396,7 @@ class Env(ABC):
             states.batch_shape, device=states.device
         )
         new_states[new_valid_states_idx] = not_done_states
-        # Bypass conditions setter: avoids redundant shape/dtype/device
-        # validation since conditions are unchanged from the source states.
+        # Propagate conditions without re-validation (unchanged from source).
         if states._conditions is not None:
             new_states._conditions = states._conditions
         return new_states
@@ -422,11 +418,9 @@ class Env(ABC):
         if self.debug:
             assert states.batch_shape == actions.batch_shape
 
-        # IMPORTANT: states.clone() is used to ensure that the new states are a
-        # distinct object from the old states. This is important for the sampler to
-        # work correctly when building the trajectories. If you want to override this
-        # method in your custom environment, you must ensure that the `new_states`
-        # returned is a distinct object from the submitted states.
+        # IMPORTANT: .clone() ensures new states are a distinct object from the
+        # old states. The sampler requires this when building trajectories. If you
+        # override this method, you must ensure the returned states are independent.
         new_states = states.clone()
 
         valid_states_idx: torch.Tensor = ~new_states.is_initial_state
@@ -445,8 +439,7 @@ class Env(ABC):
 
         # Calculate the backward step, and update only the states which are not Done.
         new_states[valid_states_idx] = self.backward_step(valid_states, valid_actions)
-        # Bypass conditions setter: avoids redundant shape/dtype/device
-        # validation since conditions are unchanged from the source states.
+        # Propagate conditions without re-validation (unchanged from source).
         if states._conditions is not None:
             new_states._conditions = states._conditions
         return new_states
@@ -527,8 +520,8 @@ class DiscreteEnv(Env, ABC):
         is_discrete: Class variable, whether the environment is discrete.
     """
 
-    s0: torch.Tensor  # this tells the type checker that s0 is a torch.Tensor
-    sf: torch.Tensor  # this tells the type checker that sf is a torch.Tensor
+    s0: torch.Tensor
+    sf: torch.Tensor
     is_discrete: bool = True
 
     def __init__(
@@ -556,40 +549,34 @@ class DiscreteEnv(Env, ABC):
             debug: If True, States created by this env will run runtime guards
                 (not torch.compile friendly). Keep False in compiled runs.
         """
-        # Add validation/warnings for advanced usage
-        if dummy_action is not None or exit_action is not None or sf is not None:
+        if debug and (
+            dummy_action is not None or exit_action is not None or sf is not None
+        ):
             import warnings
 
-            expert_parameters_used = []
-            if dummy_action is not None:
-                expert_parameters_used.append("dummy_action")
-            if exit_action is not None:
-                expert_parameters_used.append("exit_action")
-            if sf is not None:
-                expert_parameters_used.append("sf")
-
+            params = [
+                name
+                for name, val in [
+                    ("dummy_action", dummy_action),
+                    ("exit_action", exit_action),
+                    ("sf", sf),
+                ]
+                if val is not None
+            ]
             warnings.warn(
-                "You're using advanced parameters: ({}). "
-                "These are only needed for custom action handling. "
-                "For basic environments, you can omit these.".format(
-                    ", ".join(expert_parameters_used)
-                ),
+                f"Overriding DiscreteEnv defaults: {', '.join(params)}.",
                 UserWarning,
             )
 
-        # The default dummy action is -1.
         if dummy_action is None:
             dummy_action = torch.tensor([-1], device=s0.device)
 
-        # The default exit action index is the final element of the action space.
         if exit_action is None:
             exit_action = torch.tensor([n_actions - 1], device=s0.device)
 
         if isinstance(state_shape, int):
             state_shape = (state_shape,)
 
-        assert dummy_action is not None
-        assert exit_action is not None
         assert s0.shape == state_shape
         assert dummy_action.shape == (1,)
         assert exit_action.shape == (1,)
@@ -754,55 +741,104 @@ class DiscreteEnv(Env, ABC):
         new_states = cast(DiscreteStates, new_states)
         return new_states
 
+    @staticmethod
+    def _jsd(p: torch.Tensor, q: torch.Tensor) -> float:
+        """Jensen-Shannon divergence between two discrete distributions.
+
+        Uses the convention 0 * log(0 / x) = 0 via masking so that zero-
+        probability bins contribute nothing (no clamping, no mass distortion).
+
+        Args:
+            p: First distribution (1-D, sums to ~1).
+            q: Second distribution (1-D, sums to ~1).
+
+        Returns:
+            JSD in nats (base-e). Bounded in [0, ln(2)].
+        """
+        m = 0.5 * (p + q)
+
+        # KL(p || m): only sum over bins where p > 0 (m > 0 is guaranteed there).
+        p_pos = p > 0
+        kl_pm = (p[p_pos] * (p[p_pos] / m[p_pos]).log()).sum()
+
+        # KL(q || m): only sum over bins where q > 0.
+        q_pos = q > 0
+        kl_qm = (q[q_pos] * (q[q_pos] / m[q_pos]).log()).sum()
+
+        return (0.5 * (kl_pm + kl_qm)).item()
+
     def get_terminating_state_dist(self, states: DiscreteStates) -> torch.Tensor:
         """Computes the empirical distribution over terminating states.
 
-        This requires the environment to support enumeration APIs:
-        `get_terminating_states_indices` and `n_terminating_states`.
+        Uses vectorized ``scatter_add_`` for efficient histogram computation.
 
         Args:
-            states: A batch of terminating `DiscreteStates`.
+            states: A batch of terminating ``DiscreteStates``.
 
         Returns:
-            A 1D tensor of shape `(n_terminating_states,)` with empirical frequencies.
+            A 1D CPU tensor of shape ``(n_terminating_states,)`` with empirical
+            frequencies summing to 1.
+
+        Raises:
+            NotImplementedError: If the environment lacks
+                ``get_terminating_states_indices`` or ``n_terminating_states``.
+            ValueError: If *states* is empty.
         """
+        indices = self.get_terminating_states_indices(states)
+        n_bins = self.n_terminating_states
+
+        # Histogram on CPU to avoid allocating a potentially large (n_bins)
+        # tensor on GPU just to immediately .cpu() the result.
+        flat_indices = indices.reshape(-1).long().cpu()
+        n_samples = flat_indices.shape[0]
+
+        if n_samples == 0:
+            raise ValueError(
+                "No terminating states provided to compute empirical distribution."
+            )
+
+        counts = torch.zeros(n_bins, dtype=torch.get_default_dtype())
+        ones = torch.ones_like(flat_indices, dtype=torch.get_default_dtype())
+        counts.scatter_add_(0, flat_indices, ones)
+
+        return counts / n_samples
+
+    def _warn_if_insufficient_samples(self, n_validation_samples: int) -> None:
+        """Emit a warning if validation sample count is too low for the state space."""
         try:
-            states_indices = (
-                self.get_terminating_states_indices(states).cpu().numpy().tolist()
-            )
-        except NotImplementedError as e:
-            warnings.warn(
-                "Environment does not implement state enumeration required for\n"
-                "empirical distribution `get_terminating_states_indices`. Skipping.",
-                UserWarning,
-            )
-            raise e
+            n_ts = self.n_terminating_states
+        except NotImplementedError:
+            return  # n_terminating_states not available; skip check.
 
-        counter = Counter(str(idx) for idx in states_indices)
-        try:
-            counter_list = [
-                counter[str(state_idx)] if str(state_idx) in counter else 0
-                for state_idx in range(self.n_terminating_states)
-            ]
-        except NotImplementedError as e:
+        samples_per_state = n_validation_samples / n_ts
+        mode_info = ""
+        n_ms = getattr(self, "n_mode_states", None)
+        if callable(n_ms):
+            n_ms = n_ms  # property already resolved
+        if isinstance(n_ms, (int, float)) and n_ms > 0:
+            sparsity = n_ms / n_ts
+            mode_info = f" Mode sparsity: {n_ms}/{n_ts} = {sparsity:.4f}."
+        if samples_per_state < 1:
             warnings.warn(
-                "Environment does not implement state enumeration required for\n"
-                "empirical distribution `n_terminating_states`. Skipping.",
+                f"n_validation_samples={n_validation_samples} is less "
+                f"than n_terminating_states={n_ts} "
+                f"({samples_per_state:.2f} samples/state). Most states "
+                f"will have zero counts — L1 and JSD will be unreliable."
+                f"{mode_info} Recommend at least "
+                f"{10 * n_ts} samples.",
                 UserWarning,
+                stacklevel=3,
             )
-            raise e
-
-        denom = len(states_indices)
-        if denom == 0:
+        elif samples_per_state < 10:
             warnings.warn(
-                "No terminating states provided to compute empirical distribution.",
+                f"n_validation_samples={n_validation_samples} for "
+                f"n_terminating_states={n_ts} "
+                f"({samples_per_state:.1f} samples/state) may produce "
+                f"noisy validation metrics.{mode_info} Recommend at "
+                f"least {10 * n_ts} samples.",
                 UserWarning,
+                stacklevel=3,
             )
-            return torch.zeros(
-                (self.n_terminating_states,), dtype=torch.get_default_dtype()
-            )
-
-        return torch.tensor(counter_list, dtype=torch.get_default_dtype()) / denom
 
     def validate(
         self,
@@ -810,99 +846,152 @@ class DiscreteEnv(Env, ABC):
         n_validation_samples: int = 1000,
         visited_terminating_states: Optional[DiscreteStates] = None,
         validate_condition: torch.Tensor | None = None,
+        sampling_chunk_size: int = 5000,
+        check_sample_sufficiency: bool = True,
     ) -> Tuple[Dict[str, float], DiscreteStates | None]:
         """Evaluate a GFlowNet against this environment's true distribution.
 
-        Designed for environments with known target reward distributions. Computes
-        the L1 distance between the empirical distribution of sampled terminating
-        states and the environment's `true_dist`. If the GFlowNet has a learned
-        `logZ` and the environment implements `log_partition`, also reports the
-        absolute difference between learned and target `logZ`.
+        Always samples fresh from the current policy to produce an unbiased
+        estimate. Computes L1 distance and Jensen-Shannon divergence between
+        the empirical and true distributions. If the GFlowNet has a learned
+        ``logZ`` and the environment implements ``log_partition``, also reports
+        the absolute difference.
 
-        Returns an empty result with a user-facing warning when validation is not
-        applicable (e.g., missing enumeration APIs or `true_dist`).
+        Args:
+            gflownet: The GFlowNet to evaluate.
+            n_validation_samples: Number of fresh trajectories to sample.
+            visited_terminating_states: **Deprecated.** Ignored if passed; a
+                ``DeprecationWarning`` is emitted.
+            validate_condition: Optional condition tensor for conditional envs.
+            sampling_chunk_size: Max trajectories to sample at once (avoids OOM).
+            check_sample_sufficiency: If True, emits a one-time warning when
+                ``n_validation_samples`` is too small relative to the state
+                space. Set False to suppress.
+
+        Returns:
+            ``(metrics_dict, sampled_terminating_states)`` where
+            *metrics_dict* contains ``"l1_dist"``, ``"jsd"``, and optionally
+            ``"logZ_diff"``.
+
+        Raises:
+            ValueError: If ``true_dist`` is unavailable, ``n_validation_samples``
+                is non-positive, or enumeration APIs are missing.
         """
-        # Check availability of true distribution.
+        # --- Deprecation warning for visited_terminating_states ---
+        if visited_terminating_states is not None:
+            warnings.warn(
+                "The `visited_terminating_states` parameter is deprecated and "
+                "ignored. validate() now always samples fresh from the policy.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        # --- Validate preconditions ---
+        if n_validation_samples <= 0:
+            raise ValueError(
+                f"n_validation_samples must be > 0, got {n_validation_samples}"
+            )
+
+        # --- Sample sufficiency check (once per env instance) ---
+        if check_sample_sufficiency and not getattr(
+            self, "_sample_sufficiency_checked", False
+        ):
+            self._sample_sufficiency_checked = True  # type: ignore[attr-defined]
+            self._warn_if_insufficient_samples(n_validation_samples)
+
+        # --- Get true distribution ---
         try:
             true_dist = self.true_dist(validate_condition)
-            if isinstance(true_dist, torch.Tensor):
-                true_dist = true_dist.cpu()
-            else:
-                warnings.warn(
-                    "Environment `true_dist` is not a tensor; cannot validate.",
-                    UserWarning,
-                )
-                return {}, visited_terminating_states
-        except NotImplementedError:
-            warnings.warn(
-                "Environment does not implement `true_dist`; validation is skipped.",
-                UserWarning,
-            )
-            return {}, visited_terminating_states
+        except (NotImplementedError, AssertionError):
+            raise ValueError(
+                "Environment does not implement true_dist(); cannot validate. "
+                "Ensure store_all_states=True or implement true_dist()."
+            ) from None
 
-        # Attempt to retrieve true logZ if available.
+        if not isinstance(true_dist, torch.Tensor):
+            raise ValueError(
+                f"true_dist() returned {type(true_dist)}, expected torch.Tensor."
+            )
+        true_dist = true_dist.cpu()
+
+        # --- Fresh sampling with chunking ---
+        all_chunks: list[DiscreteStates] = []
+        remaining = n_validation_samples
+        while remaining > 0:
+            chunk_n = min(remaining, sampling_chunk_size)
+            chunk_states = gflownet.sample_terminating_states(self, chunk_n)
+            if not isinstance(chunk_states, DiscreteStates):
+                raise ValueError(
+                    f"sample_terminating_states returned {type(chunk_states)}, "
+                    f"expected DiscreteStates."
+                )
+            all_chunks.append(chunk_states)
+            remaining -= chunk_n
+
+        sampled_terminating_states = all_chunks[0]
+        for chunk in all_chunks[1:]:
+            sampled_terminating_states.extend(chunk)
+
+        # --- Compute empirical distribution ---
+        try:
+            empirical_dist = self.get_terminating_state_dist(sampled_terminating_states)
+        except NotImplementedError:
+            raise ValueError(
+                "Environment does not implement get_terminating_states_indices() "
+                "or n_terminating_states; cannot compute empirical distribution."
+            ) from None
+
+        # --- Shape validation ---
+        if empirical_dist.shape != true_dist.shape:
+            raise ValueError(
+                f"Shape mismatch: empirical_dist {empirical_dist.shape} vs "
+                f"true_dist {true_dist.shape}."
+            )
+
+        # --- Compute metrics ---
+        l1_dist = (empirical_dist - true_dist).abs().sum().item()
+        jsd = self._jsd(empirical_dist, true_dist)
+        validation_info: Dict[str, float] = {"l1_dist": l1_dist, "jsd": jsd}
+
+        # --- logZ comparison (best-effort) ---
+        self._add_logz_diff(validation_info, gflownet, validate_condition)
+
+        return validation_info, sampled_terminating_states
+
+    def _add_logz_diff(
+        self,
+        validation_info: Dict[str, float],
+        gflownet: "GFlowNet",
+        validate_condition: torch.Tensor | None,
+    ) -> None:
+        """Compute |learned_logZ - true_logZ| and add to validation_info."""
         true_logZ: float | None = None
         try:
             true_logZ = self.log_partition(validate_condition)
         except NotImplementedError:
-            true_logZ = None
+            return
 
-        # Determine which terminating states to use.
-        if visited_terminating_states is None:
-            if n_validation_samples <= 0:
-                warnings.warn(
-                    "n_validation_samples <= 0 and no visited states provided; nothing to validate.",
-                    UserWarning,
-                )
-                return {}, None
-            sampled_terminating_states = gflownet.sample_terminating_states(
-                self, n_validation_samples
-            )
-            assert isinstance(sampled_terminating_states, DiscreteStates)
-        else:
-            sampled_terminating_states = visited_terminating_states[
-                -n_validation_samples:
-            ]
-
-        # Compute empirical distribution; may require enumeration support.
-        try:
-            final_states_dist = self.get_terminating_state_dist(
-                sampled_terminating_states
-            )
-        except NotImplementedError:
-            # Already warned in helper; return gracefully.
-            return {}, sampled_terminating_states
-
-        if final_states_dist.numel() == 0:
-            warnings.warn(
-                "Empirical distribution is empty (no terminating samples).", UserWarning
-            )
-            return {}, sampled_terminating_states
-
-        l1_dist = (final_states_dist - true_dist).abs().sum().item()
-        validation_info: Dict[str, float] = {"l1_dist": l1_dist}
-
-        # Report logZ difference if both sides are available.
         learned_logZ: float | None = None
         if hasattr(gflownet, "logZ"):
             if isinstance(gflownet.logZ, torch.Tensor):
                 learned_logZ = float(gflownet.logZ.item())
             else:
-                # Lazy import avoids circular dependency with gfn.estimators.
                 from gfn.estimators import ScalarEstimator
 
                 if isinstance(gflownet.logZ, ScalarEstimator):
-                    assert validate_condition is not None
-                    learned_logZ = gflownet.logZ(validate_condition).item()
-                else:
-                    warnings.warn(
-                        f"Unsupported logZ type: {type(gflownet.logZ)}", UserWarning
-                    )
-                    learned_logZ = None
+                    if validate_condition is not None:
+                        learned_logZ = gflownet.logZ(validate_condition).item()
+                    else:
+                        warnings.warn(
+                            "gflownet.logZ is a ScalarEstimator but no "
+                            "validate_condition was provided; skipping logZ "
+                            "comparison.",
+                            UserWarning,
+                            stacklevel=3,
+                        )
+
         if learned_logZ is not None and true_logZ is not None:
             validation_info["logZ_diff"] = abs(learned_logZ - true_logZ)
-
-        return validation_info, sampled_terminating_states
 
     def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
         """Optional method to return the indices of the states in the environment.
@@ -1038,8 +1127,6 @@ class GraphEnv(Env):
         self.is_directed = is_directed
         self.debug = debug
 
-        assert s0.x is not None
-        assert sf.x is not None
         assert s0.x.shape[-1] == sf.x.shape[-1]
 
         self.States = self.make_states_class()
@@ -1058,8 +1145,9 @@ class GraphEnv(Env):
         Returns:
             The device of the initial graph state's node features.
         """
-        assert self.s0.x is not None
-        return self.s0.x.device
+        if self.debug:
+            assert self.s0.x is not None
+        return self.s0.x.device  # type: ignore[union-attr]
 
     def make_states_class(self) -> type[GraphStates]:
         """Returns the GraphStates class for this environment.

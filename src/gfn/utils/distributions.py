@@ -269,8 +269,12 @@ class IsotropicGaussian(Distribution):
             (
                 (
                     scale_squeezed.abs() < 1e-6
-                )  # Exit case for backward sampling, when using pinned Brownian motion
-                | (actions[..., 0].isinf())  # Exit case for forward sampling
+                )  # Deterministic transitions (e.g. Brownian bridge s1→s0 where std=0
+                #  naturally). By convention log_prob=0 for such transitions; the TB
+                #  loss cancels them between P_F and P_B.
+                | (
+                    actions[..., 0].isinf()
+                )  # Exit action sentinel (forward -inf actions)
             ),
             torch.zeros_like(scale_squeezed),
             -0.5
