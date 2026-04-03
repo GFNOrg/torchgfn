@@ -1,0 +1,52 @@
+# Placement file for Circuit Training
+# Source input file(s) : test_data/netlist_medium.pb.txt
+# This file : test_data/initial_medium.plc
+# Date : 2024-01-01 00:00:00
+# Columns : 8  Rows : 8
+# Width : 1000.000  Height : 1000.000
+# Area : 281200.0
+# Wirelength : 0.0
+# Wirelength cost : 0.0
+# Congestion cost : 0.0
+# Density cost : 0.0
+# Project : circuit_training
+# Block : medium_test
+# Routes per micron, hor : 70.33 ver : 74.51
+# Routes used by macros, hor : 51.79  ver : 51.79
+# Smoothing factor : 2
+# Overlap threshold : 0.004
+#
+# Counts of node types:
+# HARD_MACROs     :        15
+# HARD_MACRO_PINs :        30
+# MACROs          :        17
+# MACRO_PINs      :        34
+# PORTs           :         8
+# SOFT_MACROs     :         2
+# SOFT_MACRO_PINs :         4
+# STDCELLs        :         0
+#
+# node_index x y orientation fixed
+0 0 250 - 1
+1 0 750 - 1
+2 1000 250 - 1
+3 1000 750 - 1
+4 500 1000 - 1
+5 300 0 - 1
+6 700 0 - 1
+7 200 1000 - 1
+8 187 187 N 0
+9 437 187 N 0
+10 687 187 N 0
+11 187 437 N 0
+12 437 437 N 0
+13 687 437 N 0
+14 187 687 N 0
+15 437 687 N 0
+16 687 687 N 0
+17 875 187 N 0
+18 875 437 N 0
+19 875 687 N 0
+20 187 875 N 0
+21 437 875 N 0
+22 687 875 N 0

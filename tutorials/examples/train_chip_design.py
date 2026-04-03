@@ -80,8 +80,16 @@ def main(args):
         loss.backward()
         optimizer.step()
 
-        if (i + 1) % 100 == 0:
-            print(f"Iteration {i+1}, Loss: {loss.item()}")
+        if (i + 1) % args.log_every == 0:
+            with torch.no_grad():
+                states = gflownet.sample_terminating_states(env, n=args.batch_size)
+                assert isinstance(states, ChipDesignStates)
+                log_rewards = env.log_reward(states)
+                mean_cost = -log_rewards.mean().item()
+            print(
+                f"Iter {i+1} | Loss: {loss.item():.4f} | "
+                f"Mean cost: {mean_cost:.4f} | logZ: {gflownet.logZ.item():.4f}"  # type: ignore[operator]
+            )
 
     print("Training finished.")
     # Sample some final states and print them
@@ -108,5 +116,6 @@ if __name__ == "__main__":
         default=None,
         help='Path to .sif image for plc_wrapper_main, or "auto".',
     )
+    parser.add_argument("--log_every", type=int, default=100)
     args = parser.parse_args()
     main(args)

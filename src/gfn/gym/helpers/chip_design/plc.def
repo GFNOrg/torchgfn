@@ -1,0 +1,17 @@
+Bootstrap: docker
+From: ubuntu:20.04
+
+%post
+    apt-get update -qq && apt-get install -y -qq curl ca-certificates > /dev/null 2>&1
+    curl -fSL -o /usr/local/bin/plc_wrapper_main \
+        https://storage.googleapis.com/rl-infra-public/circuit-training/placement_cost/plc_wrapper_main_0.0.4
+    chmod 555 /usr/local/bin/plc_wrapper_main
+    apt-get remove -y curl && apt-get autoremove -y -qq > /dev/null 2>&1
+    rm -rf /var/lib/apt/lists/*
+
+%runscript
+    exec plc_wrapper_main "$@"
+
+%labels
+    Author torchgfn
+    Description PlacementCost wrapper for chip design GFlowNet environment

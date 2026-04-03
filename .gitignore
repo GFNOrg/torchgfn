@@ -184,6 +184,12 @@ wandb
 *.sh
 *.out
 
+# Chip design: allow setup/wrapper scripts, ignore downloaded binary and container
+!src/gfn/gym/helpers/chip_design/setup_plc.sh
+!src/gfn/gym/helpers/chip_design/run_plc_apptainer.sh
+src/gfn/gym/helpers/chip_design/plc_wrapper_main
+src/gfn/gym/helpers/chip_design/plc.sif
+
 scripts.py
 
 models/

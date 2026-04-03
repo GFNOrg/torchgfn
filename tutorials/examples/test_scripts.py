@@ -317,6 +317,7 @@ class ChipDesignArgs(CommonArgs):
     batch_size: int = 16
     seed: int = 4444
     lr: float = 1e-3
+    log_every: int = 10
     no_cuda: bool = True  # Disable CUDA for tests
 
 
@@ -815,7 +816,10 @@ def test_chip_design_smoke():
     args = ChipDesignArgs()
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
-    train_chip_design_main(namespace_args)  # Runs without errors.
+    try:
+        train_chip_design_main(namespace_args)  # Runs without errors.
+    except FileNotFoundError:
+        pytest.skip("plc_wrapper_main not available (Linux x86-64 only)")
 
 
 def test_bitsequence_recurrent_smoke():

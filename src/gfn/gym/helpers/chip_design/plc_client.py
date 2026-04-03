@@ -25,8 +25,8 @@ from typing import Any, Optional, Text
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PLC_WRAPPER = os.path.join(os.path.dirname(__file__), "plc_wrapper_main")
-DEFAULT_SIF_IMAGE = os.path.join(os.path.dirname(__file__), "plc_wrapper.sif")
+_PKG_DIR = os.path.dirname(__file__)
+DEFAULT_SIF_IMAGE = os.path.join(_PKG_DIR, "plc_wrapper.sif")
 
 
 def _find_singularity() -> Optional[str]:
@@ -38,6 +38,47 @@ def _find_singularity() -> Optional[str]:
     return None
 
 
+def _resolve_plc_binary() -> str:
+    """Resolves the plc_wrapper_main binary location.
+
+    Resolution order:
+      1. PLC_WRAPPER_MAIN environment variable
+      2. Native binary in package directory
+      3. Apptainer wrapper script in package directory
+    """
+    # 1. Explicit env var
+    env_path = os.environ.get("PLC_WRAPPER_MAIN")
+    if env_path:
+        if os.path.isfile(env_path) and os.access(env_path, os.X_OK):
+            return env_path
+        raise FileNotFoundError(
+            f"PLC_WRAPPER_MAIN={env_path} is not an executable file."
+        )
+
+    # 2. Native binary in package dir
+    native = os.path.join(_PKG_DIR, "plc_wrapper_main")
+    if os.path.isfile(native) and os.access(native, os.X_OK):
+        return native
+
+    # 3. Apptainer wrapper script + .sif image
+    wrapper = os.path.join(_PKG_DIR, "run_plc_apptainer.sh")
+    sif = os.path.join(_PKG_DIR, "plc.sif")
+    if (
+        os.path.isfile(wrapper)
+        and os.access(wrapper, os.X_OK)
+        and os.path.isfile(sif)
+    ):
+        if _find_singularity():
+            return wrapper
+
+    raise FileNotFoundError(
+        "plc_wrapper_main not found. Requires Linux x86-64. Set up with one of:\n"
+        "  Native:    cd src/gfn/gym/helpers/chip_design && ./setup_plc.sh\n"
+        "  HPC:       cd src/gfn/gym/helpers/chip_design && ./setup_plc.sh --container-only\n"
+        "  Explicit:  export PLC_WRAPPER_MAIN=/path/to/plc_wrapper_main"
+    )
+
+
 class PlacementCost:
     """PlacementCost object wrapper."""
 
@@ -47,7 +88,7 @@ class PlacementCost:
     def __init__(
         self,
         netlist_file: Text,
-        plc_wrapper_main: str = DEFAULT_PLC_WRAPPER,
+        plc_wrapper_main: str = "",
         macro_macro_x_spacing: float = 0.0,
         macro_macro_y_spacing: float = 0.0,
         singularity_image: Optional[str] = None,
@@ -59,7 +100,8 @@ class PlacementCost:
 
         Args:
           netlist_file: Path to the netlist proto text file.
-          plc_wrapper_main: Path to the plc_wrapper_main binary.
+          plc_wrapper_main: Path to the plc_wrapper_main binary or wrapper script.
+              If empty, auto-detects via _resolve_plc_binary().
           macro_macro_x_spacing: Macro-to-macro x spacing in microns.
           macro_macro_y_spacing: Macro-to-macro y spacing in microns.
           singularity_image: Path to a Singularity/Apptainer .sif image.
@@ -68,7 +110,7 @@ class PlacementCost:
             with this package (if it exists).
         """
         if not plc_wrapper_main:
-            raise ValueError("plc_wrapper_main should be specified.")
+            plc_wrapper_main = _resolve_plc_binary()
 
         if singularity_image == "auto":
             if os.path.isfile(DEFAULT_SIF_IMAGE):
