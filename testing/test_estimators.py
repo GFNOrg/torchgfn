@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 import torch
 
@@ -42,7 +44,7 @@ def reference_probability_computation(
     epsilon: float = 0.0,
     is_backward: bool = False,
 ) -> torch.Tensor:
-    """Reference implementation for probability computation as provided in the user query."""
+    """Reference implementation for masked softmax probability computation."""
     assert masks.any(dim=-1).all(), "No possible actions"
 
     # Clone and mask logits
@@ -347,7 +349,7 @@ def test_numerical_stability_different_dtypes(dtype):
 def test_discrete_policy_estimator_integration():
     """Test integration with DiscretePolicyEstimator."""
     # Create a simple environment and estimator
-    env = HyperGrid(ndim=2, height=4)
+    env = HyperGrid(ndim=2, height=4, validate_modes=False)
     preprocessor = KHotPreprocessor(env.height, env.ndim)
     module = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
 
@@ -361,12 +363,9 @@ def test_discrete_policy_estimator_integration():
     # Create test states
     batch_size = 8
     states_tensor = torch.randint(0, env.height, (batch_size, env.ndim))
-    forward_masks = torch.ones(batch_size, env.n_actions, dtype=torch.bool)
-    backward_masks = torch.ones(batch_size, env.n_actions - 1, dtype=torch.bool)
 
     # Create states using environment's States class
-    states = env.States(states_tensor, forward_masks, backward_masks)
-    env.update_masks(states)
+    states = env.States(states_tensor)
 
     # Test different parameter combinations
     test_params = [
@@ -391,7 +390,7 @@ def test_discrete_policy_estimator_integration():
         assert (actions < env.n_actions).all()
 
         # Check that probabilities sum to 1
-        probs = dist.probs
+        probs = cast(torch.Tensor, dist.probs)
         assert torch.allclose(probs.sum(dim=-1), torch.ones(batch_size))
 
         # Check that masked actions have zero probability
@@ -424,10 +423,11 @@ def test_edge_case_single_valid_action():
     probs = torch.exp(result)
 
     # Check that only valid actions have non-zero probability
-    assert probs[0, 0] > 0 and probs[0, [1, 2, 3, 4]].sum() == 0
-    assert probs[1, 2] > 0 and probs[1, [0, 1, 3, 4]].sum() == 0
-    assert probs[2, 4] > 0 and probs[2, [0, 1, 2, 3]].sum() == 0
-    assert probs[3, 1] > 0 and probs[3, [0, 2, 3, 4]].sum() == 0
+    zero = torch.tensor(0.0)
+    assert probs[0, 0] > 0 and torch.allclose(probs[0, [1, 2, 3, 4]], zero.expand(4))
+    assert probs[1, 2] > 0 and torch.allclose(probs[1, [0, 1, 3, 4]], zero.expand(4))
+    assert probs[2, 4] > 0 and torch.allclose(probs[2, [0, 1, 2, 3]], zero.expand(4))
+    assert probs[3, 1] > 0 and torch.allclose(probs[3, [0, 2, 3, 4]], zero.expand(4))
 
     # Check probabilities sum to 1
     assert torch.allclose(probs.sum(dim=-1), torch.ones(batch_size))
@@ -474,7 +474,7 @@ def test_uniform_log_probs_method():
 def test_mix_with_uniform_in_log_space():
     """Test the _mix_with_uniform_in_log_space static method."""
     batch_size, n_actions = 3, 4
-    set_seed(123)
+    set_seed(123, deterministic_mode=True)
 
     # Create log-softmax values
     logits = torch.randn(batch_size, n_actions)

@@ -27,27 +27,33 @@ This script also provides a function `get_exact_P_T` that computes the exact ter
 distribution for the HyperGrid environment, which is useful for evaluation and visualization.
 """
 
-import datetime
+import logging
 import os
-import signal
-import sys
-import threading
+import random
 import time
 from argparse import ArgumentParser
-from dataclasses import dataclass
+from itertools import combinations
 from math import ceil
-from typing import Callable, List, Optional, cast
+from typing import Optional, Tuple, cast
 
 import matplotlib.pyplot as plt
+import mpi4py.MPI as MPI
+import numpy as np
 import torch
 import torch.distributed as dist
 from matplotlib.gridspec import GridSpec
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.profiler import ProfilerActivity, profile
 from tqdm import trange
+from tutorials.examples.multinode.spawn_policy import (
+    AsyncSelectiveAveragingPolicy,
+    AsyncSelectiveAveragingPolicympi4pyFast,
+    AsyncSelectiveAveragingPolicympi4pyGeneral,
+    AverageAllPolicy,
+    AverageAllPolicympi4py,
+)
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
-from gfn.containers.replay_buffer_manager import ReplayBufferManager
+from gfn.containers.replay_buffer_manager import ContainerUnion, ReplayBufferManager
 from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
@@ -61,551 +67,278 @@ from gfn.gflownet import (
 from gfn.gym import HyperGrid
 from gfn.preprocessors import KHotPreprocessor
 from gfn.states import DiscreteStates
-from gfn.utils.common import set_seed
+from gfn.utils.common import Timer, set_seed
+from gfn.utils.distributed import DistributedContext, initialize_distributed_compute
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
-from gfn.utils.training import validate
-from tutorials.examples.multinode.hypergrid_diversity_score import (
-    HypergridDiversityScore,
-)
-from tutorials.examples.multinode.spawn_policy import (
-    AsyncSelectiveAveragingPolicy,
-    AverageAllPolicy,
-)
 
-r"""
-Helper class for timing code execution blocks and accumulating elapsed time in a dictionary.
-
-This class is designed to be used as a context manager to measure the execution time of code blocks.
-Upon entering the context, it records the start time, and upon exiting, it adds the elapsed time to a
-specified key in a provided timing dictionary. This is useful for profiling and tracking the time spent
-in different parts of a program, such as during training loops or data processing steps.
-
-    timing_dict (dict): A dictionary where timing results will be accumulated.
-    key (str): The key in the timing_dict under which to accumulate elapsed time.
-
-Example:
-    for name in ["step1", "step2"]:
-        timing[name] = 0
-
-    with Timer(timing, "step1"):
-        # Code block to time
-        do_something()
-
-    print(f"Elapsed time for step1: {timing['step1']} seconds")
-"""
+logger = logging.getLogger(__name__)
 
 
-class Timer:
-    def __init__(self, timing_dict, key, enabled=True):
-        self.timing_dict = timing_dict
-        self.key = key
-        self.enabled = enabled
-        self.elapsed = None
+def build_mode_discovery_figure(
+    env: HyperGrid,
+    discovered_indices: set[int],
+):
+    """Build a matplotlib figure showing discovered vs undiscovered mode states.
 
-    def __enter__(self):
-        if self.enabled:
-            self.start = time.perf_counter()
-        return self
+    Projects mode states onto 2D planes of the first min(ndim, 3) dimensions.
+    For ndim=1, shows a single row; for ndim=2, a single 2D heatmap; for
+    ndim>=3, three pairwise projections of the first 3 dimensions.
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.enabled:
-            self.elapsed = time.perf_counter() - self.start
-            if self.key not in self.timing_dict:
-                self.timing_dict[self.key] = []
-            self.timing_dict[self.key].append(self.elapsed)
-        else:
-            self.elapsed = 0.0
+    Color coding:
+      - Light gray: no mode state at this position
+      - Red: mode state(s) exist but none discovered
+      - Green: at least one mode state discovered
 
+    Returns None if ``env.all_states`` is unavailable.
+    """
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+    from matplotlib.patches import Patch
 
-r"""
-Reports load imbalance and timing information from a timing dictionary.
-    param all_timing_dict: A list of dictionaries containing timing information for each rank.
-        all_timing_dict structure: [rank0_dict, rank1_dict, ...]
-        where each rank_dict is: {"step_name": [iter0_time, iter1_time, iter2_time, ...], ...}
+    all_states = env.all_states
+    if all_states is None:
+        return None
 
-    param world_size: The total number of ranks in the distributed setup.
-"""
+    mask = env.mode_mask(all_states)
+    n_mode = int(mask.sum().item())
+    if n_mode == 0:
+        return None
 
+    mode_coords = all_states.tensor[mask].cpu().numpy()  # (n_mode, ndim)
+    mode_idx = env.get_states_indices(all_states)[mask].cpu()
+    is_disc = np.array([int(idx.item()) in discovered_indices for idx in mode_idx])
+    n_discovered = int(is_disc.sum())
+    h = env.height
 
-def report_load_imbalance(all_timing_dict, world_size):
+    cmap = ListedColormap(["#f0f0f0", "#e74c3c", "#2ecc71"])
+    norm = BoundaryNorm([0, 0.5, 1.5, 2.5], cmap.N)
 
-    # Header
-    print(f"{'Step Name':<25} {'Useful Work':>12} {'Waiting':>12}")
-    print("-" * 80)
+    n_viz = min(env.ndim, 3)
 
-    for step, times in all_timing_dict[0].items():
-        if type(times) is not list:
-            times = [times]  # Ensure times is a list
-
-        curr_step_times = {}
-        isValidKey = True  # Time information for some steps are not present in all ranks. Those are skipped.
-        for rank in range(world_size):
-            curr_dict = all_timing_dict[rank]
-            if step in curr_dict:
-                curr_step_times[rank] = curr_dict[step]
-            else:
-                isValidKey = False
-                break
-        if not isValidKey:
-            print(f"Time for Step - '{step}' not found in all ranks, skipping...")
-            continue
-
-        # Calculate the timing profile for the step.
-        useful_work = []
-        waiting_times = []
-
-        for iteration in range(len(times)):
-            rank_times = [curr_step_times[rank][iteration] for rank in curr_step_times]
-            max_time = max(rank_times)
-            useful_time = sum(rank_times) / len(rank_times)
-            waiting_time = max_time - useful_time
-
-            useful_work.append(useful_time)
-            waiting_times.append(waiting_time)
-
-        total_useful = sum(useful_work)
-        total_waiting = sum(waiting_times)
-
-        print(f"{step:<25} {total_useful:>10.4f}s {total_waiting:>10.4f}s")
-
-
-def report_time_info(all_timing_dict, world_size):
-    overall_timing = {}
-    print("Timing information for each rank:")
-    for rank in range(world_size):
-        print(f"Rank {rank} timing information:")
-        for step, times in all_timing_dict[rank].items():
-            if type(times) is not list:
-                times = [times]  # Ensure times is a list
-
-            avg_time = sum(times) / len(times)
-            sum_time = sum(times)
-            print(f"  {step}: {avg_time:.4f} seconds (total: {sum_time:.4f} seconds)")
-
-            if overall_timing.get(step) is None:
-                overall_timing[step] = [sum_time]
-            else:
-                overall_timing[step].append(sum_time)
-
-    print("\nMaximum timing information:")
-    for step, times in overall_timing.items():
-        print(f"  {step}: {max(times):.4f} seconds")
-
-    print("\nAverage timing information:")
-    for step, times in overall_timing.items():
-        print(f"  {step}: {sum(times) / len(times):.4f} seconds")
-
-
-def report_timing(all_timing_dict, world_size):
-    """Prints the timing information from the timing dictionary."""
-
-    # uncomment if you need rank level timing information.
-    # report_time_info(all_timing_dict, world_size)
-
-    # print("Load Imbalance (LI) is as follows:")
-    report_load_imbalance(all_timing_dict, world_size)
-
-
-def average_gradients(model):
-    """All-Reduce gradients across all models."""
-    size = float(dist.get_world_size())
-    for param in model.parameters():
-        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
-        param.grad.data /= size
-
-
-def average_models(model, training_group=None):
-    """Averages model weights across all ranks."""
-    world_size = float(dist.get_world_size())
-    for param in model.parameters():
-        param_tensor = param.data.clone()  # clone to avoid inplace operations
-        dist.all_reduce(param_tensor, op=dist.ReduceOp.SUM, group=training_group)
-        param.data = param_tensor / world_size
-
-
-@dataclass
-class DistributedContext:
-    """Holds all distributed training/replay buffer groups and ranks."""
-
-    my_rank: int
-    world_size: int
-    num_training_ranks: int
-    agent_group_size: int
-    agent_groups: Optional[List[dist.ProcessGroup]] = None
-    agent_group_id: Optional[int] = None
-    train_global_group: Optional[dist.ProcessGroup] = None
-    assigned_buffer: Optional[int] = None
-    buffer_group: Optional[dist.ProcessGroup] = None
-    assigned_training_ranks: Optional[List[int]] = None
-
-    def is_buffer_rank(self) -> bool:
-        """Check if the current rank is part of the buffer group."""
-        return self.my_rank >= self.num_training_ranks
-
-    def is_training_rank(self) -> bool:
-        """Check if the current rank is part of the training group."""
-        return self.my_rank < self.num_training_ranks
-
-
-def initialize_distributed_compute() -> DistributedContext:
-    """Initalizes distributed compute using either ccl or mpi backends."""
-    # global my_rank  # TODO: remove globals?
-    # global my_size  # TODO: remove globals?
-
-    pmi_size = int(os.environ.get("PMI_SIZE", "0"))  # 0 or 1 default value?
-    print("+ Initalizing distributed compute, PMI_SIZE={}".format(pmi_size))
-
-    if pmi_size <= 1:
-        print("+ PMI_SIZE <= 1, running in single process mode.")
-        return DistributedContext(
-            my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
+    if n_viz < 2:
+        # 1D: single horizontal strip.
+        fig, ax = plt.subplots(1, 1, figsize=(max(4, h // 4), 1.5))
+        grid = np.zeros(h, dtype=np.float32)
+        x = mode_coords[:, 0].astype(int)
+        np.maximum.at(grid, x, 1.0)
+        if is_disc.any():
+            np.maximum.at(grid, x[is_disc], 2.0)
+        ax.imshow(
+            grid[np.newaxis, :],
+            cmap=cmap,
+            norm=norm,
+            aspect="auto",
+            interpolation="nearest",
         )
-
-    if args.dist_backend == "ccl":
-        print("+ CCL backend requested...")
-        try:
-            # Note - intel must be imported before oneccl!
-            import oneccl_bindings_for_pytorch  # noqa: F401
-        except ImportError as e:
-            raise Exception("import oneccl_bindings_for_pytorch failed, {}".format(e))
-
-    elif args.dist_backend == "mpi":
-        print("+ MPI backend requested...")
-        assert torch.distributed.is_mpi_available()
-        try:
-            import torch_mpi  # noqa: F401
-        except ImportError as e:
-            raise Exception("import torch_mpi failed, {}".format(e))
-
-    elif args.dist_backend == "gloo":
-        print("+ Gloo backend requested...")
-        assert torch.distributed.is_gloo_available()
-
+        ax.set_xlabel("dim 0")
+        ax.set_yticks([])
     else:
-        raise Exception(f"Invalid backend requested: {args.dist_backend}")
+        pairs = list(combinations(range(n_viz), 2))
+        n_plots = len(pairs)
+        fig, axes = plt.subplots(1, n_plots, figsize=(4 * n_plots + 1, 4))
+        if n_plots == 1:
+            axes = [axes]
 
-    os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
-    os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
+        for ax, (di, dj) in zip(axes, pairs):
+            grid = np.zeros((h, h), dtype=np.float32)
+            xi = mode_coords[:, di].astype(int)
+            yj = mode_coords[:, dj].astype(int)
+            # Mark all mode positions as undiscovered (1).
+            np.maximum.at(grid, (yj, xi), 1.0)
+            # Overwrite discovered positions (2).
+            if is_disc.any():
+                np.maximum.at(grid, (yj[is_disc], xi[is_disc]), 2.0)
+            ax.imshow(
+                grid,
+                cmap=cmap,
+                norm=norm,
+                origin="lower",
+                interpolation="nearest",
+            )
+            ax.set_xlabel(f"dim {di}")
+            ax.set_ylabel(f"dim {dj}")
 
-    print("+ OMP_NUM_THREADS = ", os.getenv("OMP_NUM_THREADS"))
-
-    world_size = os.environ.get("WORLD_SIZE")
-    if world_size is None:
-        raise ValueError("WORLD_SIZE is not set")
-    rank = os.environ.get("RANK")
-    if rank is None:
-        raise ValueError("RANK is not set")
-
-    dist.init_process_group(
-        backend=args.dist_backend,
-        init_method="env://",
-        world_size=int(world_size),
-        rank=int(rank),
-        timeout=datetime.timedelta(minutes=5),
-    )
-
-    dist.barrier()
-    print("+ Distributed compute initialized, backend = {}".format(args.dist_backend))
-
-    my_rank = dist.get_rank()  # Global!
-    world_size = dist.get_world_size()  # Global!
-
-    num_training_ranks = world_size - args.num_remote_buffers
-
-    assert (
-        num_training_ranks >= args.num_remote_buffers
-    )  # make sure that we have atmost 1 remote buffer per training rank.
-    print("num_train = ", num_training_ranks)
-    print("args.num_remote_buffers = ", args.num_remote_buffers)
-
-    # for now, let us enforce that each agent gets equal number of ranks.
-    # TODO: later, we can relax this condition.
-    assert num_training_ranks % args.num_agent_groups == 0
-    agent_group_size = num_training_ranks // args.num_agent_groups
-    agent_group_rank_list = [
-        list(range(i * agent_group_size, (i + 1) * agent_group_size))
-        for i in range(args.num_agent_groups)
+    pct = 100 * n_discovered / n_mode if n_mode > 0 else 0
+    fig.suptitle(f"Modes: {n_discovered}/{n_mode} ({pct:.1f}%)", fontsize=10)
+    legend_elements = [
+        Patch(facecolor="#e74c3c", label="undiscovered"),
+        Patch(facecolor="#2ecc71", label="discovered"),
     ]
-    print(f"Agent group ranks: {agent_group_rank_list}")
-    agent_group_list = [
-        cast(
-            dist.ProcessGroup,
-            dist.new_group(
-                agent_group_rank_list[i],
-                backend=args.dist_backend,
-                timeout=datetime.timedelta(minutes=5),
-            ),
-        )
-        for i in range(args.num_agent_groups)
-    ]
-
-    # all training ranks in one global group
-    training_ranks = [
-        r for r in range(num_training_ranks)
-    ]  # e.g., 0..num_training_ranks-1
-    train_global_group = dist.new_group(
-        ranks=training_ranks,
-        backend=args.dist_backend,
-        timeout=datetime.timedelta(minutes=5),
-    )
-
-    buffer_group = None
-    assigned_buffer = None
-    assigned_training_ranks = {}
-    if args.num_remote_buffers > 0:
-        buffer_ranks = list(
-            range(num_training_ranks, num_training_ranks + args.num_remote_buffers)
-        )
-        buffer_group = dist.new_group(
-            buffer_ranks,
-            backend=args.dist_backend,
-            timeout=datetime.timedelta(minutes=5),
-        )
-        print(f"Buffer group ranks: {buffer_ranks}")
-
-        # Each training rank gets assigned to a buffer rank
-
-        if my_rank < (num_training_ranks):
-            assigned_buffer = num_training_ranks + (my_rank % args.num_remote_buffers)
-        else:
-            assigned_training_ranks[my_rank] = [
-                ranks
-                for ranks in range(num_training_ranks)
-                if (ranks % args.num_remote_buffers) == (my_rank - num_training_ranks)
-            ]
-
-        print(f"+ My rank: {my_rank} size: {world_size}")
-        if my_rank < (num_training_ranks):
-            print(f"  -> Training group, assigned buffer rank = {assigned_buffer}")
-        else:
-            print("  -> Buffer group")
-
-    dist.barrier()
-    print("+ Distributed compute initialized, rank = ", my_rank)
-
-    return DistributedContext(
-        my_rank=my_rank,
-        world_size=world_size,
-        num_training_ranks=num_training_ranks,
-        agent_group_size=agent_group_size,
-        agent_groups=agent_group_list,
-        agent_group_id=my_rank // agent_group_size,
-        train_global_group=train_global_group,
-        assigned_buffer=assigned_buffer,
-        buffer_group=buffer_group,
-        assigned_training_ranks=assigned_training_ranks.get(my_rank, None),
-    )
+    fig.legend(handles=legend_elements, loc="lower right", fontsize=8)
+    fig.tight_layout()
+    return fig
 
 
-class DistributedErrorHandler:
+class ModesReplayBufferManager(ReplayBufferManager):
     def __init__(
         self,
-        device: torch.device,
+        env: HyperGrid,
         rank: int,
-        world_size: int,
-        error_check_interval: float = 1.0,
-        cleanup_callback: Optional[Callable] = None,
+        num_training_ranks: int,
+        diverse_replay_buffer: bool = False,
+        capacity: int = 10000,
+        remote_manager_rank: int | None = None,
+        # Scoring config
+        w_retained: float = 1.0,
+        w_novelty: float = 0.1,
+        w_reward: float = 1.0,
+        w_mode_bonus: float = 10.0,
+        p_norm_novelty: float = 2.0,
+        cdist_max_bytes: int = 268435456,
+        ema_decay: float = 0.5,
     ):
-        """
-        Initialize error handler for distributed training.
-
-        Args:
-            device: String representing the current device.
-            rank: Current process rank
-            world_size: Total number of processes
-            error_check_interval: How often to check for errors (in seconds)
-            cleanup_callback: Optional function to call before shutdown
-        """
-        self.device = device
-        self.rank = rank
-        self.world_size = world_size
-        self.error_check_interval = error_check_interval
-        self.cleanup_callback = cleanup_callback
-        self.shutdown_flag = threading.Event()
-        self.error_tensor = torch.zeros(1, dtype=torch.uint8, device=self.device)
-
-        # Set up error checking thread
-        self.checker_thread = threading.Thread(target=self._error_checker, daemon=True)
-
-        # Register signal handlers
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
-
-    def start(self):
-        """Start error checking thread"""
-        self.checker_thread.start()
-
-    def _signal_handler(self, signum, frame):
-        """Handle external signals"""
-        print(f"Process {self.rank} received signal {signum}")
-        self.shutdown_flag.set()
-        self._cleanup()
-        sys.exit(1)
-
-    def _error_checker(self):
-        """Periodically check for errors across all processes"""
-        while not self.shutdown_flag.is_set():
-            try:
-                # Use all_reduce to check if any process has errored
-                error_count = torch.zeros_like(self.error_tensor)
-                dist.all_reduce(error_count, op=dist.ReduceOp.SUM)
-
-                if error_count.item() > 0:
-                    print(f"Process {self.rank}: Detected error in another process")
-                    self.shutdown_flag.set()
-                    self._cleanup()
-                    sys.exit(1)
-
-            except Exception as e:
-                print("Process {}: Error in error checker: {}".format(self.rank, e))
-                self.signal_error()
-                break
-
-            time.sleep(self.error_check_interval)
-
-    def signal_error(self):
-        """Signal that this process has encountered an error"""
-        try:
-            self.error_tensor.fill_(1)
-            dist.all_reduce(self.error_tensor, op=dist.ReduceOp.SUM)
-        except Exception as e:
-            print(f"Process {self.rank}: Error in signal_error: {str(e)}")
-            pass  # If this fails, processes will eventually timeout
-
-        self.shutdown_flag.set()
-        self._cleanup()
-        sys.exit(1)
-
-    def _cleanup(self):
-        """Perform cleanup before shutdown"""
-        if self.cleanup_callback:
-            try:
-                self.cleanup_callback()
-            except Exception as e:
-                print(f"Process {self.rank}: Error in cleanup: {str(e)}")
-
-        try:
-            dist.destroy_process_group()
-        except Exception as e:
-            print(f"Process {self.rank}: Error in destroy_process_group: {str(e)}")
-
-
-def gather_distributed_data(
-    local_tensor: torch.Tensor,
-    world_size: int | None = None,
-    rank: int | None = None,
-    verbose: bool = False,
-    training_group: dist.ProcessGroup | None = None,
-) -> torch.Tensor | None:
-    """
-    Gather data from all processes in a distributed setting.
-
-    Args:
-        local_data: Data from the current process (List or Tensor)
-        world_size: Number of processes (optional, will get from env if None)
-        rank: Current process rank (optional, will get from env if None)
-
-    Returns:
-        On rank 0: Concatenated tensor from all processes
-        On other ranks: None
-    """
-    if verbose:
-        print("syncing distributed data")
-
-    if world_size is None:
-        world_size = dist.get_world_size()
-    if rank is None:
-        rank = dist.get_rank()
-
-    # Add type assertions to help the type checker
-    assert isinstance(world_size, int), "world_size must be an integer"
-    assert isinstance(rank, int), "rank must be an integer"
-
-    # First gather batch_sizes to allocate correct buffer sizes.
-    local_batch_size = torch.tensor(
-        [local_tensor.shape[0]], device=local_tensor.device, dtype=local_tensor.dtype
-    )
-    if rank == 0:
-        # Assumes same dimensionality on all ranks!
-        batch_size_list = [
-            torch.zeros((1,), device=local_tensor.device, dtype=local_tensor.dtype)
-            for _ in range(world_size)
-        ]
-    else:
-        batch_size_list = None
-
-    if verbose:
-        print("rank={}, batch_size_list={}".format(rank, batch_size_list))
-        print(
-            "+ gather of local_batch_size={} to batch_size_list".format(local_batch_size)
+        super().__init__(
+            env,
+            rank,
+            num_training_ranks,
+            scoring_function=self.scoring_function,
+            diverse_replay_buffer=diverse_replay_buffer,
+            capacity=capacity,
+            remote_manager_rank=remote_manager_rank,
         )
-    dist.gather(
-        local_batch_size, gather_list=batch_size_list, dst=0, group=training_group
-    )
-    dist.barrier(group=training_group)  # Add synchronization
+        self.discovered_modes = set()
+        self.env = env
+        self._ema_decay: float = float(ema_decay)
+        self._score_ema: Optional[float] = None
+        # Scoring configuration parameters.
+        self.w_retained = w_retained
+        self.w_novelty = w_novelty
+        self.w_reward = w_reward
+        self.w_mode_bonus = w_mode_bonus
+        self.p_norm_novelty = p_norm_novelty
+        self.cdist_max_bytes = cdist_max_bytes
 
-    # Pad local tensor to maximum size.
-    if verbose:
-        print("+ padding local tensor")
+    def scoring_function(self, obj: ContainerUnion) -> dict[str, float]:
 
-    if rank == 0:
-        assert batch_size_list is not None
-        max_batch_size = max([bs.item() for bs in batch_size_list])
-    else:
-        max_batch_size = 0
+        # print("Score - Computing score for object:", obj)
+        # print("Score - Terminating states:", obj.terminating_states)
+        # print("Score - Log rewards:", obj.log_rewards)
 
-    state_size = local_tensor.shape[1]  # assume states are 1-d, is true for this env.
+        # A) Retention (usefulness)
+        if not self.replay_buffer.prioritized_capacity:
+            retained_count = 0
 
-    # Broadcast max_size to all processes for padding
-    max_batch_size_tensor = torch.tensor(max_batch_size, device=local_tensor.device)
-    dist.broadcast(max_batch_size_tensor, src=0, group=training_group)
+        # If the buffer is empty, retain all the new objects.
+        if self.replay_buffer.training_container is None:
+            retained_count = len(obj)
 
-    # Pad local tensor to maximum size.
-    if local_tensor.shape[0] < max_batch_size:
-        padding = torch.zeros(
-            (int(max_batch_size - local_tensor.shape[0]), state_size),
-            dtype=local_tensor.dtype,
-            device=local_tensor.device,
-        )
-        local_tensor = torch.cat((local_tensor, padding), dim=0)
+        # If the buffer isn't full yet, we retain all the new objects.
+        elif (
+            len(self.replay_buffer.training_container) + len(obj)
+            <= self.replay_buffer.capacity
+        ):
+            retained_count = len(obj)
 
-    # Gather padded tensors.
-    if rank == 0:
-        tensor_list = [
-            torch.zeros(
-                (int(max_batch_size), state_size),
-                dtype=local_tensor.dtype,
-                device=local_tensor.device,
+        # If the buffer is full, we keep the high reward items only.
+        elif self.replay_buffer.prioritized_capacity:
+            assert self.replay_buffer.training_container.log_rewards is not None
+            assert obj.log_rewards is not None
+
+            # The old log_rewards are already sorted in ascending order.
+            old_log_rewards = self.replay_buffer.training_container.log_rewards
+
+            threshold = old_log_rewards.min()
+            new_log_rewards = obj.log_rewards
+            retained_new_log_rewards = new_log_rewards[new_log_rewards >= threshold]
+            retained_count = len(retained_new_log_rewards)
+
+        logger.debug("Score - Retained count: %s", retained_count)
+
+        # B) Novelty (sum of min-distances vs pre-add buffer). Higher min-distances are better.
+        if (
+            self.replay_buffer.training_container is None
+            or len(self.replay_buffer.training_container) == 0
+        ):
+            novelty_sum = float(len(obj))  # Placeholder value when the buffer is empty.
+
+        else:
+            # Compute the batch x buffer distances of the terminating states.
+            batch = obj.terminating_states.tensor.to(torch.get_default_dtype())
+            buf = self.replay_buffer.training_container.terminating_states.tensor.to(
+                torch.get_default_dtype()
             )
-            for _ in range(world_size)
-        ]
-    else:
-        tensor_list = None
 
-    if verbose:
-        print("+ gathering all tensors from world_size={}".format(world_size))
-        print("rank={}, tensor_list={}".format(rank, tensor_list))
-    dist.gather(local_tensor, gather_list=tensor_list, dst=0, group=training_group)
-    dist.barrier(group=training_group)  # Add synchronization
+            m_ = batch.shape[0]
+            n_ = buf.shape[0]
 
-    # Only rank 0 processes the results
-    if rank == 0:
-        results = []
-        assert tensor_list is not None
-        assert batch_size_list is not None
-        for tensor, batch_size in zip(tensor_list, batch_size_list):
-            trimmed_tensor = tensor[: batch_size.item(), ...]
-            results.append(trimmed_tensor)
+            batch = batch.view(m_, -1)
+            buf = buf.view(n_, -1)
 
-        if verbose:
-            print("distributed n_results={}".format(len(results)))
+            # Compute the chunk size based on the max bytes per chunk.
+            bytes_per = 8 if batch.dtype == torch.float64 else 4
+            chunk = max(
+                1,
+                int(self.cdist_max_bytes // max(1, (m_ * bytes_per))),
+            )
+            min_dist = torch.full(
+                (m_,),
+                torch.finfo(batch.dtype).max,
+                dtype=batch.dtype,
+                device=batch.device,
+            )
+            for start in range(0, n_, chunk):
+                end = min(start + chunk, n_)
 
-        for r in results:
-            print("    {}".format(r.shape))
+                # Loop over chunks of the buffer to compute batch x buffer distances.
+                distances = torch.cdist(
+                    batch,
+                    buf[start:end],
+                    p=self.p_norm_novelty,
+                )
+                min_dist = torch.minimum(min_dist, distances.min(dim=1).values)
 
-        return torch.cat(results, dim=0)  # Concatenates along the batch dimension.
+            # Sum the minimum batch x buffer distances for each batch element.
+            novelty_sum = float(min_dist.sum().item())
+            logger.debug("Score - Min distances: %s", min_dist)
 
-    return None  # For all non-zero ranks.
+        logger.debug("Score - Novelty sum: %s", novelty_sum)
+
+        # C) High reward term (sum over batch)
+        assert (
+            obj.log_rewards is not None
+        ), "log_rewards is None in submitted trajectories!"
+        reward_sum = float(obj.log_rewards.exp().sum().item())
+        logger.debug("Score - Reward sum: %s", reward_sum)
+
+        # D) Mode bonus
+        logger.debug("Score - Modes discovered before update: %s", self.discovered_modes)
+
+        n_new_modes = 0.0
+        assert isinstance(obj.terminating_states, DiscreteStates)
+        modes_found = self.env.modes_found(obj.terminating_states)
+        if isinstance(modes_found, set):
+            new_modes = modes_found - self.discovered_modes
+            if new_modes:
+                n_new_modes = float(len(new_modes))
+                self.discovered_modes.update(new_modes)
+
+        logger.debug("Score - New modes found: %s", n_new_modes)
+        logger.debug("Score - Modes discovered after update: %s", self.discovered_modes)
+
+        # Compute the final score.
+        final_score = self.w_retained * float(retained_count)
+        final_score += self.w_novelty * novelty_sum
+        final_score += self.w_reward * reward_sum
+        final_score += self.w_mode_bonus * n_new_modes
+        logger.debug("Score - Final score: %s", final_score)
+        # Update and return EMA of the score
+        if self._score_ema is None:
+            self._score_ema = final_score
+        else:
+            self._score_ema = self._ema_decay * self._score_ema + (
+                1.0 - self._ema_decay
+            ) * float(final_score)
+        logger.debug("Score - EMA score: %s", self._score_ema)
+        return {
+            "score": float(self._score_ema),
+            "score_before_ema": final_score,
+            "retained_count": retained_count,
+            "novelty_sum": novelty_sum,
+            "reward_sum": reward_sum,
+            "n_new_modes": n_new_modes,
+        }
+
+    def _compute_metadata(self) -> dict:
+        return {"n_modes_found": len(self.discovered_modes)}
 
 
 def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
@@ -682,56 +415,62 @@ def get_exact_P_T(env: HyperGrid, gflownet: GFlowNet) -> torch.Tensor:
     return (u * probabilities[..., -1]).detach().cpu()
 
 
-def validate_hypergrid(
-    env,
-    gflownet,
-    n_validation_samples,
-    visited_terminating_states: DiscreteStates | None,
-    discovered_modes,
-):
-    # Standard validation shared across envs.
-    validation_info, visited_terminating_states = validate(
-        env,
-        gflownet,
-        n_validation_samples,
-        visited_terminating_states,
-    )
+def _sample_new_strategy(args, rng: random.Random) -> dict:
+    """Sample a new exploration strategy by independently sampling each parameter.
 
-    # Modes will have a reward greater than R2+R1+R0.
-    mode_reward_threshold = sum(
+    Each parameter (epsilon, temperature, n_noisy_layers) is sampled from a
+    normal distribution with mean and std specified in args. Values are clamped
+    to valid ranges.
+
+    Args:
+        args: Argument namespace containing mean/std for each parameter:
+            - epsilon, strategy_epsilon_std
+            - temperature, strategy_temperature_std
+            - n_noisy_layers, strategy_n_noisy_layers_std
+            - strategy_noisy_std_init (optional, default 0.5)
+        rng: Random number generator instance to use for sampling.
+
+    Returns:
+        A dict with keys: name, epsilon, temperature, n_noisy_layers, noisy_std_init.
+    """
+    # Get mean/std from args with sensible defaults.
+    eps_mean = float(getattr(args, "epsilon", 0.1))
+    eps_std = float(getattr(args, "strategy_epsilon_std", 0.05))
+    temp_mean = float(getattr(args, "temperature", 1.5))
+    temp_std = float(getattr(args, "strategy_temperature_std", 0.5))
+    noisy_mean = float(getattr(args, "n_noisy_layers", 1.0))
+    noisy_std = float(getattr(args, "strategy_n_noisy_layers_std", 1.0))
+    noisy_std_init = float(getattr(args, "noisy_std_init", 0.5))
+
+    # Sample from normal distribution and clamp to valid ranges.
+    epsilon = max(0.0, rng.gauss(eps_mean, eps_std))
+    temperature = max(0.01, rng.gauss(temp_mean, temp_std))  # temperature > 0
+    n_noisy_layers = max(0, round(rng.gauss(noisy_mean, noisy_std)))
+
+    # Build a descriptive name for the strategy.
+    name = f"eps_{epsilon:.3f}_temp_{temperature:.3f}_noisy_{n_noisy_layers}"
+
+    return {
+        "name": name,
+        "epsilon": epsilon,
+        "temperature": temperature,
+        "n_noisy_layers": n_noisy_layers,
+        "noisy_std_init": noisy_std_init,
+    }
+
+
+def _make_optimizer_for(gflownet, args) -> torch.optim.Optimizer:
+    """Build a fresh AdamW optimizer for a (re)built GFlowNet with logZ group."""
+    named = dict(gflownet.named_parameters())
+    non_logz = [v for k, v in named.items() if k != "logZ"]
+    logz = [named["logZ"]] if "logZ" in named else []
+
+    return torch.optim.AdamW(
         [
-            env.reward_fn_kwargs["R2"],
-            env.reward_fn_kwargs["R1"],
-            env.reward_fn_kwargs["R0"],
+            {"params": non_logz, "lr": args.lr, "weight_decay": args.weight_decay},
+            {"params": logz, "lr": args.lr_Z, "weight_decay": 0.0},
         ]
     )
-
-    assert isinstance(visited_terminating_states, DiscreteStates)
-    modes = visited_terminating_states[
-        env.reward(visited_terminating_states) >= mode_reward_threshold
-    ].tensor
-
-    # Finds all the unique modes in visited_terminating_states.
-    modes_found = set([tuple(s.tolist()) for s in modes])
-    discovered_modes.update(modes_found)
-    # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
-    validation_info["n_modes_found"] = len(discovered_modes)
-
-    # Old way of counting modes -- potentially buggy - to be removed.
-    # # Add the mode counting metric.
-    # states, scale = visited_terminating_states.tensor, env.scale_factor
-    # normalized_states = ((states * scale) - (scale / 2) * (env.height - 1)).abs()
-
-    # modes = torch.all(
-    #     (normalized_states > (0.3 * scale) * (env.height - 1))
-    #     & (normalized_states <= (0.4 * scale) * (env.height - 1)),
-    #     dim=-1,
-    # )
-    # modes_found = set([tuple(s.tolist()) for s in states[modes.bool()]])
-    # discovered_modes.update(modes_found)
-    # validation_info["n_modes_found"] = len(discovered_modes)
-
-    return validation_info, visited_terminating_states, discovered_modes
 
 
 def set_up_fm_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
@@ -746,9 +485,6 @@ def set_up_fm_gflownet(args, env, preprocessor, agent_group_list, my_agent_group
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
         )
-
-    if args.distributed:
-        module = DDP(module, process_group=agent_group_list[my_agent_group_id])
 
     estimator = DiscretePolicyEstimator(
         module=module,
@@ -767,13 +503,18 @@ def set_up_pb_pf_estimators(
         if not args.uniform_pb:
             pb_module = Tabular(n_states=env.n_states, output_dim=env.n_actions - 1)
     else:
+        # Forward module: honor per-agent noisy layers for exploration diversity.
         pf_module = MLP(
             input_dim=preprocessor.output_dim,
             output_dim=env.n_actions,
             hidden_dim=args.hidden_dim,
             n_hidden_layers=args.n_hidden,
+            n_noisy_layers=getattr(args, "agent_n_noisy_layers", 0),
+            std_init=getattr(args, "agent_noisy_std_init", 0.5),
         )
         if not args.uniform_pb:
+            # Backward module: if sharing trunk (tied), PB may only add at most one
+            # noisy layer (its output) to remain compatible with the shared trunk.
             pb_module = MLP(
                 input_dim=preprocessor.output_dim,
                 output_dim=env.n_actions - 1,
@@ -784,16 +525,16 @@ def set_up_pb_pf_estimators(
                     if args.tied and isinstance(pf_module.trunk, torch.nn.Module)
                     else None
                 ),
+                n_noisy_layers=(
+                    1 if getattr(args, "agent_n_noisy_layers", 0) > 0 else 0
+                ),
+                std_init=getattr(args, "agent_noisy_std_init", 0.5),
             )
     if args.uniform_pb:
         pb_module = DiscreteUniform(env.n_actions - 1)
 
     for v in ["pf_module", "pb_module"]:
         assert locals()[v] is not None, f"{v} is None, Args: {args}"
-
-    if args.distributed:
-        pf_module = DDP(pf_module, process_group=agent_group_list[my_agent_group_id])
-        pb_module = DDP(pb_module, process_group=agent_group_list[my_agent_group_id])
 
     assert pf_module is not None
     assert pb_module is not None
@@ -831,27 +572,45 @@ def set_up_logF_estimator(
             ),
         )
 
-    if args.distributed:
-        module = DDP(module, process_group=agent_group_list[my_agent_group_id])
-
     return ScalarEstimator(module=module, preprocessor=preprocessor)
 
 
-def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id):
+def set_up_gflownet(
+    args, env, preprocessor, agent_group_list, my_agent_group_id, strategy_rng
+):
     """Returns a GFlowNet complete with the required estimators."""
+    # Initialize per-agent exploration strategy.
+    # Default (tests stable): on-policy, no noisy layers.
+    # When --use_random_strategies is provided, sample a random initial strategy.
+    if getattr(args, "use_random_strategies", False):
+        cfg = _sample_new_strategy(args, strategy_rng)
+    else:
+        cfg = {
+            "epsilon": args.epsilon,
+            "temperature": args.temperature,
+            "n_noisy_layers": args.n_noisy_layers,
+            "noisy_std_init": args.noisy_std_init,
+        }
+
+    args.agent_epsilon = float(cfg.get("epsilon", 0.0))
+    args.agent_temperature = float(cfg.get("temperature", 1.0))
+    args.agent_n_noisy_layers = int(cfg.get("n_noisy_layers", 0))
+    args.agent_noisy_std_init = float(cfg.get("noisy_std_init", 0.5))
+
     #    Depending on the loss, we may need several estimators:
     #       one (forward only) for FM loss,
     #       two (forward and backward) or other losses
     #       three (forward, backward, logZ/logF) estimators for DB, TB.
 
     if args.loss == "FM":
-        return set_up_fm_gflownet(
+        gflownet = set_up_fm_gflownet(
             args,
             env,
             preprocessor,
             agent_group_list,
             my_agent_group_id,
         )
+        return gflownet, cfg
     else:
         # We need a DiscretePFEstimator and a DiscretePBEstimator.
         pf_estimator, pb_estimator = set_up_pb_pf_estimators(
@@ -865,13 +624,13 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
         assert pb_estimator is not None
 
         if args.loss == "ModifiedDB":
-            return ModifiedDBGFlowNet(pf_estimator, pb_estimator)
+            return ModifiedDBGFlowNet(pf_estimator, pb_estimator), cfg
 
         elif args.loss == "TB":
-            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
+            return TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0), cfg
 
         elif args.loss == "ZVar":
-            return LogPartitionVarianceGFlowNet(pf=pf_estimator, pb=pb_estimator)
+            return LogPartitionVarianceGFlowNet(pf=pf_estimator, pb=pb_estimator), cfg
 
         elif args.loss in ("DB", "SubTB"):
             # We also need a LogStateFlowEstimator.
@@ -885,22 +644,24 @@ def set_up_gflownet(args, env, preprocessor, agent_group_list, my_agent_group_id
             )
 
             if args.loss == "DB":
-                return DBGFlowNet(
+                gflownet = DBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
                 )
+                return gflownet, cfg
             elif args.loss == "SubTB":
-                return SubTBGFlowNet(
+                gflownet = SubTBGFlowNet(
                     pf=pf_estimator,
                     pb=pb_estimator,
                     logF=logF_estimator,
                     weighting=args.subTB_weighting,
                     lamda=args.subTB_lambda,
                 )
+                return gflownet, cfg
 
 
-def plot_results(env, gflownet, l1_distances, validation_steps):
+def plot_results(env, gflownet, l1_distances, args):
     # Create figure with 3 subplots with proper spacing
     fig = plt.figure(figsize=(15, 5))
     gs = GridSpec(1, 4, width_ratios=[1, 1, 0.1, 1.2])
@@ -911,8 +672,12 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     ax3 = fig.add_subplot(gs[3])
 
     # Get distributions and find global min/max for consistent color scaling
-    true_dist = env.true_dist.reshape(args.height, args.height).cpu().numpy()
-    learned_dist = get_exact_P_T(env, gflownet).reshape(args.height, args.height).numpy()
+    true_dist = env.true_dist()
+    assert isinstance(true_dist, torch.Tensor)
+    true_dist = true_dist.reshape(args.height, args.height).cpu().numpy()
+    learned_dist = (
+        get_exact_P_T(env, gflownet).reshape(args.height, args.height).cpu().numpy()
+    )
 
     # Ensure consistent orientation by transposing
     true_dist = true_dist.T
@@ -960,13 +725,13 @@ def plot_results(env, gflownet, l1_distances, validation_steps):
     plt.close()
 
 
-def main(args):  # noqa: C901
+def main(args) -> dict:  # noqa: C901
     """Trains a GFlowNet on the Hypergrid Environment, potentially distributed."""
 
     if args.half_precision:
         torch.set_default_dtype(torch.bfloat16)
 
-    print("+ Using default dtype: ", torch.get_default_dtype())
+    logger.info("Using default dtype: %s", torch.get_default_dtype())
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
@@ -981,43 +746,22 @@ def main(args):  # noqa: C901
 
     # Initialize distributed compute.
     if args.distributed:
-        distributed_context = initialize_distributed_compute()
+        distributed_context = initialize_distributed_compute(
+            dist_backend=args.dist_backend,
+            num_remote_buffers=args.num_remote_buffers,
+            num_agent_groups=args.num_agent_groups,
+        )
 
-        print(f"Running with DDP with following settings: {distributed_context}")
+        logger.info(
+            "Running distributed with following settings: %s", distributed_context
+        )
     else:
         distributed_context = DistributedContext(
             my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
         )
 
     set_seed(args.seed + distributed_context.my_rank)
-
-    if args.distributed and distributed_context.is_buffer_rank():
-        if distributed_context.assigned_training_ranks is None:
-            num_training_ranks = 0
-        else:
-            num_training_ranks = len(distributed_context.assigned_training_ranks)
-
-        scoring_function = HypergridDiversityScore(args.ndim, args.height)
-
-        replay_buffer_manager = ReplayBufferManager(
-            rank=distributed_context.my_rank,
-            num_training_ranks=num_training_ranks,
-            scoring_function=scoring_function,
-        )
-        replay_buffer_manager.run()
-        return 0.0
-
-    # Initialize WandB.
-    use_wandb = args.wandb_project != ""
-    if use_wandb:
-        if args.wandb_local:
-            os.environ["WANDB_MODE"] = "offline"
-
-        import wandb
-
-        if distributed_context.my_rank == 0:
-            wandb.init(project=args.wandb_project)
-            wandb.config.update(args)
+    strategy_rng = random.Random(args.seed + distributed_context.my_rank)
 
     # Initialize the environment.
     env = HyperGrid(
@@ -1030,22 +774,105 @@ def main(args):  # noqa: C901
             "R1": args.R1,
             "R2": args.R2,
         },
-        calculate_partition=args.calculate_partition,
-        store_all_states=args.store_all_states,
+        calculate_partition=args.validate_environment,
+        store_all_states=args.validate_environment,
+        debug=__debug__,
     )
+
+    if args.distributed and distributed_context.is_buffer_rank():
+        if distributed_context.assigned_training_ranks is None:
+            num_training_ranks = 0
+        else:
+            num_training_ranks = len(distributed_context.assigned_training_ranks)
+
+        replay_buffer_manager = ModesReplayBufferManager(
+            env=env,
+            rank=distributed_context.my_rank,
+            num_training_ranks=num_training_ranks,
+            diverse_replay_buffer=args.diverse_replay_buffer,
+            capacity=args.global_replay_buffer_size,
+        )  # TODO: If the remote_manager_rank is set, does this produce an infinite loop?
+        replay_buffer_manager.run()
+        return {}
+
+    # Initialize WandB.
+    use_wandb = args.wandb_project != ""
+    if use_wandb:
+        if args.wandb_local:
+            os.environ["WANDB_MODE"] = "offline"
+
+        import wandb
+
+        # Generate shared group name for wandb across all processes
+        group_name = None
+        if args.distributed:
+            # Use the training group and perform in-place broadcasts
+            pg = distributed_context.train_global_group
+            is_root = distributed_context.my_rank == 0
+
+            if is_root:
+                group_name = f"{wandb.util.generate_id()}_{distributed_context.num_training_ranks}"
+                group_name_bytes = group_name.encode("utf-8")
+                group_name_len_tensor = torch.tensor(
+                    [len(group_name_bytes)], dtype=torch.long
+                )
+            else:
+                group_name_bytes = None
+                group_name_len_tensor = torch.zeros(1, dtype=torch.long)
+
+            # Broadcast the length
+            dist.broadcast(group_name_len_tensor, src=0, group=pg)
+            group_name_len = int(group_name_len_tensor.item())
+
+            # Broadcast the payload
+            if is_root:
+                assert group_name_bytes is not None
+                payload = torch.tensor(list(group_name_bytes), dtype=torch.uint8)
+            else:
+                payload = torch.empty(group_name_len, dtype=torch.uint8)
+
+            dist.broadcast(payload, src=0, group=pg)
+            group_name = bytes(payload.tolist()).decode("utf-8")
+        else:
+            group_name = wandb.util.generate_id()
+
+        wandb.init(
+            project=args.wandb_project,
+            group=group_name,
+            entity=args.wandb_entity,
+            config=vars(args),
+        )
 
     # Initialize the preprocessor.
     preprocessor = KHotPreprocessor(height=args.height, ndim=args.ndim)
+    model_builder_count = 0
 
-    # 2. Create the gflownets: need pairs of modules and estimators.
-    gflownet = set_up_gflownet(
-        args,
-        env,
-        preprocessor,
-        distributed_context.agent_groups,
-        distributed_context.agent_group_id,
-    )
-    assert gflownet is not None, f"gflownet is None, Args: {args}"
+    # Builder closure to create a fresh model + optimizer (used by spawn policy as well)
+    def _model_builder() -> Tuple[GFlowNet, torch.optim.Optimizer]:
+        nonlocal model_builder_count, use_wandb
+        model_builder_count += 1
+
+        model, cfg = set_up_gflownet(
+            args,
+            env,
+            preprocessor,
+            distributed_context.agent_groups,
+            distributed_context.agent_group_id,
+            strategy_rng,
+        )
+        if use_wandb:
+            import wandb
+
+            wandb.log({"model_builder_count": model_builder_count, **cfg})
+        else:
+            logger.info("Model builder count: %d", model_builder_count)
+        assert model is not None
+        model = model.to(device)
+        optim = _make_optimizer_for(model, args)
+        return model, optim
+
+    # Build the initial model and optimizer
+    gflownet, optimizer = _model_builder()
 
     # Create replay buffer if needed
     replay_buffer = None
@@ -1057,6 +884,8 @@ def main(args):  # noqa: C901
                 capacity=args.replay_buffer_size,
                 cutoff_distance=args.cutoff_distance,
                 p_norm_distance=args.p_norm_distance,
+                remote_manager_rank=distributed_context.assigned_buffer,
+                remote_buffer_freq=1,
             )
         else:
             replay_buffer = ReplayBuffer(
@@ -1064,37 +893,23 @@ def main(args):  # noqa: C901
                 capacity=args.replay_buffer_size,
                 prioritized_capacity=False,
                 remote_manager_rank=distributed_context.assigned_buffer,
-                remote_buffer_freq=1,
+                remote_buffer_freq=args.remote_buffer_freq,
             )
 
     gflownet = gflownet.to(device)
 
-    # 3. Create the optimizer
-    non_logz_params = [
-        v for k, v in dict(gflownet.named_parameters()).items() if k != "logZ"
-    ]
-    if "logZ" in dict(gflownet.named_parameters()):
-        logz_params = [dict(gflownet.named_parameters())["logZ"]]
-    else:
-        logz_params = []
-
-    params = [
-        {"params": non_logz_params, "lr": args.lr},
-        # Log Z gets dedicated learning rate (typically higher).
-        {"params": logz_params, "lr": args.lr_Z},
-    ]
-    optimizer = torch.optim.Adam(params)
-
-    states_visited = 0
     n_iterations = ceil(args.n_trajectories / args.batch_size)
-    per_node_batch_size = args.batch_size // distributed_context.world_size
-    validation_info = {"l1_dist": float("inf")}
-    discovered_modes = set()
-    # n_pixels_per_mode = round(env.height / 10) ** env.ndim
-    is_on_policy = args.replay_buffer_size == 0
+    assert args.batch_size % distributed_context.num_training_ranks == 0, (
+        f"batch_size ({args.batch_size}) must be divisible by "
+        f"num_training_ranks ({distributed_context.num_training_ranks})"
+    )
+    per_node_batch_size = args.batch_size // distributed_context.num_training_ranks
+    modes_found = set()
+    local_modes_found = set()
+    # Note: on/off-policy depends on the current strategy; recomputed inside the loop.
 
-    print("+ n_iterations = ", n_iterations)
-    print("+ per_node_batch_size = ", per_node_batch_size)
+    logger.info("n_iterations = %d", n_iterations)
+    logger.info("per_node_batch_size = %d", per_node_batch_size)
 
     # Initialize the profiler.
     if args.profile:
@@ -1108,23 +923,6 @@ def main(args):  # noqa: C901
             with_stack=True,
         )
         prof.start()
-
-    if args.distributed:
-        # Create and start error handler.
-        def cleanup():
-            print(f"Process {rank}: Cleaning up...")
-
-        rank = torch.distributed.get_rank()
-        torch.distributed.get_world_size()
-
-        # TODO: remove this or fix it - it's buggy.
-        # handler = DistributedErrorHandler(
-        #     device_str,
-        #     rank,
-        #     world_size,
-        #     cleanup_callback=cleanup,
-        # )
-        # handler.start()
 
     # Initialize some variables before the training loop.
     timing = {}
@@ -1142,17 +940,69 @@ def main(args):  # noqa: C901
             dist.barrier(group=distributed_context.train_global_group)
 
     # Set up averaging policy (called every iteration; internal guard checks cadence/distributed)
-    averaging_policy = None
+    averaging_policy_torch = None
+    averaging_policy_mpi4py = None
+
     if args.distributed:
         if args.use_selective_averaging:
-            averaging_policy = AsyncSelectiveAveragingPolicy(
-                average_every=args.average_every,
-                replacement_ratio=args.replacement_ratio,
-                averaging_strategy=args.averaging_strategy,
-                momentum=args.momentum,
-            )
+            if args.spawn_backend == "dist":
+                averaging_policy_torch = AsyncSelectiveAveragingPolicy(  # type: ignore[abstract]
+                    model_builder=_model_builder,
+                    average_every=args.average_every,
+                    replacement_ratio=args.replacement_ratio,
+                    averaging_strategy=args.averaging_strategy,
+                    momentum=args.momentum,
+                    threshold=args.performance_tracker_threshold,
+                    cooldown=args.performance_tracker_cooldown,
+                )
+            elif args.spawn_backend == "mpi4py":
+                mpi4py_train_group = (
+                    distributed_context.dc_mpi4py.train_global_group
+                    if distributed_context.dc_mpi4py is not None
+                    else MPI.COMM_WORLD
+                )
+                if args.mpi_sa_mode == "general":
+                    averaging_policy_mpi4py = AsyncSelectiveAveragingPolicympi4pyGeneral(  # type: ignore[abstract]
+                        model_builder=_model_builder,
+                        model=gflownet,
+                        average_every=args.average_every,
+                        threshold_metric=args.performance_tracker_threshold,
+                        replacement_ratio=args.replacement_ratio,
+                        averaging_strategy=args.averaging_strategy,
+                        momentum=args.momentum,
+                        age_range=args.age_range,
+                        replacement_mode=args.mpi_replacement_mode,
+                        group=mpi4py_train_group,
+                    )
+                elif args.mpi_sa_mode == "fast":
+                    averaging_policy_mpi4py = AsyncSelectiveAveragingPolicympi4pyFast(  # type: ignore[abstract]
+                        model_builder=_model_builder,
+                        model=gflownet,
+                        average_every=args.average_every,
+                        threshold_metric=args.performance_tracker_threshold,
+                        replacement_ratio=args.replacement_ratio,
+                        averaging_strategy=args.averaging_strategy,
+                        momentum=args.momentum,
+                        age_range=args.age_range,
+                        replacement_mode=args.mpi_replacement_mode,
+                        group=mpi4py_train_group,
+                    )
+                else:
+                    raise ValueError(f"Invalid MPI SA mode: {args.mpi_sa_mode}")
         else:
-            averaging_policy = AverageAllPolicy(average_every=args.average_every)
+            if args.spawn_backend == "dist":
+                averaging_policy_torch = AverageAllPolicy(
+                    average_every=args.average_every
+                )
+            elif args.spawn_backend == "mpi4py":
+                averaging_policy_mpi4py = AverageAllPolicympi4py(
+                    average_every=args.average_every
+                )
+
+    # Accumulators for averaging score_dict between log intervals.
+    score_dict_accum: dict[str, float] = {}
+    score_dict_count = 0
+    to_log = {}
 
     # Training loop.
     pbar = trange(n_iterations)
@@ -1171,13 +1021,24 @@ def main(args):  # noqa: C901
                 if iteration >= 1 + 1 + keep_active:
                     break
 
+        # Restarts are handled by selective averaging policy via spawn; no-op here.
+
         # Sample trajectories.
         with Timer(timing, "generate_samples", enabled=args.timing) as sample_timer:
+            # Determine on-policy for this iteration based on current strategy.
+            is_on_policy_iter = (
+                (args.replay_buffer_size == 0)
+                and (float(getattr(args, "agent_epsilon", 0.0)) == 0.0)
+                and (float(getattr(args, "agent_temperature", 1.0)) == 1.0)
+                and (int(getattr(args, "agent_n_noisy_layers", 0)) == 0)
+            )
             trajectories = gflownet.sample_trajectories(
                 env,
-                n=args.batch_size,
-                save_logprobs=is_on_policy,  # Can be re-used if on-policy.
-                save_estimator_outputs=not is_on_policy,  # Only used if off-policy.
+                n=per_node_batch_size,
+                save_logprobs=is_on_policy_iter,  # Reuse on-policy log-probs.
+                save_estimator_outputs=not is_on_policy_iter,  # Off-policy caches estimator outputs.
+                epsilon=float(getattr(args, "agent_epsilon", 0.0)),
+                temperature=float(getattr(args, "agent_temperature", 1.0)),
             )
 
         # Training objects (incl. possible replay buffer sampling).
@@ -1186,12 +1047,18 @@ def main(args):  # noqa: C901
         ) as to_train_samples_timer:
             training_samples = gflownet.to_training_samples(trajectories)
 
+            score_dict = None
             if replay_buffer is not None:
                 with torch.no_grad():
-                    replay_buffer.add(training_samples)
+                    score_dict = replay_buffer.add(training_samples)
                     training_objects = replay_buffer.sample(
                         n_samples=per_node_batch_size
                     )
+                # Accumulate score_dict values for averaging.
+                if score_dict is not None:
+                    for key, value in score_dict.items():
+                        score_dict_accum[key] = score_dict_accum.get(key, 0.0) + value
+                    score_dict_count += 1
             else:
                 training_objects = training_samples
 
@@ -1199,17 +1066,19 @@ def main(args):  # noqa: C901
         with Timer(timing, "calculate_loss", enabled=args.timing) as loss_timer:
 
             optimizer.zero_grad()
-            gflownet = cast(GFlowNet, gflownet)
+            # Recompute whether we are off-policy for loss logprob recalculation.
+            is_on_policy_iter = (
+                (args.replay_buffer_size == 0)
+                and (float(getattr(args, "agent_epsilon", 0.0)) == 0.0)
+                and (float(getattr(args, "agent_temperature", 1.0)) == 1.0)
+                and (int(getattr(args, "agent_n_noisy_layers", 0)) == 0)
+            )
             loss = gflownet.loss(
                 env,
                 training_objects,  # type: ignore
-                recalculate_all_logprobs=args.replay_buffer_size > 0,
-                reduction="sum" if args.distributed or args.loss == "SubTB" else "mean",  # type: ignore
+                recalculate_all_logprobs=(not is_on_policy_iter),
+                reduction="sum" if args.loss == "SubTB" else "mean",  # type: ignore
             )
-
-            # Normalize the loss by the local batch size if distributed.
-            if args.distributed:
-                loss = loss / (per_node_batch_size)
 
         # Barrier.
         with Timer(
@@ -1234,14 +1103,34 @@ def main(args):  # noqa: C901
                 dist.barrier(group=distributed_context.train_global_group)
 
         # Model averaging.
+        averaging_info = {}
         with Timer(
             timing, "averaging_model", enabled=args.timing
         ) as model_averaging_timer:
-            if averaging_policy is not None:
-                averaging_policy(
-                    iteration=iteration, model=gflownet, local_metric=-loss.item()
-                )
 
+            if averaging_policy_torch is not None:
+                assert args.spawn_backend == "dist"
+                gflownet, optimizer, averaging_info = averaging_policy_torch(
+                    iteration=iteration,
+                    model=gflownet,
+                    optimizer=optimizer,
+                    local_metric=(
+                        score_dict["score"] if score_dict is not None else -loss.item()
+                    ),
+                    group=distributed_context.train_global_group,
+                )
+            elif averaging_policy_mpi4py is not None:
+                assert args.spawn_backend == "mpi4py"
+                assert distributed_context.dc_mpi4py is not None
+                gflownet, optimizer, averaging_info = averaging_policy_mpi4py(
+                    iteration=iteration,
+                    model=gflownet,
+                    optimizer=optimizer,
+                    local_metric=(
+                        score_dict["score"] if score_dict is not None else -loss.item()
+                    ),
+                    group=distributed_context.dc_mpi4py.train_global_group,
+                )
         # Calculate how long this iteration took.
         iteration_time = time.time() - iteration_start
         rest_time = iteration_time - sum(
@@ -1270,98 +1159,89 @@ def main(args):  # noqa: C901
         visited_terminating_states.extend(
             cast(DiscreteStates, trajectories.terminating_states)
         )
-
-        with Timer(timing, "gather_visited_states", enabled=args.timing):
-            # If distributed, gather all visited terminating states from all nodes.
-            if args.distributed and log_this_iter:
-                try:
-                    assert visited_terminating_states is not None
-                    # Gather all visited terminating states from all nodes.
-                    gathered_visited_terminating_states = gather_distributed_data(
-                        visited_terminating_states.tensor,
-                        training_group=distributed_context.train_global_group,
-                        world_size=distributed_context.num_training_ranks,
-                    )
-                except Exception as e:
-                    print(
-                        "Process {}: Caught error: {}".format(
-                            distributed_context.my_rank, e
-                        )
-                    )
-                    # handler.signal_error()
-                    sys.exit(1)
-            else:
-                # Just use the visited terminating states from this node.
-                assert visited_terminating_states is not None
-                gathered_visited_terminating_states = visited_terminating_states.tensor
+        iter_modes_found = env.modes_found(
+            cast(DiscreteStates, trajectories.terminating_states)
+        )
+        new_local_modes = iter_modes_found - local_modes_found
+        if new_local_modes:
+            local_modes_found.update(new_local_modes)
 
         # If we are on the master node, calculate the validation metrics.
-        with Timer(timing, "validation", enabled=args.timing):
-            if distributed_context.my_rank == 0:
+        assert visited_terminating_states is not None
+        all_visited_terminating_states.extend(visited_terminating_states)
+        to_log = {
+            "loss": loss.item(),
+            "sample_time": sample_timer.elapsed,
+            "to_train_samples_time": to_train_samples_timer.elapsed,
+            "loss_time": loss_timer.elapsed,
+            "loss_backward_time": loss_backward_timer.elapsed,
+            "opt_time": opt_timer.elapsed,
+            "model_averaging_time": model_averaging_timer.elapsed,
+            "rest_time": rest_time,
+            "l1_dist": None,  # only logged if calculate_partition.
+        }
+        to_log.update(averaging_info)
+        local_n_modes_found = len(local_modes_found)
+        to_log["local_n_modes_found"] = local_n_modes_found
+        n_total = env.n_modes
+        if n_total:
+            to_log["local_mode_coverage"] = local_n_modes_found / n_total
 
-                # Extend `all_visited_terminating_states` with the gathered data.
-                assert gathered_visited_terminating_states is not None
-                gathered_visited_terminating_states = cast(
-                    DiscreteStates, env.States(gathered_visited_terminating_states)
-                )
-                states_visited += len(gathered_visited_terminating_states)
-                all_visited_terminating_states.extend(
-                    gathered_visited_terminating_states
-                )
-
-                to_log = {
-                    "loss": loss.item(),
-                    "states_visited": states_visited,
-                    "sample_time": sample_timer.elapsed,
-                    "to_train_samples_time": to_train_samples_timer.elapsed,
-                    "loss_time": loss_timer.elapsed,
-                    "loss_backward_time": loss_backward_timer.elapsed,
-                    "opt_time": opt_timer.elapsed,
-                    "model_averaging_time": model_averaging_timer.elapsed,
-                    "rest_time": rest_time,
-                    "l1_dist": None,  # only logged if calculate_partition.
+        if log_this_iter:
+            if score_dict_count > 0:
+                score_dict_avg = {
+                    key: value / score_dict_count
+                    for key, value in score_dict_accum.items()
                 }
+                to_log.update(score_dict_avg)
+                score_dict_accum.clear()
+                score_dict_count = 0
 
-                if use_wandb:
-                    wandb.log(to_log, step=iteration)
-
-                if log_this_iter:
-                    (
-                        validation_info,
-                        all_visited_terminating_states,
-                        discovered_modes,
-                    ) = validate_hypergrid(
-                        env,
+            if args.validate_environment:
+                with Timer(timing, "validation", enabled=args.timing):
+                    validation_info, _ = env.validate(
                         gflownet,
                         args.validation_samples,
-                        all_visited_terminating_states,
-                        discovered_modes,
                     )
-
-                    print(
-                        "all_visited_terminating_states = ",
-                        len(all_visited_terminating_states),
-                    )
-                    print(
-                        "visited_terminating_states = ", len(visited_terminating_states)
-                    )
-
-                    if use_wandb:
-                        wandb.log(validation_info, step=iteration)
-
                     to_log.update(validation_info)
+
+            with Timer(timing, "log", enabled=args.timing):
+                if distributed_context.my_rank == 0:
+                    if args.distributed:
+                        manager_rank = distributed_context.assigned_buffer
+                        assert manager_rank is not None
+                        metadata = ReplayBufferManager.get_metadata(manager_rank)
+                        to_log.update(metadata)
+                    else:
+                        modes_found.update(
+                            env.modes_found(all_visited_terminating_states)
+                        )
+                        n_modes_found = len(modes_found)
+                        to_log["n_modes_found"] = n_modes_found
 
                     pbar.set_postfix(
                         loss=to_log["loss"],
                         l1_dist=to_log["l1_dist"],  # only logged if calculate_partition.
-                        n_modes_found=to_log["n_modes_found"],
+                        n_modes_found=to_log.get("n_modes_found", local_n_modes_found),
                     )
 
-        with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
-            if args.distributed and args.timing:
-                dist.barrier(group=distributed_context.train_global_group)
+                if use_wandb:
+                    fig = build_mode_discovery_figure(env, local_modes_found)
+                    if fig is not None:
+                        to_log["mode_discovery_map"] = wandb.Image(fig)
+                        plt.close(fig)
+                    wandb.log(to_log, step=iteration)
 
-    print("+ Finished all iterations")
+        with Timer(timing, "barrier 2", enabled=(args.timing and args.distributed)):
+            if (
+                args.distributed
+                and args.timing
+                and distributed_context.dc_mpi4py is not None
+            ):
+                t_comm = distributed_context.dc_mpi4py.train_global_group
+                t_comm.Barrier()
+
+    logger.info("Finished all iterations")
     total_time = time.time() - time_start
     if args.timing:
         timing["total_rest_time"] = [total_time - sum(sum(v) for k, v in timing.items())]
@@ -1370,38 +1250,42 @@ def main(args):  # noqa: C901
 
     if args.distributed:
         dist.barrier(group=distributed_context.train_global_group)
-        assert averaging_policy is not None
         try:
-            averaging_policy.shutdown()
+            if args.spawn_backend == "dist":
+                assert averaging_policy_torch is not None
+                averaging_policy_torch.shutdown()
+            elif args.spawn_backend == "mpi4py":
+                assert averaging_policy_mpi4py is not None
+                averaging_policy_mpi4py.shutdown()
         except Exception:
             pass
 
     # Log the final timing results.
     if args.timing:
         if distributed_context.my_rank == 0:
-            print("\n" + "=" * 80)
-            print("\n Timing information:")
+            logger.info("\n" + "=" * 80)
+            logger.info("\n Timing information:")
             if args.distributed:
-                print("-" * 80)
-                print("The below timing information is averaged across all ranks.")
-            print("=" * 80)
+                logger.info("-" * 80)
+                logger.info("Distributed run: showing local timings for rank 0 only.")
+            logger.info("=" * 80)
 
-        if args.distributed:
-            # Gather timing data from all ranks
-            all_timings = [None] * distributed_context.num_training_ranks
-            dist.all_gather_object(
-                all_timings, timing, group=distributed_context.train_global_group
-            )
-
-            if distributed_context.my_rank == 0:
-                report_timing(all_timings, distributed_context.num_training_ranks)
-        else:
-            # Single machine case
-            # Header
-            print(f"{'Step Name':<25} {'Time (s)':>12}")
-            print("-" * 80)
+        # Log local timings only (avoid collective communication)
+        if (not args.distributed) or (distributed_context.my_rank == 0):
+            logger.info("%-25s %12s", "Step Name", "Time (s)")
+            logger.info("-" * 80)
             for k, v in timing.items():
-                print(f"{k:<25} {sum(v):>10.4f}s")
+                logger.info("%-25s %10.4fs", k, sum(v))
+            try:
+                if (
+                    args.spawn_backend == "mpi4py"
+                    and args.use_selective_averaging
+                    and averaging_policy_mpi4py is not None
+                ):
+                    averaging_policy_mpi4py.print_time()
+                    averaging_policy_mpi4py.print_stats()
+            except Exception:
+                pass
 
     # Stop the profiler if it's active.
     if args.profile:
@@ -1414,13 +1298,8 @@ def main(args):  # noqa: C901
         # Create figure with 3 subplots with proper spacing.
         plot_results(env, gflownet, l1_distances, validation_steps)
 
-    try:
-        result = validation_info["l1_dist"]
-    except KeyError:
-        result = validation_info["n_modes_found"]
-
     if distributed_context.my_rank == 0:
-        print("+ Training complete - final_score={:.6f}".format(result))
+        print("Training complete, logs:", to_log)
 
     if (
         args.distributed
@@ -1430,10 +1309,22 @@ def main(args):  # noqa: C901
         # Send a termination signal to the replay buffer manager.
         ReplayBufferManager.send_termination_signal(distributed_context.assigned_buffer)
 
-    return result
+    if args.distributed:
+        dist.barrier(group=distributed_context.train_global_group)
+        assert distributed_context is not None
+        try:
+            distributed_context.cleanup()
+        except Exception:
+            pass
+
+    return to_log
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
     parser = ArgumentParser()
 
     # Machine setting.
@@ -1469,10 +1360,23 @@ if __name__ == "__main__":
         help="Number of remote replay buffer managers (only if using distributed computation)",
     )
     parser.add_argument(
+        "--global_replay_buffer_size",
+        type=int,
+        default=8192,
+        help="Global replay buffer size (only if using distributed computation)",
+    )
+    parser.add_argument(
         "--dist_backend",
         type=str,
         default="gloo",
         help="Distributed backend to use: gloo, ccl or mpi",
+    )
+
+    parser.add_argument(
+        "--remote_buffer_freq",
+        type=int,
+        default=1,
+        help="Frequency (in training iterations) at which training ranks sends trajectories to remote replay buffer",
     )
 
     # Selective averaging settings.
@@ -1491,7 +1395,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--averaging_strategy",
         type=str,
-        choices=["mean", "weighted_mean", "best_only"],
+        choices=["mean", "weighted_mean", "best_only", "reset_weights"],
         default="mean",
         help="Strategy for combining good models",
     )
@@ -1500,6 +1404,40 @@ if __name__ == "__main__":
         type=float,
         default=0.01,
         help="Momentum factor for combining with previous weights (0.0 = no momentum, 1.0 = keep old weights)",
+    )
+    ## for mpi-3 code of selective averaging debug
+    parser.add_argument(
+        "--spawn_backend",
+        choices=["none", "dist", "mpi4py"],
+        default="dist",
+        help="Backend for spawn policy implementation: torch.distributed or mpi4py",
+    )
+    parser.add_argument(
+        "--mpi_sa_mode",
+        choices=["general", "fast"],
+        default="fast",
+        help=(
+            "MPI selective averaging implementation to use. "
+            "'fast' uses an optimized communication path assuming all parameters "
+            "have the same dtype (e.g., float32)."
+        ),
+    )
+    parser.add_argument(
+        "--age_range",
+        type=lambda s: tuple(map(int, s.split(","))),
+        default=(5, 15),
+        help="Age range (iterations) for selective averaging policy as tuple (min_age, max_age), e.g., '5,15'",
+    )
+    parser.add_argument(
+        "--mpi_replacement_mode",
+        choices=["age", "threshold", "worst_ratio"],
+        default="age",
+        help=(
+            "Replacement trigger for mpi4py selective averaging: "
+            "'age' uses random-age restarts, 'threshold' replaces local metric below "
+            "--performance_tracker_threshold, and 'worst_ratio' replaces the bottom "
+            "--replacement_ratio fraction based on global per-rank metric."
+        ),
     )
 
     # Environment settings.
@@ -1544,13 +1482,37 @@ if __name__ == "__main__":
     parser.add_argument(
         "--replay_buffer_size",
         type=int,
-        default=1000,
+        default=2048,
         help="If zero, no replay buffer is used. Otherwise, the replay buffer is used.",
+    )
+    parser.add_argument(
+        "--restart_init_mode",
+        type=str,
+        default="random",
+        choices=["random", "mean_others"],
+        help=(
+            "How to reinitialize an agent when restarted: "
+            "'random' resets with module defaults; 'mean_others' averages only canonical "
+            "(shape-compatible) parameters across other training ranks; non-canonical parameters "
+            "such as NoisyLinear sigmas remain at default initialization."
+        ),
     )
     parser.add_argument(
         "--diverse_replay_buffer",
         action="store_true",
         help="Use a diverse replay buffer",
+    )
+    parser.add_argument(
+        "--cutoff_distance",
+        type=float,
+        default=0.1,
+        help="Cutoff distance for diverse replay buffer",
+    )
+    parser.add_argument(
+        "--p_norm_distance",
+        type=int,
+        default=2,
+        help="p-norm distance metric for diverse replay buffer",
     )
     parser.add_argument(
         "--loss",
@@ -1580,6 +1542,12 @@ if __name__ == "__main__":
         type=float,
         default=0.1,
         help="Specific learning rate for Z (only used for TB loss)",
+    )
+    parser.add_argument(
+        "--weight_decay",
+        type=float,
+        default=1e-4,
+        help="Weight decay for the optimizer",
     )
     parser.add_argument(
         "--n_trajectories",
@@ -1616,14 +1584,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_hidden",
         type=int,
-        default=2,
+        default=3,
         help=(
-            "Number of hidden layers (of size `hidden_dim`) in the estimators'"
-            " neural network modules"
+            "Number of hidden layers incl. input projection (of size `hidden_dim`)"
+            " in the estimators' neural network modules"
         ),
     )
 
     # Validation settings.
+    parser.add_argument(
+        "--validate_environment",
+        action="store_true",
+        help="Validate the environment at the end of training",
+    )
     parser.add_argument(
         "--validation_interval",
         type=int,
@@ -1641,27 +1614,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="torchgfn",
+        default="",
         help="Name of the wandb project. If empty, don't use wandb",
+    )
+    parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        default="",
+        help="Name of the wandb entity. If empty, don't use wandb",
     )
     parser.add_argument(
         "--wandb_local",
         action="store_true",
         help="Stores wandb results locally, to be uploaded later.",
-    )
-
-    # Settings relevant to the problem size -- toggle off for larger problems.
-    parser.add_argument(
-        "--store_all_states",
-        action="store_true",
-        default=False,
-        help="Whether to store all states.",
-    )
-    parser.add_argument(
-        "--calculate_partition",
-        action="store_true",
-        default=False,
-        help="Whether to calculate the true partition function.",
     )
     parser.add_argument(
         "--profile",
@@ -1687,6 +1652,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--timing",
         action="store_true",
+        default=True,
         help="Report timing information at the end of training",
     )
 
@@ -1696,5 +1662,79 @@ if __name__ == "__main__":
         help="Use half precision for the model",
     )
 
+    parser.add_argument(
+        "--use_random_strategies",
+        action="store_true",
+        help="Use a random strategy for the initial gflownet and restarts.",
+    )
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=0.0,
+        help="Mean epsilon for strategy sampling (default: 0.0).",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="Mean temperature for strategy sampling (default: 1.0).",
+    )
+    parser.add_argument(
+        "--n_noisy_layers",
+        type=float,
+        default=0,
+        help="Mean number of noisy layers for strategy sampling (default: 0).",
+    )
+    parser.add_argument(
+        "--noisy_std_init",
+        type=float,
+        default=0.5,
+        help="Initial std for noisy layers (default: 0.5).",
+    )
+    parser.add_argument(
+        "--strategy_epsilon_std",
+        type=float,
+        default=0.1,
+        help="Std of epsilon for strategy sampling (default: 0.1).",
+    )
+    parser.add_argument(
+        "--strategy_temperature_std",
+        type=float,
+        default=1.0,
+        help="Std of temperature for strategy sampling (default: 1.0).",
+    )
+    parser.add_argument(
+        "--strategy_n_noisy_layers_std",
+        type=float,
+        default=1.0,
+        help="Std of number of noisy layers for strategy sampling (default: 1.0).",
+    )
+    parser.add_argument(
+        "--use_restarts",
+        action="store_true",
+        help="Use restarts.",
+    )
+
+    # Performance tracker settings.
+    parser.add_argument(
+        "--performance_tracker_threshold",
+        type=float,
+        default=float("inf"),
+        help="Threshold for the performance tracker. By default, the performance tracker is not triggered.",
+    )
+    parser.add_argument(
+        "--performance_tracker_cooldown",
+        type=int,
+        default=200,
+        help="Cooldown period for the performance tracker.",
+    )
+
     args = parser.parse_args()
-    result = main(args)
+
+    if args.replacement_ratio <= 0.0 or args.replacement_ratio > 1.0:
+        parser.error("--replacement_ratio must be in (0, 1].")
+
+    assert (
+        args.age_range[1] >= args.age_range[0]
+    ), "Invalid age_range: max_age must be ge min_age"
+    main(args)

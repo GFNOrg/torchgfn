@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Literal
 
 import torch
 
@@ -28,7 +28,8 @@ class SetAddition(DiscreteEnv):
         max_items: int,
         reward_fn: Callable,
         fixed_length: bool = False,
-        check_action_validity: bool = True,
+        device: Literal["cpu", "cuda"] | torch.device | None = None,
+        debug: bool = False,
     ):
         """Initializes the SetAddition environment.
 
@@ -37,23 +38,79 @@ class SetAddition(DiscreteEnv):
             max_items: The maximum number of items that can be added to the set.
             reward_fn: The reward function.
             fixed_length: Whether the trajectories have a fixed length.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
+        if device is None:
+            device = torch.get_default_device()
+
+        device = torch.device(device)
         self.n_items = n_items
         self.reward_fn = reward_fn
         self.max_traj_len = max_items
         self.fixed_length = fixed_length
         n_actions = n_items + 1
-        s0 = torch.zeros(n_items)
+        s0 = torch.zeros(n_items, device=device)
         state_shape = (n_items,)
 
         super().__init__(
             n_actions,
             s0,
             state_shape,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[DiscreteStates] = self.States
+
+    def make_states_class(self) -> type[DiscreteStates]:
+        """Returns the DiscreteStates class for the SetAddition environment."""
+        env = self
+
+        class SetAdditionStates(DiscreteStates):
+            state_shape = (env.n_items,)
+            s0 = env.s0
+            sf = env.sf
+            make_random_states = env.make_random_states
+            n_actions = env.n_actions
+
+            def _compute_forward_masks(self) -> torch.Tensor:
+                """Computes forward masks for SetAddition states."""
+                n_items_per_state = self.tensor.sum(dim=-1)
+                states_that_must_end = n_items_per_state >= env.max_traj_len
+                states_that_may_continue = (n_items_per_state < env.max_traj_len) & (
+                    n_items_per_state >= 0
+                )
+
+                forward_masks = torch.zeros(
+                    (*self.batch_shape, self.n_actions),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+
+                # For states that may continue: can add items not yet in set
+                forward_masks[states_that_may_continue, : env.n_items] = (
+                    self.tensor[states_that_may_continue] == 0
+                )
+
+                # For states that must end: only exit action allowed
+                forward_masks[states_that_must_end, -1] = True
+
+                # Allow exit action for all states if not fixed_length
+                if not env.fixed_length:
+                    forward_masks[..., -1] = True
+
+                return forward_masks
+
+            def _compute_backward_masks(self) -> torch.Tensor:
+                """Computes backward masks for SetAddition states."""
+                backward_masks = torch.zeros(
+                    (*self.batch_shape, self.n_actions - 1),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                # Can remove items that are in the set
+                backward_masks[..., : env.n_items] = self.tensor != 0
+                return backward_masks
+
+        return SetAdditionStates
 
     def get_states_indices(self, states: DiscreteStates):
         """Returns the indices of the states.
@@ -71,50 +128,6 @@ class SetAddition(DiscreteEnv):
         )
         indices = (canonical_base * states_raw).sum(-1).long()
         return indices
-
-    def update_masks(self, states: DiscreteStates) -> None:
-        """Updates the masks of the states.
-
-        Args:
-            states: The states to update the masks of.
-        """
-        n_items_per_state = states.tensor.sum(dim=-1)
-        states_that_must_end = n_items_per_state >= self.max_traj_len
-        states_that_may_continue = (n_items_per_state < self.max_traj_len) & (
-            n_items_per_state >= 0
-        )
-
-        cont_f_mask = torch.cat(
-            (
-                (states.tensor[states_that_may_continue] == 0),
-                torch.zeros(
-                    states.tensor[states_that_may_continue].shape[0],
-                    1,
-                    dtype=torch.bool,
-                    device=states.tensor.device,
-                ),
-            ),
-            1,
-        )
-
-        states.forward_masks[states_that_may_continue] = cont_f_mask
-        # Disallow everything for trajs that must end
-        end_f_mask = torch.zeros(
-            states.tensor[states_that_must_end].shape[0],
-            states.forward_masks.shape[-1],
-            dtype=torch.bool,
-            device=states.tensor.device,
-        )
-        end_f_mask[..., -1] = True
-
-        states.forward_masks[states_that_must_end] = end_f_mask
-
-        # Disallow everything for trajs that must end
-        # states.forward_masks[states_that_must_end, : self.n_items] = 0
-        if not self.fixed_length:
-            states.forward_masks[..., -1] = 1  # Allow exit action
-
-        states.backward_masks[..., : self.n_items] = states.tensor != 0
 
     def step(self, states: DiscreteStates, actions: Actions) -> DiscreteStates:
         """Performs a step in the environment.

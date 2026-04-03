@@ -142,7 +142,9 @@ class TBGAFN(TBGFlowNet):
             flow_estimator: The flow estimator, required if use_edge_ri is True.
             log_reward_clip_min: If finite, clips log rewards to this value.
         """
-        super().__init__(pf, pb, logZ, init_logZ, log_reward_clip_min)
+        super().__init__(
+            pf, pb, logZ, init_logZ, log_reward_clip_min=log_reward_clip_min
+        )
         self.rnd = rnd
         self.use_edge_ri = use_edge_ri
         if use_edge_ri and flow_estimator is None:
@@ -170,7 +172,7 @@ class TBGAFN(TBGFlowNet):
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
-            A tensor of shape (n_trajectories,) containing the scores for each trajectory.
+            A tensor of shape (batch_size,) containing the scores for each trajectory.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -207,8 +209,8 @@ class TBGAFN(TBGFlowNet):
 
             terminal_ri = edge_ri[
                 trajectories.terminating_idx - 1,
-                torch.arange(trajectories.n_trajectories, device=edge_ri.device),
-            ]  # shape: (n_trajectories,)
+                torch.arange(trajectories.batch_size, device=edge_ri.device),
+            ]  # shape: (batch_size,)
             _terminal_part = torch.stack(
                 [log_rewards, terminal_ri.log()], dim=0
             ).logsumexp(dim=0)
@@ -224,7 +226,7 @@ class TBGAFN(TBGFlowNet):
             # being zero, i.e., r(s_t \to s_{t+1}) = 0 for all t.
             terminal_ri = self.rnd.compute_intrinsic_reward(
                 trajectories.terminating_states
-            )  # shape: (n_trajectories,)
+            )  # shape: (batch_size,)
             _terminal_part = torch.stack(
                 [log_rewards, terminal_ri.log()], dim=0
             ).logsumexp(dim=0)
@@ -259,6 +261,7 @@ def main(args):
         device=device,
         calculate_partition=True,
         store_all_states=True,
+        debug=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
@@ -346,7 +349,6 @@ def main(args):
                 env,
                 gflownet,
                 args.validation_samples,
-                visited_terminating_states,
             )
             print(f"Iter {it + 1}: L1 distance {validation_info['l1_dist']:.8f}")
             print(

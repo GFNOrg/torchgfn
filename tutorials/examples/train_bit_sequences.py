@@ -26,14 +26,21 @@ def estimated_dist(gflownet: PFBasedGFlowNet, env: BitSequence):
 
 def main(args):
     seed = args.seed if args.seed != 0 else DEFAULT_SEED
-    set_seed(seed)
+    set_seed(seed, deterministic_mode=args.deterministic_mode)
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
     H = torch.randint(
         0, 2, (args.n_modes, args.seq_size), dtype=torch.long, device=device
     )
-    env = BitSequence(args.word_size, args.seq_size, args.n_modes, H=H)
+    env = BitSequence(
+        args.word_size,
+        args.seq_size,
+        args.n_modes,
+        H=H,
+        seed=seed,
+        debug=__debug__,
+    )
 
     if args.loss == "TB":
         pf = MLP(env.words_per_seq, env.n_actions)
@@ -99,7 +106,7 @@ def main(args):
 
     try:
         gflownet = cast(PFBasedGFlowNet, gflownet)
-        return torch.abs(estimated_dist(gflownet, env) - env.true_dist).mean().item()
+        return torch.abs(estimated_dist(gflownet, env) - env.true_dist()).mean().item()
     except AttributeError:
         print(
             "Training was completed succesfully. However computing the L1 distance is only implemented for TB for now."
@@ -111,6 +118,12 @@ if __name__ == "__main__":
     parser.add_argument("--loss", type=str, default="TB", help="Loss to use")
     parser.add_argument("--no_cuda", type=bool, default=True, help="Device to use")
     parser.add_argument("--seed", type=int, default=0, help="Seed")
+    parser.add_argument(
+        "--deterministic_mode",
+        action="store_true",
+        default=False,
+        help="Use deterministic algorithms/threads where possible",
+    )
     parser.add_argument(
         "--n_iterations", type=int, default=1000, help="Number of iterations"
     )

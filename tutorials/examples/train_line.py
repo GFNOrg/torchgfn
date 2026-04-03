@@ -7,7 +7,7 @@ from torch.distributions import Distribution, Normal  # TODO: extend to Beta
 from torch.distributions.independent import Independent
 from tqdm import trange
 
-from gfn.estimators import Estimator
+from gfn.estimators import Estimator, PolicyMixin
 from gfn.gflownet import TBGFlowNet  # TODO: Extend to SubTBGFlowNet
 from gfn.gym.line import Line
 from gfn.states import States
@@ -98,7 +98,7 @@ class ScaledGaussianWithOptionalExit(Distribution):
         return actions
 
     def log_prob(self, sampled_actions):
-        """TODO"""
+        """Computes log-probabilities, returning 0 for deterministic exit/BTS transitions."""
         # The default value of logprobs is 0, because these represent the p=1 event
         # of either the terminal forward (Sn->Sf) or backward (S1->S0) transition.
         # We do not explicitly fill these values, but rather set the appropriate
@@ -168,7 +168,7 @@ class GaussianStepMLP(MLP):
         return out
 
 
-class StepEstimator(Estimator):
+class StepEstimator(Estimator, PolicyMixin):
     """Estimator for PF and PB of the Line environment."""
 
     def __init__(self, env: Line, module: torch.nn.Module, backward: bool):
@@ -222,14 +222,6 @@ def train(
     set_seed(seed)
     n_iterations = int(n_trajectories // batch_size)
 
-    # TODO: Add in the uniform pb demo?
-    # uniform_pb = False
-    #
-    # if uniform_pb:
-    #    pb_module = BoxPBUniform()
-    # else:
-    #    pb_module = BoxPBMLP(hidden_dim, n_hidden_layers, n_components)
-
     # 3. Create the optimizer and scheduler.
     optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=lr_base)
     lr_logZ = lr_base * 100
@@ -272,7 +264,7 @@ def train(
                 gflownet.logz_parameters()[
                     0
                 ].item(),  # Assumes only one estimate of logZ.
-                env.log_partition,
+                env.log_partition(),
             )
         )
 
@@ -290,11 +282,12 @@ def main(args):
         n_sd=4.5,
         n_steps_per_trajectory=5,
         device=device,
+        debug=__debug__,
     )
 
     # Hyperparameters.
     hid_dim = 64
-    n_hidden_layers = 2
+    n_hidden_layers = 3
     policy_std_min = 0.1  # Lower bound of sigma that can be predicted by policy.
     policy_std_max = 1  # Upper bound of sigma that can be predicted by policy.
 

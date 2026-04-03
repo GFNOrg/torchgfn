@@ -70,8 +70,8 @@ class DAGEdgeActionMLP(GraphEdgeActionMLP):
         n_nodes: int,
         num_node_classes: int,
         num_edge_classes: int,
-        n_hidden_layers: int = 2,
-        n_hidden_layers_exit: int = 1,
+        n_hidden_layers: int = 3,
+        n_hidden_layers_exit: int = 2,
         embedding_dim: int = 128,
         is_backward: bool = False,
     ):
@@ -433,6 +433,7 @@ def main(args: Namespace):
         n_nodes=args.num_nodes,
         state_evaluator=scorer.state_evaluator,
         device=device,
+        debug=__debug__,
     )
 
     if args.module == "mlp":

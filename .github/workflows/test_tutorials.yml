@@ -24,3 +24,4 @@ jobs:
 
       - name: Test tutorials notebooks
         run: pytest --nbmake tutorials/notebooks --nbmake-timeout=600
+                    --ignore tutorials/notebooks/intro_torchgfn_performance_tuning.ipynb

@@ -84,7 +84,7 @@ class DiscreteEBM(DiscreteEnv):
         energy: EnergyFunction | None = None,
         alpha: float = 1.0,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Discrete EBM environment.
 
@@ -94,7 +94,7 @@ class DiscreteEBM(DiscreteEnv):
                 Identity matrix is used.
             alpha: interaction strength the EBM. Defaults to 1.0.
             device: Device to use for the environment.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         self.ndim = ndim
 
@@ -116,37 +116,73 @@ class DiscreteEBM(DiscreteEnv):
             # exit_action=,
             n_actions=n_actions,
             sf=sf,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[DiscreteStates] = self.States
 
-    def update_masks(self, states: DiscreteStates) -> None:
-        """Updates the masks of the states.
+    def make_states_class(self) -> type[DiscreteStates]:
+        """Returns the DiscreteStates class for the DiscreteEBM environment."""
+        env = self
 
-        Args:
-            states: The states to update the masks of.
-        """
-        states.forward_masks[..., : self.ndim] = states.tensor == -1
-        states.forward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == -1
-        states.forward_masks[..., -1] = torch.all(states.tensor != -1, dim=-1)
-        states.backward_masks[..., : self.ndim] = states.tensor == 0
-        states.backward_masks[..., self.ndim : 2 * self.ndim] = states.tensor == 1
+        class DiscreteEBMStates(DiscreteStates):
+            state_shape = (env.ndim,)
+            s0 = env.s0
+            sf = env.sf
+            make_random_states = env.make_random_states
+            n_actions = env.n_actions
+
+            def _compute_forward_masks(self) -> torch.Tensor:
+                """Computes forward masks for DiscreteEBM states."""
+                forward_masks = torch.zeros(
+                    (*self.batch_shape, self.n_actions),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                # Action i in [0, ndim-1] replaces s[i] with 0 (only if s[i] == -1)
+                forward_masks[..., : env.ndim] = self.tensor == -1
+                # Action i in [ndim, 2*ndim-1] replaces s[i-ndim] with 1 (only if s[i-ndim] == -1)
+                forward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == -1
+                # Exit action is only valid when state is complete (no -1s)
+                forward_masks[..., -1] = torch.all(self.tensor != -1, dim=-1)
+                return forward_masks
+
+            def _compute_backward_masks(self) -> torch.Tensor:
+                """Computes backward masks for DiscreteEBM states."""
+                backward_masks = torch.zeros(
+                    (*self.batch_shape, self.n_actions - 1),
+                    dtype=torch.bool,
+                    device=self.device,
+                )
+                # Backward action i in [0, ndim-1] sets s[i] back to -1 (only if s[i] == 0)
+                backward_masks[..., : env.ndim] = self.tensor == 0
+                # Backward action i in [ndim, 2*ndim-1] sets s[i-ndim] back to -1 (only if s[i-ndim] == 1)
+                backward_masks[..., env.ndim : 2 * env.ndim] = self.tensor == 1
+                return backward_masks
+
+        return DiscreteEBMStates
 
     def make_random_states(
-        self, batch_shape: Tuple, device: torch.device | None = None
+        self,
+        batch_shape: Tuple,
+        conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> DiscreteStates:
         """Generates random states tensor of shape `(*batch_shape, ndim)`.
 
         Args:
             batch_shape: The shape of the batch.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
+            debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A `DiscreteStates` object with random states.
         """
         device = self.device if device is None else device
         tensor = torch.randint(-1, 2, batch_shape + (self.ndim,), device=device)
-        return self.States(tensor)
+        return self.States(tensor, conditions=conditions, debug=debug)
 
     def is_exit_actions(self, actions: torch.Tensor) -> torch.Tensor:
         """Determines if the actions are exit actions.
@@ -299,14 +335,12 @@ class DiscreteEBM(DiscreteEnv):
         all_states = torch.cartesian_prod(*[digits] * self.ndim)
         return self.states_from_tensor(all_states)
 
-    @property
-    def true_dist(self) -> torch.Tensor:
+    def true_dist(self, condition=None) -> torch.Tensor:  # condition is ignored
         """Returns the true probability mass function of the reward distribution."""
         true_dist = self.reward(self.terminating_states)
         return true_dist / true_dist.sum()
 
-    @property
-    def log_partition(self) -> float:
+    def log_partition(self, condition=None) -> float:  # condition is ignored
         """Returns the log partition of the reward function."""
         log_rewards = self.log_reward(self.terminating_states)
         return torch.logsumexp(log_rewards, -1).item()

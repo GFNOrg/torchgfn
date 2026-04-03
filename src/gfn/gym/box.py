@@ -8,8 +8,19 @@ from gfn.env import Env
 from gfn.states import States
 
 
-class Box(Env):
-    """Box environment, corresponding to the one in Section 4.1 of https://arxiv.org/abs/2301.12594
+class BoxPolar(Env):
+    """Box environment with polar (norm-based) action validation.
+
+    Corresponds to the environment in Section 4.1 of
+    https://arxiv.org/abs/2301.12594
+
+    Actions are 2D vectors whose L2 norm must equal delta (for non-s0 forward
+    steps) or be at most delta (for the initial s0 step). Use with the polar
+    estimators/distributions in ``box_polar_utils.py``.
+
+    See Also:
+        :class:`~gfn.gym.box_cartesian.BoxCartesian` for a simpler
+        per-dimension Cartesian variant.
 
     Attributes:
         delta: The step size.
@@ -28,7 +39,7 @@ class Box(Env):
         R2: float = 2.0,
         epsilon: float = 1e-4,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the Box environment.
 
@@ -39,7 +50,7 @@ class Box(Env):
             R2: The reward for being inside the second box.
             epsilon: A small value to avoid numerical issues.
             device: The device to use.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         assert 0 < delta <= 1, "delta must be in (0, 1]"
         self.delta = delta
@@ -55,27 +66,38 @@ class Box(Env):
 
         super().__init__(
             s0=s0,
-            state_shape=(2,),  # ()
+            state_shape=(2,),
             action_shape=(2,),
             dummy_action=dummy_action,
             exit_action=exit_action,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
 
     def make_random_states(
-        self, batch_shape: Tuple[int, ...], device: torch.device | None = None
+        self,
+        batch_shape: Tuple[int, ...],
+        conditions: torch.Tensor | None = None,
+        device: torch.device | None = None,
+        debug: bool = False,
     ) -> States:
         """Generates random states tensor of shape (*batch_shape, 2).
 
         Args:
             batch_shape: The shape of the batch.
+            conditions: Optional tensor of shape (*batch_shape, condition_dim) containing
+                condition vectors for conditional GFlowNets.
             device: The device to use.
+            debug: If True, emit States with debug guards (not compile-friendly).
 
         Returns:
             A States object with random states.
         """
         device = self.device if device is None else device
-        return self.States(torch.rand(batch_shape + (2,), device=device))
+        return self.States(
+            torch.rand(batch_shape + (2,), device=device),
+            conditions=conditions,
+            debug=debug,
+        )
 
     def step(self, states: States, actions: Actions) -> States:
         """Step function for the Box environment.
@@ -116,7 +138,13 @@ class Box(Env):
     def is_action_valid(
         self, states: States, actions: Actions, backward: bool = False
     ) -> bool:
-        """Checks if the actions are valid.
+        """Checks if the actions are valid (polar norm-based semantics).
+
+        For polar actions:
+        - Forward from s0: norm(action) <= delta
+        - Forward from non-s0: norm(action) == delta (within tolerance)
+        - Backward: state - action >= 0 component-wise
+        - Backward to s0: if norm(state) < delta, action must equal state
 
         Args:
             states: The current states.
@@ -176,10 +204,10 @@ class Box(Env):
         ax = abs(final_states.tensor - 0.5)
         reward = R0 + (0.25 < ax).prod(-1) * R1 + ((0.3 < ax) * (ax < 0.4)).prod(-1) * R2
 
-        assert reward.shape == final_states.batch_shape
+        if self.debug:
+            assert reward.shape == final_states.batch_shape
         return reward
 
-    @property
-    def log_partition(self) -> float:
+    def log_partition(self, condition=None) -> float:  # condition is ignored
         """Returns the log partition of the reward function."""
         return log(self.R0 + (2 * 0.25) ** 2 * self.R1 + (2 * 0.1) ** 2 * self.R2)

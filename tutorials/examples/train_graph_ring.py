@@ -328,6 +328,7 @@ def init_env(n_nodes: int, directed: bool, device: torch.device) -> GraphBuildin
         state_evaluator=state_evaluator,
         directed=directed,
         device=device,
+        debug=__debug__,
     )
 
 

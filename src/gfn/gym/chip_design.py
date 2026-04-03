@@ -1,6 +1,6 @@
 """GFlowNet environment for chip placement."""
 
-from typing import ClassVar, Optional, Sequence, cast
+from typing import ClassVar, Optional, Sequence, Tuple, cast
 
 import torch
 
@@ -23,13 +23,9 @@ class ChipDesignStates(DiscreteStates):
     def __init__(
         self,
         tensor: torch.Tensor,
-        forward_masks: Optional[torch.Tensor] = None,
-        backward_masks: Optional[torch.Tensor] = None,
         current_node_idx: Optional[torch.Tensor] = None,
     ):
-        super().__init__(
-            tensor=tensor, forward_masks=forward_masks, backward_masks=backward_masks
-        )
+        super().__init__(tensor=tensor)
         if current_node_idx is None:
             is_unplaced = tensor == -1
             is_unplaced_padded = torch.cat(
@@ -45,21 +41,27 @@ class ChipDesignStates(DiscreteStates):
 
     def clone(self) -> "ChipDesignStates":
         """Creates a copy of the states."""
-        return self.__class__(
+        cloned = self.__class__(
             self.tensor.clone(),
             current_node_idx=self.current_node_idx.clone(),
-            forward_masks=self.forward_masks.clone(),
-            backward_masks=self.backward_masks.clone(),
         )
+        if self._forward_masks_cache is not None:
+            cloned.forward_masks = self._forward_masks_cache.clone()
+        if self._backward_masks_cache is not None:
+            cloned.backward_masks = self._backward_masks_cache.clone()
+        return cloned
 
     def __getitem__(self, index) -> "ChipDesignStates":
         """Gets a subset of the states."""
-        return self.__class__(
+        subset = self.__class__(
             self.tensor[index],
             current_node_idx=self.current_node_idx[index],
-            forward_masks=self.forward_masks[index],
-            backward_masks=self.backward_masks[index],
         )
+        if self._forward_masks_cache is not None:
+            subset.forward_masks = self._forward_masks_cache[index]
+        if self._backward_masks_cache is not None:
+            subset.backward_masks = self._backward_masks_cache[index]
+        return subset
 
     def __setitem__(self, index, value: "ChipDesignStates") -> None:
         """Sets a subset of the states."""
@@ -107,13 +109,16 @@ class ChipDesign(DiscreteEnv):
         density_weight: float = 1.0,
         congestion_weight: float = 0.5,
         device: str | None = None,
-        check_action_validity: bool = True,
+        debug: bool = False,
+        singularity_image: Optional[str] = None,
     ):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.plc = placement_util.create_placement_cost(
-            netlist_file=netlist_file, init_placement=init_placement
+            netlist_file=netlist_file,
+            init_placement=init_placement,
+            singularity_image=singularity_image,
         )
         self.std_cell_placer_mode = std_cell_placer_mode
 
@@ -141,7 +146,7 @@ class ChipDesign(DiscreteEnv):
             s0=s0,
             state_shape=(self.n_macros,),
             sf=sf,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )
         self.States: type[ChipDesignStates] = self.make_states_class()
 
@@ -154,7 +159,6 @@ class ChipDesign(DiscreteEnv):
             s0 = env.s0
             sf = env.sf
             n_actions = env.n_actions
-            device = env.device
 
         return BaseChipDesignStates
 
@@ -165,34 +169,73 @@ class ChipDesign(DiscreteEnv):
         self.plc.unplace_all_nodes()
         for i in range(self.n_macros):
             loc = state_tensor[i].item()
-            if loc != -1:
+            if loc >= 0:
                 node_index = self._hard_macro_indices[i]
                 self.plc.place_node(node_index, loc)
 
     def update_masks(self, states: ChipDesignStates) -> None:
         """Updates the forward and backward masks of the states."""
-        states.forward_masks.zero_()
-        states.backward_masks.zero_()
+        fwd = torch.zeros(
+            (*states.batch_shape, self.n_actions),
+            dtype=torch.bool,
+            device=self.device,
+        )
+        bwd = torch.zeros(
+            (*states.batch_shape, self.n_actions - 1),
+            dtype=torch.bool,
+            device=self.device,
+        )
 
         for i in range(len(states)):
             state_tensor = states.tensor[i]
             current_node_idx = states.current_node_idx[i].item()
 
             if current_node_idx >= self.n_macros:  # All macros placed
-                states.forward_masks[i, -1] = True  # Only exit is possible
+                fwd[i, -1] = True  # Only exit is possible
             else:
-                # Apply partial placement to plc to get mask for next node
                 self._apply_state_to_plc(state_tensor)
                 node_to_place = self._hard_macro_indices[int(current_node_idx)]
                 mask = self.plc.get_node_mask(node_to_place)
                 mask = torch.tensor(mask, dtype=torch.bool, device=self.device)
-                states.forward_masks[i, : self.n_grid_cells] = mask
-                states.forward_masks[i, -1] = False  # No exit
+                fwd[i, : self.n_grid_cells] = mask
 
             if current_node_idx > 0:
                 last_placed_loc = state_tensor[int(current_node_idx - 1)].item()
-                assert last_placed_loc != -1, "Last placed location should not be -1"
-                states.backward_masks[i, int(last_placed_loc)] = True
+                assert last_placed_loc >= 0, "Last placed location should be >= 0"
+                bwd[i, int(last_placed_loc)] = True
+
+        states.forward_masks = fwd
+        states.backward_masks = bwd
+
+    def reset(
+        self,
+        batch_shape: int | Tuple[int, ...],
+        random: bool = False,
+        sink: bool = False,
+        seed: Optional[int] = None,
+        conditions: Optional[torch.Tensor] = None,
+    ) -> ChipDesignStates:
+        """Resets the environment and computes initial masks."""
+        states = super().reset(batch_shape, random, sink, seed, conditions=conditions)
+        states = cast(ChipDesignStates, states)
+        self.update_masks(states)
+        return states
+
+    def _step(self, states: DiscreteStates, actions: Actions) -> ChipDesignStates:
+        """Wraps parent _step and updates masks."""
+        new_states = super()._step(states, actions)
+        new_states = cast(ChipDesignStates, new_states)
+        self.update_masks(new_states)
+        return new_states
+
+    def _backward_step(
+        self, states: DiscreteStates, actions: Actions
+    ) -> ChipDesignStates:
+        """Wraps parent _backward_step and updates masks."""
+        new_states = super()._backward_step(states, actions)
+        new_states = cast(ChipDesignStates, new_states)
+        self.update_masks(new_states)
+        return new_states
 
     def step(self, states: ChipDesignStates, actions: Actions) -> ChipDesignStates:
         """Performs a forward step in the environment."""

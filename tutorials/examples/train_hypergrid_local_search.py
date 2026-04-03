@@ -46,6 +46,7 @@ def main(args):
         device=device,
         calculate_partition=True,
         store_all_states=True,
+        debug=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
@@ -112,7 +113,6 @@ def main(args):
                 env,
                 gflownet,
                 args.validation_samples,
-                visited_terminating_states,
             )
             print(f"Iter {it + 1}: L1 distance {validation_info['l1_dist']:.8f}")
         pbar.set_postfix({"loss": loss.item()})

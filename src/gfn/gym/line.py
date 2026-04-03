@@ -28,7 +28,7 @@ class Line(Env):
         n_sd: float = 4.5,
         n_steps_per_trajectory: int = 5,
         device: Literal["cpu", "cuda"] | torch.device = "cpu",
-        check_action_validity: bool = True,
+        debug: bool = False,
     ):
         """Initializes the Line environment.
 
@@ -39,11 +39,13 @@ class Line(Env):
             n_sd: The number of standard deviations to consider for the bounds.
             n_steps_per_trajectory: The number of steps per trajectory.
             device: The device to use.
-            check_action_validity: Whether to check the action validity.
+            debug: If True, emit States with debug guards (not compile-friendly).
         """
         assert len(mus) == len(sigmas)
-        self.mus = torch.tensor(mus)
-        self.sigmas = torch.tensor(sigmas)
+        device = torch.device(device)
+        dtype = torch.get_default_dtype()
+        self.mus = torch.tensor(mus, device=device, dtype=dtype)
+        self.sigmas = torch.tensor(sigmas, device=device, dtype=dtype)
         self.n_sd = n_sd
         self.n_steps_per_trajectory = n_steps_per_trajectory
         self.mixture = [Normal(m, s) for m, s in zip(self.mus, self.sigmas)]
@@ -53,16 +55,16 @@ class Line(Env):
         ub = torch.max(self.mus) + self.n_sd * torch.max(self.sigmas)
         assert lb < self.init_value < ub
 
-        s0 = torch.tensor([self.init_value, 0.0], device=device)
-        dummy_action = torch.tensor([float("inf")], device=device)
-        exit_action = torch.tensor([-float("inf")], device=device)
+        s0 = torch.tensor([self.init_value, 0.0], device=device, dtype=dtype)
+        dummy_action = torch.tensor([float("inf")], device=device, dtype=dtype)
+        exit_action = torch.tensor([-float("inf")], device=device, dtype=dtype)
         super().__init__(
             s0=s0,
             state_shape=(2,),  # [x_pos, step_counter].
             action_shape=(1,),  # [x_pos]
             dummy_action=dummy_action,
             exit_action=exit_action,
-            check_action_validity=check_action_validity,
+            debug=debug,
         )  # sf is -inf by default.
 
     def step(self, states: States, actions: Actions) -> States:
@@ -128,7 +130,11 @@ class Line(Env):
             The log reward.
         """
         s = final_states.tensor[..., 0]
-        log_rewards = torch.empty((len(self.mixture),) + final_states.batch_shape)
+        log_rewards = torch.empty(
+            (len(self.mixture),) + final_states.batch_shape,
+            device=s.device,
+            dtype=s.dtype,
+        )
         for i, m in enumerate(self.mixture):
             log_rewards[i] = m.log_prob(s)
 
@@ -136,8 +142,7 @@ class Line(Env):
         assert log_rewards.shape == final_states.batch_shape
         return log_rewards
 
-    @property
-    def log_partition(self) -> torch.Tensor:
+    def log_partition(self, condition=None) -> torch.Tensor:  # condition is ignored
         """Returns the log partition of the reward function."""
         n_modes = torch.tensor(len(self.mus), device=self.device)
         return n_modes.log()

@@ -1,6 +1,6 @@
 import math
 import warnings
-from typing import List, Literal, Tuple, TypeAlias
+from typing import List, Literal, Tuple, TypeAlias, cast
 
 import torch
 
@@ -8,9 +8,10 @@ from gfn.containers import Trajectories
 from gfn.env import Env
 from gfn.estimators import ConditionalScalarEstimator, Estimator, ScalarEstimator
 from gfn.gflownet.base import TrajectoryBasedGFlowNet, loss_reduce
+from gfn.gflownet.losses import RegressionLoss
 from gfn.utils.handlers import (
-    has_conditioning_exception_handler,
-    no_conditioning_exception_handler,
+    has_conditions_exception_handler,
+    no_conditions_exception_handler,
     warn_about_recalculating_logprobs,
 )
 
@@ -83,6 +84,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
         constant_pb: bool = False,
+        debug: bool = False,
+        loss_fn: RegressionLoss | None = None,
     ):
         """Initializes a SubTBGFlowNet instance.
 
@@ -100,17 +103,31 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 gflownet DAG is a tree, and pb is therefore always 1. Must be set
                 explicitly by user to ensure that pb is an Estimator except under this
                 special case.
+            debug: If True, keep runtime safety checks active; disable in compiled runs.
+            loss_fn: Regression loss applied to balance residuals.
+                Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
+
         """
-        super().__init__(pf, pb, constant_pb=constant_pb)
-        assert any(
-            isinstance(logF, cls)
-            for cls in [ScalarEstimator, ConditionalScalarEstimator]
-        ), "logF must be a ScalarEstimator or derived"
+        super().__init__(
+            pf,
+            pb,
+            constant_pb=constant_pb,
+            log_reward_clip_min=log_reward_clip_min,
+            debug=debug,
+            loss_fn=loss_fn,
+        )
+        if not isinstance(logF, (ScalarEstimator, ConditionalScalarEstimator)):
+            raise TypeError(
+                f"logF must be a ScalarEstimator or ConditionalScalarEstimator, "
+                f"got {type(logF).__name__}"
+            )
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
-        self.log_reward_clip_min = log_reward_clip_min
         self.forward_looking = forward_looking
+
+        if debug and hasattr(logF, "debug"):
+            logF.debug = True
 
     def logF_named_parameters(self) -> dict[str, torch.Tensor]:
         """Returns a dictionary of named parameters containing 'logF' in their name.
@@ -137,18 +154,18 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         Args:
             trajectories: The batch of trajectories.
-            log_p_trajectories: Tensor of shape (max_length, n_trajectories)
+            log_p_trajectories: Tensor of shape (max_length, batch_size)
                 containing the logprobs of the forward or backward actions of the
                 trajectories.
 
         Returns:
-            A tensor of shape (max_length + 1, n_trajectories) containing the
+            A tensor of shape (max_length + 1, batch_size) containing the
             cumulative sum of logprobs for each trajectory.
         """
         return torch.cat(
             (
                 torch.zeros(
-                    1, trajectories.n_trajectories, device=log_p_trajectories.device
+                    1, trajectories.batch_size, device=log_p_trajectories.device
                 ),
                 log_p_trajectories.cumsum(dim=0),
             ),
@@ -157,32 +174,28 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def calculate_preds(
         self,
-        log_pf_trajectories_cum: CumulativeLogProbsTensor,
+        log_pf_traj_cum: CumulativeLogProbsTensor,
         log_state_flows: LogStateFlowsTensor,
         i: int,
     ) -> PredictionsTensor:
         """Calculates the predictions tensor for the current sub-trajectory length.
 
         Args:
-            log_pf_trajectories_cum: Tensor of shape (max_length + 1, n_trajectories)
+            log_pf_traj_cum: Tensor of shape (max_length + 1, batch_size)
                 containing the cumulative sum of logprobs of the forward actions for
                 each trajectory.
-            log_state_flows: Tensor of shape (max_length, n_trajectories) containing
+            log_state_flows: Tensor of shape (max_length, batch_size) containing
                 the estimated log flow of the states.
             i: The sub-trajectory length.
 
         Returns:
-            The predictions tensor of shape (max_length + 1 - i, n_trajectories).
+            The predictions tensor of shape (max_length + 1 - i, batch_size).
         """
         current_log_state_flows = (
             log_state_flows if i == 1 else log_state_flows[: -(i - 1)]
         )
 
-        preds = (
-            log_pf_trajectories_cum[i:]
-            - log_pf_trajectories_cum[:-i]
-            + current_log_state_flows
-        )
+        preds = log_pf_traj_cum[i:] - log_pf_traj_cum[:-i] + current_log_state_flows
 
         return preds
 
@@ -190,7 +203,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         trajectories: Trajectories,
         preds: PredictionsTensor,
-        log_pb_trajectories_cum: CumulativeLogProbsTensor,
+        log_pb_traj_cum: CumulativeLogProbsTensor,
         log_state_flows: LogStateFlowsTensor,
         is_terminal_mask: MaskTensor,
         sink_states_mask: MaskTensor,
@@ -200,28 +213,34 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         Args:
             trajectories: The batch of trajectories.
-            preds: Tensor of shape (max_length + 1 - i, n_trajectories) containing
+            preds: Tensor of shape (max_length + 1 - i, batch_size) containing
                 the predictions for the current sub-trajectory length.
-            log_pb_trajectories_cum: Tensor of shape (max_length + 1, n_trajectories)
+            log_pb_traj_cum: Tensor of shape (max_length + 1, batch_size)
                 containing the cumulative sum of logprobs of the backward actions for
                 each trajectory.
-            log_state_flows: Tensor of shape (max_length, n_trajectories) containing
+            log_state_flows: Tensor of shape (max_length, batch_size) containing
                 the estimated log flow of the states.
-            is_terminal_mask: A mask of shape (max_length, n_trajectories) indicating
+            is_terminal_mask: A mask of shape (max_length, batch_size) indicating
                 whether the state is terminal.
-            sink_states_mask: A mask of shape (max_length, n_trajectories) indicating
+            sink_states_mask: A mask of shape (max_length, batch_size) indicating
                 whether the state is a sink state.
             i: The sub-trajectory length.
 
         Returns:
-            The targets tensor of shape (max_length + 1 - i, n_trajectories).
+            The targets tensor of shape (max_length + 1 - i, batch_size).
         """
         targets = torch.full_like(preds, fill_value=-float("inf"))
-        assert trajectories.log_rewards is not None
-        log_rewards = trajectories.log_rewards[trajectories.terminating_idx >= i]
+        # Guard behind debug: log_rewards is always set for terminating trajectories;
+        # bare assert would cause a graph break in torch.compile.
+        if self.debug:
+            assert trajectories.log_rewards is not None
+        # cast: log_rewards is always set for terminating trajectories.
+        log_rewards = cast(torch.Tensor, trajectories.log_rewards)[
+            trajectories.terminating_idx >= i
+        ]
 
         if math.isfinite(self.log_reward_clip_min):
-            log_rewards.clamp_min(self.log_reward_clip_min)
+            log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
 
         targets.T[is_terminal_mask[i - 1 :].T] = log_rewards
 
@@ -229,15 +248,16 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         # We need to add to that the log-probabilities of the backward actions up-to
         # the sub-trajectory's terminating state
         if i > 1:
-            targets[is_terminal_mask[i - 1 :]] += (
-                log_pb_trajectories_cum[i - 1 :] - log_pb_trajectories_cum[: -i + 1]
-            )[:-1][is_terminal_mask[i - 1 :]]
+            delta_pb = (log_pb_traj_cum[i - 1 :] - log_pb_traj_cum[: -i + 1])[:-1]
+            targets[is_terminal_mask[i - 1 :]] += delta_pb[is_terminal_mask[i - 1 :]]
 
         # The following creates the targets for the non-finishing sub-trajectories
         full_mask = sink_states_mask | is_terminal_mask
+        delta_pb2 = (log_pb_traj_cum[i:] - log_pb_traj_cum[:-i])[:-1]
+        rhs_mask = ~full_mask[i - 1 : -1]
         targets[~full_mask[i - 1 :]] = (
-            log_pb_trajectories_cum[i:] - log_pb_trajectories_cum[:-i]
-        )[:-1][~full_mask[i - 1 : -1]] + log_state_flows[i:][~sink_states_mask[i:]]
+            delta_pb2[rhs_mask] + log_state_flows[i:][~sink_states_mask[i:]]
+        )
 
         return targets
 
@@ -252,11 +272,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             env: The environment object.
             trajectories: The batch of trajectories.
-            log_pf_trajectories: Tensor of shape (max_length, n_trajectories) containing
+            log_pf_trajectories: Tensor of shape (max_length, batch_size) containing
                 the logprobs of the forward actions of the trajectories.
 
         Returns:
-            A tensor of shape (max_length, n_trajectories) containing the log flows of
+            A tensor of shape (max_length, batch_size) containing the log flows of
             each state in the trajectories.
         """
         states = trajectories.states
@@ -264,23 +284,29 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         mask = ~states.is_sink_state
         valid_states = states[mask]
 
-        if trajectories.conditioning is not None:
-            # Compute the conditioning matrix broadcast to match valid_states.
-            # The conditioning tensor has shape (max_length, n_trajectories, 1)
-            # We need to index it to match the valid states
-            conditioning = trajectories.conditioning[mask]
+        if trajectories.states.conditions is not None:
+            # Compute the condition matrix broadcast to match valid_states.
+            # The conditions tensor has shape (batch_size, condition_dim)
+            # The states have batch shape (max_length, batch_size)
+            # We need to repeat the conditions to match the batch shape of the states.
+            conditions = trajectories.states.conditions
+            # (max_length, batch_size, condition_dim)
+            # Guard behind debug: shape assertion causes a graph break in torch.compile;
+            # conditions shape is structurally guaranteed by States construction.
+            if self.debug:
+                assert conditions.shape[:2] == states.batch_shape
+            conditions = conditions[mask]
+            with has_conditions_exception_handler("logF", self.logF):
+                log_F = self.logF(valid_states, conditions).squeeze(-1)
 
-            with has_conditioning_exception_handler("logF", self.logF):
-                log_F = self.logF(valid_states, conditioning)
         else:
-            with no_conditioning_exception_handler("logF", self.logF):
+            with no_conditions_exception_handler("logF", self.logF):
                 log_F = self.logF(valid_states).squeeze(-1)
 
         if self.forward_looking:
-            log_rewards = env.log_reward(states).unsqueeze(-1)
-            log_F = log_F + log_rewards
+            log_F = log_F + env.log_reward(valid_states)
 
-        log_state_flows[mask[:-1]] = log_F.squeeze()
+        log_state_flows[mask[:-1]] = log_F
         return log_state_flows
 
     def calculate_masks(
@@ -291,13 +317,13 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         """Calculates masks indicating sink and terminal states.
 
         Args:
-            log_state_flows: Tensor of shape (max_length, n_trajectories) containing
+            log_state_flows: Tensor of shape (max_length, batch_size) containing
                 the log flows of the states.
             trajectories: The batch of trajectories.
 
         Returns:
             A tuple of two mask tensors (sink_states_mask, is_terminal_mask), each of
-            shape (max_length, n_trajectories).
+            shape (max_length, batch_size).
         """
         sink_states_mask = log_state_flows == -float("inf")
         is_terminal_mask = trajectories.actions.is_exit
@@ -306,9 +332,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
     def get_scores(
         self,
-        env: Env,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
+        env: Env | None = None,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         r"""Computes sub-trajectory balance scores for all submitted trajectories.
 
@@ -324,7 +350,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                     the score of a sub-trajectory $\tau_{n:n+k} = (s_n, ..., s_{n+k})$ is
                     $\log P_F(\tau_{n:n+k}) + \log F(s_n) - \log P_B(\tau_{n:n+k}) - \log F(s_{n+k})$.
                     The shape of each score from k-length sub-trajectory is
-                    (max_length - k + 1, n_trajectories).
+                    (max_length - k + 1, batch_size).
                 - flattening_masks: A list of tensors indicating what should be masked out
                     from the each element of the first list (scores), given that not all
                     sub-trajectories of length k exist for each trajectory. The entries of
@@ -343,6 +369,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories, log_pb_trajectories
         )
 
+        assert env is not None, "SubTBGFlowNet.get_scores requires env"
         log_state_flows = self.calculate_log_state_flows(
             env, trajectories, log_pf_trajectories
         )
@@ -372,13 +399,14 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 ).unsqueeze(-1)
             )
 
-            flat_preds = preds[~flattening_mask]
-            if torch.any(torch.isnan(flat_preds)):
-                raise ValueError("NaN in preds")
+            if self.debug:
+                flat_preds = preds[~flattening_mask]
+                if torch.any(torch.isnan(flat_preds)):
+                    raise ValueError("NaN in preds")
 
-            flat_targets = targets[~flattening_mask]
-            if torch.any(torch.isnan(flat_targets)):
-                raise ValueError("NaN in targets")
+                flat_targets = targets[~flattening_mask]
+                if torch.any(torch.isnan(flat_targets)):
+                    raise ValueError("NaN in targets")
 
             flattening_masks.append(flattening_mask)
             scores.append(preds - targets)
@@ -394,7 +422,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories.
 
         Returns:
-            The contributions tensor of shape (max_len * (max_len+1) / 2, n_trajectories).
+            The contributions tensor of shape (max_len * (max_len+1) / 2, batch_size).
         """
         terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
@@ -406,7 +434,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         )
 
         # if we repeat the previous tensor, we get a tensor of shape
-        # (max_len * (max_len + 1) / 2, n_trajectories) that we can multiply with
+        # (max_len * (max_len + 1) / 2, batch_size) that we can multiply with
         # all_scores to get a loss where each sub-trajectory is weighted equally
         # within each trajectory.
         contributions = contributions.repeat(n_rows, 1)
@@ -420,7 +448,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories.
 
         Returns:
-            The contributions tensor of shape (max_len * (max_len+1) / 2, n_trajectories).
+            The contributions tensor of shape (max_len * (max_len+1) / 2, batch_size).
         """
         terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
@@ -438,18 +466,15 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories.
 
         Returns:
-            The contributions tensor of shape (max_len * (max_len+1) / 2, n_trajectories).
+            The contributions tensor of shape (max_len * (max_len+1) / 2, batch_size).
         """
         max_len = trajectories.max_length
         n_rows = int(max_len * (1 + max_len) / 2)
         contributions = torch.zeros(n_rows, len(trajectories))
 
         # Each trajectory contributes one element to the loss, equally weighted
-        terminating_idx = trajectories.terminating_idx
-        indices = (
-            max_len * (terminating_idx - 1)
-            - (terminating_idx - 1) * (terminating_idx - 2) / 2
-        ).long()
+        t_idx = trajectories.terminating_idx
+        indices = (max_len * (t_idx - 1) - (t_idx - 1) * (t_idx - 2) / 2).long()
         contributions.scatter_(0, indices.unsqueeze(0), 1)
         contributions = contributions / len(trajectories)
 
@@ -464,7 +489,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories.
 
         Returns:
-            The contributions tensor of shape (max_len * (max_len+1) / 2, n_trajectories).
+            The contributions tensor of shape (max_len * (max_len+1) / 2, batch_size).
         """
         terminating_idx = trajectories.terminating_idx
         max_len = trajectories.max_length
@@ -494,36 +519,38 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories.
 
         Returns:
-            The contributions tensor of shape (max_len * (max_len+1) / 2, n_trajectories).
+            The contributions tensor of shape (max_len * (max_len+1) / 2, batch_size).
         """
-        L = self.lamda
+        t_idx = trajectories.terminating_idx
+        default_dtype = torch.get_default_dtype()
+        lam = torch.as_tensor(self.lamda, device=t_idx.device, dtype=default_dtype)
         max_len = trajectories.max_length
-        terminating_idx = trajectories.terminating_idx
+
+        arange = torch.arange(max_len, device=t_idx.device, dtype=default_dtype)
+        pow_lam = lam.pow(arange)
 
         # The following tensor represents the weights given to each possible
         # sub-trajectory length.
-        contributions = (
-            L ** torch.arange(max_len, device=terminating_idx.device).double()
-        ).to(torch.get_default_dtype())
+        contributions = pow_lam
         contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
         contributions = contributions.repeat_interleave(
-            torch.arange(max_len, 0, -1, device=terminating_idx.device),
+            torch.arange(max_len, 0, -1, device=t_idx.device),
             dim=0,
             output_size=int(max_len * (max_len + 1) / 2),
         )
 
-        # Now we need to divide each column by n + (n-1) lambda +...+ 1*lambda^{n-1}
-        # where n is the length of the trajectory corresponding to that column
+        # Now we need to divide each column by
+        #   sum_{i=0}^{n-1} (n - i) * lambda^i
+        # where n is the length of the trajectory corresponding to that column.
         # We can do it the ugly way, or using the cool identity:
         # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
-        per_trajectory_denom = (
-            1.0
-            / (1 - L) ** 2
-            * (
-                L * (L ** terminating_idx.double() - 1)
-                + (1 - L) * terminating_idx.double()
-            )
-        ).to(torch.get_default_dtype())
+        pow_cumsum = pow_lam.cumsum(0)
+        i_pow_cumsum = (arange * pow_lam).cumsum(0)
+        gather_idx = (t_idx.clamp(min=1) - 1).long()
+        sum_geom = pow_cumsum[gather_idx]
+        sum_i_geom = i_pow_cumsum[gather_idx]
+        t_idx_f = t_idx.to(default_dtype)
+        per_trajectory_denom = t_idx_f * sum_geom - sum_i_geom
         contributions = contributions / per_trajectory_denom / len(trajectories)
 
         return contributions
@@ -542,15 +569,49 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories to compute the loss with.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
+                Note: for geometric-based sub-trajectory weighting, 'mean' is not
+                supported and is coerced to 'sum' (a warning is emitted when
+                debug=True).
 
         Returns:
             The computed sub-trajectory balance loss as a tensor. The shape depends on
             the reduction method.
         """
-        warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
+        if self.debug:
+            warn_about_recalculating_logprobs(trajectories, recalculate_all_logprobs)
+
+        if self.weighting == "TB":
+            # TB weighting is mathematically equivalent to TBGFlowNet (with logZ
+            # replaced by logF(s0)).  Computing via cumsum (used in get_scores) can
+            # give different float32 results than TBGFlowNet's direct sum(dim=0),
+            # because cumsum is strictly sequential while sum(dim=0) may use SIMD
+            # vector reduction. For continuous environments with large log-prob
+            # magnitudes (e.g. Box), this difference can exceed typical tolerances.
+            # Bypass get_scores entirely and mirror TBGFlowNet's exact computation.
+            log_pf_traj, log_pb_traj = self.get_pfs_and_pbs(
+                trajectories, recalculate_all_logprobs=recalculate_all_logprobs
+            )
+            log_state_flows = self.calculate_log_state_flows(
+                env, trajectories, log_pf_traj
+            )
+            # logF of the source state (row 0); -inf means sink — treat as 0
+            logF_s0 = log_state_flows[0].masked_fill(log_state_flows[0].isinf(), 0.0)
+            total_log_pf = log_pf_traj.sum(dim=0)
+            total_log_pb = log_pb_traj.sum(dim=0)
+            # Guard behind debug: log_rewards is always set for terminating trajectories;
+            # bare assert would cause a graph break in torch.compile.
+            if self.debug:
+                assert trajectories.log_rewards is not None
+            # cast: log_rewards is always set for terminating trajectories.
+            log_rewards = cast(torch.Tensor, trajectories.log_rewards)
+            if math.isfinite(self.log_reward_clip_min):
+                log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
+            tb_scores = logF_s0 + total_log_pf - total_log_pb - log_rewards
+            return loss_reduce(self.loss_fn(tb_scores), reduction)
+
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
-            env, trajectories, recalculate_all_logprobs=recalculate_all_logprobs
+            trajectories, recalculate_all_logprobs=recalculate_all_logprobs, env=env
         )
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)
@@ -558,7 +619,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         if self.weighting == "DB":
             # Longer trajectories contribute more to the loss.
             # TODO: is this correct with `loss_reduce`?
-            final_scores = scores[0][~flattening_masks[0]].pow(2)
+            final_scores = self.loss_fn(scores[0][~flattening_masks[0]])
             return loss_reduce(final_scores, reduction)
 
         elif self.weighting == "geometric":
@@ -573,7 +634,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             # sub-trajectories of length k.
             per_length_losses = torch.stack(
                 [
-                    scores[~flattening_mask].pow(2).mean()
+                    self.loss_fn(scores[~flattening_mask]).mean()
                     for scores, flattening_mask in zip(scores, flattening_masks)
                 ]
             )
@@ -583,7 +644,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             weights = ratio * (
                 L ** torch.arange(max_len, device=per_length_losses.device)
             )
-            assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
+            if self.debug:
+                assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
 
         # TODO: we need to know what reductions are valid for each weighting method.
@@ -594,23 +656,28 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             "ModifiedDB": self.get_modified_db_contributions,
             "geometric_within": self.get_geometric_within_contributions,
         }
-        try:
-            contributions = weight_functions[self.weighting](trajectories)
-        except KeyError:
+        # Validate weighting unconditionally — this runs once per loss() call,
+        # not per-element, so it doesn't affect torch.compile hot paths.
+        contributions_fn = weight_functions.get(self.weighting)
+        if contributions_fn is None:
             raise ValueError(f"Unknown weighting method {self.weighting}")
+        contributions = contributions_fn(trajectories)
 
         flat_contributions = contributions[~flattening_mask]
-        assert (
-            flat_contributions.sum() - 1.0
-        ).abs() < 1e-5, f"{flat_contributions.sum()}"
-        final_scores = flat_contributions * all_scores[~flattening_mask].pow(2)
+        if self.debug:
+            assert (
+                flat_contributions.sum() - 1.0
+            ).abs() < 1e-5, f"{flat_contributions.sum()}"
+
+        final_scores = flat_contributions * self.loss_fn(all_scores[~flattening_mask])
 
         # TODO: default was sum, should we allow mean?
         if reduction == "mean":
-            warnings.warn(
-                "Mean reduction is not supported for SubTBGFlowNet with geometric "
-                "weighting, using sum instead."
-            )
+            if self.debug:
+                warnings.warn(
+                    "Mean reduction is not supported for SubTBGFlowNet with geometric "
+                    "weighting, using sum instead."
+                )
             reduction = "sum"
 
         return loss_reduce(final_scores, reduction)

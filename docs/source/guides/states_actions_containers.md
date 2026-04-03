@@ -14,6 +14,18 @@ Because multiple trajectories can have different lengths, batching requires appe
 
 For discrete environments, the action set is represented with the set $\{0, \dots, n_{actions} - 1\}$, where the $(n_{actions})$-th action always corresponds to the exit or terminate action, i.e. that results in a transition of the type $s \rightarrow s_f$, but not all actions are possible at all states. For discrete environments, each `States` object is endowed with two extra attributes: `forward_masks` and `backward_masks`, representing which actions are allowed at each state and which actions could have led to each state, respectively. Such states are instances of the `DiscreteStates` abstract subclass of `States`. The `forward_masks` tensor is of shape `(*batch_shape, n_{actions})`, and `backward_masks` is of shape `(*batch_shape, n_{actions} - 1)`. Each subclass of `DiscreteStates` needs to implement the `update_masks` function, that uses the environment's logic to define the two tensors.
 
+### Debug guards and factory signatures
+
+To keep compiled hot paths fast, `States`/`DiscreteStates`/`GraphStates` expect a `debug` flag passed at construction time. When `debug=False` (default) no Python-side checks run in hot paths; when `debug=True`, shape/device/type guards run to catch silent bugs. Environments carry an env-level `debug` and pass it when they instantiate `States`.
+
+When defining your own `States` subclass or environment factories, make sure all state factories accept `debug`:
+
+- Constructors: `__init__(..., debug: bool = False, ...)` should store `self.debug` and pass it along when cloning or slicing.
+- Factory classmethods: `make_random_states`, `make_initial_states`, `make_sink_states` (and any overrides) **must** accept `debug` (or `**kwargs`) and forward it to `States(...)`. The base class enforces this and will raise a clear `TypeError` otherwise.
+- Env helpers: if you override `states_from_tensor` or `reset` in an environment, thread `self.debug` into state construction so all emitted states share the env-level setting.
+
+This pattern avoids graph breaks in `torch.compile` by letting you keep `debug=False` in compiled runs while still enabling strong checks in development and tests.
+
 ## Actions
 
 Actions should be though of as internal actions of an agent building a compositional object. They correspond to transitions $s \rightarrow s'$. An abstract `Actions` class is provided. It is automatically subclassed for discrete environments, but needs to be manually subclassed otherwise.
@@ -24,13 +36,21 @@ Additionally, each subclass needs to define two more class variable tensors:
 - `dummy_action`: A tensor that is padded to sequences of actions in the shorter trajectories of a batch of trajectories. It is `[-1]` for discrete environments.
 - `exit_action`: A tensor that corresponds to the termination action. It is `[n_{actions} - 1]` fo discrete environments.
 
+### Debug guards and factory signatures
+
+`Actions` mirrors the `States` pattern: constructors and factories accept `debug: bool = False`. Keep `debug=False` in compiled/hot paths to avoid Python-side asserts; flip it on in development/tests to run shape/device validations. When defining custom subclasses, ensure:
+
+- `__init__(..., debug: bool = False, ...)` stores `self.debug` and only runs validations when `debug` is True.
+- Factory classmethods (`make_dummy_actions`, `make_exit_actions`, helpers like `from_tensor_dict`) accept `debug` (or `**kwargs`) and forward it to the constructor.
+- Environment helpers (`actions_from_tensor`, `actions_from_batch_shape`) should thread the env-level `debug` so all emitted actions share the setting.
+
 ## Containers
 
 Containers are collections of `States`, along with other information, such as reward values, or densities $p(s' \mid s)$. Three containers are available:
 
 - [Transitions](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/transitions.py), representing a batch of transitions $s \rightarrow s'$.
 - [Trajectories](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/trajectories.py), representing a batch of complete trajectories $\tau = s_0 \rightarrow s_1 \rightarrow \dots \rightarrow s_n \rightarrow s_f$.
-- [StatesContainer](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/states_container.py), representing a batch of states with optional conditioning, particularly useful for flow matching algorithms.
+- [StatesContainer](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/states_container.py), representing a batch of states, particularly useful for flow-matching GFlowNet.
 
 These containers can either be instantiated using a `States` object, or can be initialized as empty containers that can be populated on the fly, allowing the usage of the [ReplayBuffer](https://github.com/gfnorg/torchgfn/tree/master/src/gfn/containers/replay_buffer.py) class.
 

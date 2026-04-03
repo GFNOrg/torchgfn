@@ -78,7 +78,6 @@ class CodonDesignEnv(DiscreteEnv):
             n_actions=self.n_actions,
             s0=s0,
             state_shape=(self.seq_length,),
-            action_shape=(1,),  # Each action is a single index
             sf=sf,
         )
 

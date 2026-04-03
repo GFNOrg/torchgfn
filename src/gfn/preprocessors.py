@@ -23,15 +23,21 @@ class Preprocessor(ABC):
             dimension will not be checked.
     """
 
-    def __init__(self, output_dim: int | None) -> None:
+    def __init__(
+        self, output_dim: int | None, target_dtype: torch.dtype | None = None
+    ) -> None:
         """Initializes a Preprocessor with the specified output dimension.
 
         Args:
             output_dim: The dimensionality of the preprocessed output tensor, which is
                 compatible with the neural network that will be used.
                 If None, the output dimension will not be checked.
+            target_dtype: Optional dtype to cast tensor outputs to. When set, any
+                tensor returned by `preprocess` will be cast to this dtype in
+                `__call__` before returning.
         """
         self.output_dim = output_dim
+        self.target_dtype = target_dtype
 
     @abstractmethod
     def preprocess(self, states: States) -> torch.Tensor:
@@ -55,8 +61,11 @@ class Preprocessor(ABC):
             The preprocessed states as a tensor or GeometricBatch.
         """
         out = self.preprocess(states)
-        if isinstance(out, torch.Tensor) and self.output_dim is not None:
-            assert out.shape[-1] == self.output_dim
+        if isinstance(out, torch.Tensor):
+            if self.output_dim is not None:
+                assert out.shape[-1] == self.output_dim
+            if self.target_dtype is not None and out.dtype != self.target_dtype:
+                out = out.to(self.target_dtype)
 
         return out
 
@@ -155,8 +164,8 @@ class OneHotPreprocessor(Preprocessor):
                 Should return a tensor of shape (*batch_shape, 1).
         """
         super().__init__(output_dim=n_states)
+        self.output_dim: int = n_states
         self.get_states_indices = get_states_indices
-        self.output_dim = n_states
 
     def preprocess(self, states: DiscreteStates) -> torch.Tensor:
         """Preprocesses the states by converting them to one-hot encoded vectors.
@@ -197,9 +206,9 @@ class KHotPreprocessor(Preprocessor):
             ndim: Number of dimensions in the state space.
         """
         super().__init__(output_dim=height * ndim)
+        self.output_dim: int = height * ndim
         self.height = height
         self.ndim = ndim
-        self.output_dim = height * ndim
 
     def preprocess(self, states: DiscreteStates) -> torch.Tensor:
         """Preprocesses the states by creating k-hot encoded vectors.

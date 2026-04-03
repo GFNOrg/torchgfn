@@ -67,8 +67,7 @@ In addition, a number of methods must be defined by the user:
   which is consumed by the States class automatically, which is useful if you
   want random samples you can evaluate under your reward model or policy.
 + `env.reset(self, ...)` can also **optionally** be overwritten by the user
-  to support custom logic. For example, for conditional GFlowNets, the
-  conditioning tensor can be concatenated to $s_0$ automatically here.
+  to support custom logic.
 + `env.log_reward(self, final_states)` must be defined, which calculates the
   log reward of the terminating states (i.e. state with all $s_f$ as a child in
   the DAG). It by default returns the log of `env.reward(self, final_states)`,
@@ -90,9 +89,7 @@ the following method:
   contains state-dependent forward and backward masks, which define allowable
   forward and backward actions conditioned on the state. Note that in
   calculating these masks, the user can leverage the helper methods
-  `DiscreteStates.set_nonexit_action_masks`,
-  `DiscreteStates.set_exit_masks`, and
-  `DiscreteStates.init_forward_masks`.
+  `DiscreteStates.set_nonexit_action_masks`, and `DiscreteStates.set_exit_masks`.
 
 The code automatically implements the following two class factories, which the
 majority of users will not need to overwrite. However, the user could override

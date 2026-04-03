@@ -40,6 +40,7 @@ def main(args):
         device=device,
         calculate_partition=True,
         store_all_states=True,
+        debug=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
@@ -89,7 +90,7 @@ def main(args):
     validation_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
     discovered_modes = set()
-    n_pixels_per_mode = round(env.height / 10) ** env.ndim
+    # Deprecated metric; replaced by exact mode counting via env.modes_found
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = forward_sampler.sample_trajectories(
             env,
@@ -131,7 +132,7 @@ def main(args):
                 states=terminating_states,
                 save_logprobs=False,  # TODO: enable this
                 save_estimator_outputs=False,
-                # TODO: log rewards, conditioning, ...
+                # TODO: log rewards, conditions, ...
             )
             buffer_trajectories = bwd_trajectories.reverse_backward_trajectories()
             buffer_trajectories._log_rewards = terminating_states_container.log_rewards
@@ -146,30 +147,19 @@ def main(args):
                 env,
                 gflownet,
                 args.validation_samples,
-                visited_terminating_states,
-            )
-            # Modes will have a reward greater than R2+R1+R0.
-            mode_reward_threshold = sum(
-                [
-                    env.reward_fn_kwargs["R2"],
-                    env.reward_fn_kwargs["R1"],
-                    env.reward_fn_kwargs["R0"],
-                ]
             )
 
             assert isinstance(visited_terminating_states, DiscreteStates)
-            modes = visited_terminating_states[
-                env.reward(visited_terminating_states) >= mode_reward_threshold
-            ].tensor
-            # Finds all the unique modes in visited_terminating_states.
-            modes_found = set([tuple(s.tolist()) for s in modes])
+            modes_found = env.modes_found(visited_terminating_states)
             discovered_modes.update(modes_found)
-            # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
+
             str_info = f"Iter {it + 1}: "
             if "l1_dist" in validation_info:
                 str_info += f"L1 distance={validation_info['l1_dist']:.8f} "
+            n_total = env.n_modes
+            pct = 100 * len(discovered_modes) / n_total if n_total else 0
             str_info += (
-                f"modes discovered={len(discovered_modes) / n_pixels_per_mode:.3f} "
+                f"mode states found={len(discovered_modes)} / {n_total} ({pct:.1f}%) "
             )
             str_info += f"n terminating states {len(visited_terminating_states)}"
             print(str_info)

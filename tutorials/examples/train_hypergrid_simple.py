@@ -20,8 +20,8 @@ from typing import cast
 import torch
 from tqdm import tqdm
 
-from gfn.estimators import DiscretePolicyEstimator
-from gfn.gflownet import TBGFlowNet
+from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
+from gfn.gflownet import DBGFlowNet, FMGFlowNet, TBGFlowNet
 from gfn.gym import HyperGrid
 from gfn.preprocessors import KHotPreprocessor
 from gfn.samplers import Sampler
@@ -50,7 +50,7 @@ def main(args):
         device=device,
         calculate_partition=True,
         store_all_states=True,
-        check_action_validity=__debug__,
+        debug=__debug__,
     )
     preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
 
@@ -67,34 +67,63 @@ def main(args):
         )
     else:
         module_PB = DiscreteUniform(output_dim=env.n_actions - 1)
-    pf_estimator = DiscretePolicyEstimator(
-        module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
-    )
-    pb_estimator = DiscretePolicyEstimator(
-        module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
-    )
-    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
-    # Feed pf to the sampler.
-    sampler = Sampler(estimator=pf_estimator)
+    # Initialize the key components
+    # 1. Estimator(s)
+    # 2. GFlowNet
+    # 3. Optimizer
+    # 4. Sampler
+    if args.loss == "FM":
+        logF_estimator = DiscretePolicyEstimator(
+            module=module_PF,
+            n_actions=env.n_actions,
+            preprocessor=preprocessor,
+        )
+        gflownet = FMGFlowNet(logF_estimator).to(device)
+        optimizer = torch.optim.Adam(gflownet.logF.parameters(), lr=args.lr)
+        sampler = Sampler(estimator=logF_estimator)
 
-    # Move the gflownet to the GPU.
-    gflownet = gflownet.to(device)
+    else:
+        pf_estimator = DiscretePolicyEstimator(
+            module_PF, env.n_actions, preprocessor=preprocessor, is_backward=False
+        )
+        pb_estimator = DiscretePolicyEstimator(
+            module_PB, env.n_actions, preprocessor=preprocessor, is_backward=True
+        )
+        if args.loss == "DB":
+            logF_module = MLP(
+                input_dim=preprocessor.output_dim,
+                output_dim=1,
+                # trunk=module_PF.trunk,  # FIXME: This raises an Error
+            )
+            logF_estimator = ScalarEstimator(
+                module=logF_module, preprocessor=preprocessor
+            )
+            gflownet = DBGFlowNet(pf=pf_estimator, pb=pb_estimator, logF=logF_estimator)
+        else:
+            gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0)
 
-    # Policy parameters have their own LR. Log Z gets dedicated learning rate
-    # (typically higher).
-    optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=args.lr)
-    optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": args.lr_logz})
+        gflownet = gflownet.to(device)
+        optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=args.lr)
+        if isinstance(gflownet, DBGFlowNet):
+            optimizer.add_param_group(
+                {"params": gflownet.logF.parameters(), "lr": args.lr}
+            )
+        else:  # TBGFlowNet
+            optimizer.add_param_group(
+                {"params": gflownet.logz_parameters(), "lr": args.lr_logz}
+            )
+        sampler = Sampler(estimator=pf_estimator)
 
     validation_info = {"l1_dist": float("inf")}
     visited_terminating_states = env.states_from_batch_shape((0,))
     discovered_modes = set()
-    n_pixels_per_mode = round(env.height / 10) ** env.ndim
+    # Deprecated metric; replaced by exact mode counting via env.modes_found
     for it in (pbar := tqdm(range(args.n_iterations), dynamic_ncols=True)):
         trajectories = sampler.sample_trajectories(
             env,
             n=args.batch_size,
-            save_logprobs=True,
+            save_logprobs=False,
             save_estimator_outputs=False,
             epsilon=args.epsilon,
         )
@@ -103,7 +132,9 @@ def main(args):
         )
 
         optimizer.zero_grad()
-        loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=False)
+        loss = gflownet.loss_from_trajectories(
+            env, trajectories, recalculate_all_logprobs=False
+        )
         loss.backward()
 
         gflownet.assert_finite_gradients()
@@ -116,30 +147,19 @@ def main(args):
                 env,
                 gflownet,
                 args.validation_samples,
-                visited_terminating_states,
-            )
-            # Modes will have a reward greater than R2+R1+R0.
-            mode_reward_threshold = sum(
-                [
-                    env.reward_fn_kwargs["R2"],
-                    env.reward_fn_kwargs["R1"],
-                    env.reward_fn_kwargs["R0"],
-                ]
             )
 
             assert isinstance(visited_terminating_states, DiscreteStates)
-            modes = visited_terminating_states[
-                env.reward(visited_terminating_states) >= mode_reward_threshold
-            ].tensor
-            # Finds all the unique modes in visited_terminating_states.
-            modes_found = set([tuple(s.tolist()) for s in modes])
+            modes_found = env.modes_found(visited_terminating_states)
             discovered_modes.update(modes_found)
-            # torch.tensor(list(modes_found)).shape ==[batch_size, 2]
+
             str_info = f"Iter {it + 1}: "
             if "l1_dist" in validation_info:
                 str_info += f"L1 distance={validation_info['l1_dist']:.8f} "
+            n_total = env.n_modes
+            pct = 100 * len(discovered_modes) / n_total if n_total else 0
             str_info += (
-                f"modes discovered={len(discovered_modes) / n_pixels_per_mode:.3f} "
+                f"mode states found={len(discovered_modes)} / {n_total} ({pct:.1f}%) "
             )
             str_info += f"n terminating states {len(visited_terminating_states)}"
             print(str_info)
@@ -153,10 +173,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--no_cuda", action="store_true", help="Prevent CUDA usage")
     parser.add_argument(
+        "--loss",
+        type=str,
+        choices=["FM", "TB", "DB"],
+        default="TB",
+        help="Loss function to use",
+    )
+    parser.add_argument(
         "--ndim", type=int, default=2, help="Number of dimensions in the environment"
     )
     parser.add_argument(
-        "--height", type=int, default=64, help="Height of the environment"
+        "--height", type=int, default=32, help="Height of the environment"
     )
     parser.add_argument(
         "--R0",

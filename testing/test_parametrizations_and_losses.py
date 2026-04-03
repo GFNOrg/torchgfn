@@ -2,7 +2,7 @@ from typing import Literal, cast
 
 import pytest
 import torch
-from test_samplers_and_trajectories import trajectory_sampling_with_return
+from test_samplers_and_containers import trajectory_sampling_with_return
 
 from gfn.containers import Trajectories
 from gfn.estimators import DiscretePolicyEstimator, ScalarEstimator
@@ -17,11 +17,10 @@ from gfn.gflownet import (
 )
 from gfn.gym import Box, DiscreteEBM, HyperGrid
 from gfn.gym.helpers.box_utils import (
-    BoxPBEstimator,
-    BoxPBMLP,
-    BoxPBUniform,
-    BoxPFEstimator,
-    BoxPFMLP,
+    BoxCartesianPBEstimator,
+    BoxCartesianPBMLP,
+    BoxCartesianPFEstimator,
+    BoxCartesianPFMLP,
 )
 from gfn.preprocessors import EnumPreprocessor, IdentityPreprocessor, KHotPreprocessor
 from gfn.utils.modules import MLP, DiscreteUniform, Tabular
@@ -37,7 +36,7 @@ N = 10  # Number of trajectories from sample_trajectories (changes tests globall
 @pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
 def test_FM(env_name: str, ndim: int, module_name: str):
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim)
+        env = HyperGrid(ndim=ndim, validate_modes=False)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=ndim)
     else:
@@ -83,6 +82,7 @@ def test_get_pfs_and_pbs(
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
         env_name,
         preprocessor_name,
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
@@ -105,6 +105,7 @@ def test_get_scores(
     trajectories, _, pf_estimator, pb_estimator = trajectory_sampling_with_return(
         env_name,
         preprocessor_name,
+        batch_size=5,
         delta=0.1,
         n_components=1,
         n_components_s0=1,
@@ -135,7 +136,7 @@ def PFBasedGFlowNet_with_return(
     zero_logF: bool,
 ):
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim, height=4)
+        env = HyperGrid(ndim=ndim, height=4, validate_modes=False)
         preprocessor = KHotPreprocessor(env.height, env.ndim)
     elif env_name == "DiscreteEBM":
         env = DiscreteEBM(ndim=ndim)
@@ -160,11 +161,11 @@ def PFBasedGFlowNet_with_return(
         logF_module = Tabular(n_states=env.n_states, output_dim=1)
     else:
         if isinstance(env, Box):
-            pf_module = BoxPFMLP(
+            n_components = ndim + 1
+            pf_module = BoxCartesianPFMLP(
                 hidden_dim=32,
-                n_hidden_layers=2,
-                n_components=ndim,
-                n_components_s0=ndim - 1,
+                n_hidden_layers=3,
+                n_components=n_components,
             )
 
         else:
@@ -174,10 +175,10 @@ def PFBasedGFlowNet_with_return(
             )
 
         if module_name == "MLP" and env_name == "Box":
-            pb_module = BoxPBMLP(
+            pb_module = BoxCartesianPBMLP(
                 hidden_dim=32,
-                n_hidden_layers=2,
-                n_components=ndim + 1,
+                n_hidden_layers=3,
+                n_components=n_components,
                 trunk=pf_module.trunk if tie_pb_to_pf else None,
             )
         elif module_name == "MLP" and not isinstance(env, Box):
@@ -188,24 +189,27 @@ def PFBasedGFlowNet_with_return(
         elif module_name == "Uniform" and not isinstance(env, Box):
             pb_module = DiscreteUniform(output_dim=env.n_actions - 1)
         else:
-            # Uniform with Box environment
-            pb_module = BoxPBUniform()
+            # Uniform with Box environment - use Cartesian with uniform-like components
+            pb_module = BoxCartesianPBMLP(
+                hidden_dim=32,
+                n_hidden_layers=3,
+                n_components=1,
+            )
         if zero_logF:
             logF_module = DiscreteUniform(output_dim=1)
         else:
             logF_module = MLP(input_dim=preprocessor.output_dim, output_dim=1)
 
     if isinstance(env, Box):
-        pf = BoxPFEstimator(
+        pf = BoxCartesianPFEstimator(
             env,
             pf_module,
-            n_components_s0=ndim - 1,
-            n_components=ndim,
+            n_components=n_components,
         )
-        pb = BoxPBEstimator(
+        pb = BoxCartesianPBEstimator(
             env,
             pb_module,
-            n_components=ndim + 1 if module_name != "Uniform" else 1,
+            n_components=n_components if module_name != "Uniform" else 1,
         )
     else:
         pf = DiscretePolicyEstimator(pf_module, env.n_actions, preprocessor=preprocessor)
@@ -342,6 +346,7 @@ def test_subTB_vs_TB(
 ):
     if env_name == "Box" and module_name == "Tabular":
         pytest.skip("Tabular module impossible for Box")
+    torch.manual_seed(42)
     env, pf, pb, _, gflownet = PFBasedGFlowNet_with_return(
         env_name=env_name,
         ndim=ndim,
@@ -368,7 +373,7 @@ def test_subTB_vs_TB(
 def test_flow_matching_states_container(env_name: str, ndim: int):
     """Test that flow matching correctly processes state pairs from trajectories."""
     if env_name == "HyperGrid":
-        env = HyperGrid(ndim=ndim)
+        env = HyperGrid(ndim=ndim, validate_modes=False)
         preprocessor = KHotPreprocessor(env.height, env.ndim)
     else:
         env = DiscreteEBM(ndim=ndim)

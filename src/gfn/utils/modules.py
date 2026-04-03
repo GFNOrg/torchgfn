@@ -1,17 +1,23 @@
 """This file contains some examples of modules that can be used with GFN."""
 
+import logging
 import math
+from abc import ABC, abstractmethod
 from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from linear_attention_transformer import LinearAttentionTransformer
 from tensordict import TensorDict
+from torch import Tensor
 from torch_geometric.nn import DirGNNConv, GCNConv, GINConv
 
 from gfn.actions import GraphActions, GraphActionType
 from gfn.utils.common import is_int_dtype
 from gfn.utils.graphs import GeometricBatch, get_edge_indices
+
+logger = logging.getLogger(__name__)
 
 ACTIVATION_FNS = {
     "relu": nn.ReLU,
@@ -48,9 +54,11 @@ class MLP(nn.Module):
             input_dim: The dimension of the input.
             output_dim: The dimension of the output.
             hidden_dim: The dimension of the hidden layers.
-            n_hidden_layers: The number of hidden layers.
-            n_noisy_layers: The number of layers which are noisy, including the
-                input and output layers.
+            n_hidden_layers: The number of hidden layers (including the input
+                projection). With n_hidden_layers=2, the architecture is
+                [input→H1→H2→output] (3 Linear layers total).
+            n_noisy_layers: The number of noisy layers (from the output end).
+                The input projection is never noisy. Must be <= n_hidden_layers.
             activation_fn: The activation function to use.
             trunk: A custom trunk to use. If None, a new trunk will be created.
             add_layer_norm: Whether to add layer normalization to the hidden layers.
@@ -78,10 +86,13 @@ class MLP(nn.Module):
         # to the end of the network.
         else:
             assert n_hidden_layers is not None, "n_hidden_layers must be provided"
-            assert n_hidden_layers >= 0, "n_hidden_layers must be non-negative (>= 0)."
+            assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1."
+            # The input projection is always non-noisy. At most (n_hidden_layers - 1)
+            # extra hidden layers plus the output layer can be noisy, giving a maximum
+            # of n_hidden_layers noisy layers.
             assert (
-                n_noisy_layers <= n_hidden_layers + 1
-            ), "n_noisy_layers must be <= n_hidden_layers + the output layer."
+                n_noisy_layers <= n_hidden_layers
+            ), "n_noisy_layers must be <= n_hidden_layers."
             assert hidden_dim is not None, "hidden_dim must be provided"
             assert (
                 activation_fn in ACTIVATION_FNS
@@ -102,9 +113,12 @@ class MLP(nn.Module):
                     activation(),
                 ]
 
-            # Add the hidden layers. Put all noisy layers near the output.
+            # Add hidden-to-hidden layers. The input projection above counts as
+            # the first hidden layer, so we add (n_hidden_layers - 1) more.
+            # Put all noisy layers near the output.
+            n_extra_hidden = max(0, n_hidden_layers - 1)
             n_noisy_hidden_layers = max(0, n_noisy_layers - 1)
-            n_noiseless_hidden_layers = n_hidden_layers - n_noisy_hidden_layers
+            n_noiseless_hidden_layers = n_extra_hidden - n_noisy_hidden_layers
             hidden_layer_types = [nn.Linear] * n_noiseless_hidden_layers + [
                 NoisyLinear
             ] * n_noisy_hidden_layers
@@ -201,38 +215,78 @@ class Tabular(nn.Module):
         return outputs
 
 
-class DiscreteUniform(nn.Module):
-    """Implements a uniform distribution over discrete actions.
+class UniformModule(nn.Module):
+    """Constant-output module for non-learned (uniform/fixed) policies.
 
-    It uses a zero function approximator (a function that always outputs 0) to be used as
-    logits by a DiscretePBEstimator.
+    Outputs a constant tensor for all inputs.  Plug into any ``Estimator`` as the
+    ``module`` argument to get a non-learned policy.
+
+    Typical fill values:
+
+    * ``0.0`` — equal logits → uniform categorical (discrete environments).
+    * ``1.0`` — fixed params for sigmoid-based continuous estimators.
 
     Attributes:
-        output_dim: The size of the output space.
+        output_dim: Output dimension matching the estimator's expected_output_dim.
+        fill_value: Constant value to fill the output tensor.
+        skip_normalization: If True, signals to estimators that outputs should be
+            used directly without normalization transforms (e.g. sigmoid scaling
+            of concentration parameters).
     """
 
-    def __init__(self, output_dim: int) -> None:
-        """Initializes a new DiscreteUniform module.
+    def __init__(
+        self,
+        output_dim: int,
+        input_dim: int | None = None,
+        fill_value: float = 0.0,
+        skip_normalization: bool = False,
+    ) -> None:
+        """Initialize a UniformModule.
 
         Args:
             output_dim: The dimension of the output.
+            input_dim: Input dimension. Set this when no external preprocessor is
+                provided so that ``Estimator`` can create a default
+                ``IdentityPreprocessor``.  May be omitted when a preprocessor is
+                always supplied.
+            fill_value: Constant value for every output element.
+            skip_normalization: If True, downstream estimators should skip
+                normalization of the module output (e.g. don't apply sigmoid
+                scaling to concentration parameters).
         """
         super().__init__()
+        if input_dim is not None:
+            self.input_dim = input_dim
         self.output_dim = output_dim
+        self.fill_value = fill_value
+        self.skip_normalization = skip_normalization
 
     def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
-        """Forward method for the uniform distribution.
+        """Return a constant tensor of shape ``(*batch_shape, output_dim)``.
 
         Args:
-            preprocessed_states: a batch of states appropriately preprocessed for
-                ingestion by the uniform distribution. The shape of the tensor should be (*batch_shape, input_dim).
+            preprocessed_states: Tensor of shape ``(*batch_shape, input_dim)``.
 
-        Returns: a tensor of shape (*batch_shape, output_dim).
+        Returns:
+            Tensor of shape ``(*batch_shape, output_dim)`` filled with
+            ``fill_value``.
         """
-        out = torch.zeros(*preprocessed_states.shape[:-1], self.output_dim).to(
-            preprocessed_states.device
+        return torch.full(
+            (*preprocessed_states.shape[:-1], self.output_dim),
+            self.fill_value,
+            device=preprocessed_states.device,
         )
-        return out
+
+
+class DiscreteUniform(UniformModule):
+    """Uniform distribution over discrete actions.
+
+    Backward-compatible alias for ``UniformModule(output_dim, fill_value=0.0)``.
+    Prefer ``UniformModule`` for new code.
+    """
+
+    def __init__(self, output_dim: int) -> None:
+        super().__init__(output_dim=output_dim, fill_value=0.0)
 
 
 class LinearTransformer(nn.Module):
@@ -762,6 +816,58 @@ class GraphEdgeActionMLP(nn.Module):
         )
 
 
+class GraphScalarMLP(nn.Module):
+    """Graph encoder that maps adjacency structure to n scalar output."""
+
+    def __init__(
+        self,
+        n_nodes: int,
+        directed: bool,
+        embedding_dim: int = 128,
+        n_hidden_layers: int = 2,
+        n_outputs: int = 1,
+    ) -> None:
+        super().__init__()
+        assert n_nodes > 0, "n_nodes must be positive"
+        assert embedding_dim > 0, "embedding_dim must be positive"
+        assert n_hidden_layers >= 1, "n_hidden_layers must be >= 1"
+        self.n_nodes = n_nodes
+        self.is_directed = directed
+        self.input_dim = n_nodes**2
+
+        self.backbone = MLP(
+            input_dim=n_nodes**2,
+            output_dim=embedding_dim,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=n_hidden_layers,
+            add_layer_norm=True,
+        )
+        self.head = MLP(
+            input_dim=embedding_dim,
+            output_dim=n_outputs,
+            hidden_dim=embedding_dim,
+            n_hidden_layers=1,
+            add_layer_norm=True,
+        )
+
+    def forward(self, states_tensor: GeometricBatch) -> torch.Tensor:
+        """Encode graphs into a scalar per element of the batch."""
+        batch_size = len(states_tensor)
+        device = states_tensor.x.device
+        adj = torch.zeros((batch_size, self.n_nodes, self.n_nodes), device=device)
+
+        if states_tensor.edge_index.numel() > 0:
+            # Vectorized over the batch dim.
+            B = torch.arange(batch_size)
+            edges = states_tensor.edge_index
+            adj[B, edges[:, 0], edges[:, 1]] = 1
+            if not self.is_directed:
+                adj[B, edges[:, 1], edges[:, 0]] = 1
+
+        embedding = self.backbone(adj.view(batch_size, -1))
+        return self.head(embedding)
+
+
 class GraphActionUniform(nn.Module):
     """Implements a uniform distribution over discrete actions given a graph state.
 
@@ -806,11 +912,16 @@ class GraphActionUniform(nn.Module):
                 ingestion by the uniform distribution.
 
         Returns:
-            A TensorDict containing logits for each action component, with all values set to 1 to represent a uniform distribution:
-            - GraphActions.ACTION_TYPE_KEY: Tensor of shape [*batch_shape, 3] for the 3 possible action types
-            - GraphActions.EDGE_CLASS_KEY: Tensor of shape [*batch_shape, num_edge_classes] for edge class logits
-            - GraphActions.NODE_CLASS_KEY: Tensor of shape [*batch_shape, num_node_classes] for node class logits
-            - GraphActions.EDGE_INDEX_KEY: Tensor of shape [*batch_shape, edges_dim] for edge index logits
+            A TensorDict containing logits for each action component, with all values
+              set to 1 to represent a uniform distribution:
+            - GraphActions.ACTION_TYPE_KEY: Tensor of shape [*batch_shape, 3] for the 3
+              possible action types
+            - GraphActions.EDGE_CLASS_KEY: Tensor of shape [*batch_shape,
+              num_edge_classes] for edge class logits
+            - GraphActions.NODE_CLASS_KEY: Tensor of shape [*batch_shape,
+              num_node_classes] for node class logits
+            - GraphActions.EDGE_INDEX_KEY: Tensor of shape [*batch_shape, edges_dim]
+              for edge index logits
         """
         device = states_tensor.x.device
         max_nodes = int(torch.max(states_tensor.ptr[1:] - states_tensor.ptr[:-1]))
@@ -962,3 +1073,858 @@ class NoisyLinear(nn.Linear):
                 return self.bias_mu
         else:
             return None
+
+
+class AutoregressiveDiscreteSequenceModel(ABC, nn.Module):
+
+    @abstractmethod
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        """Initialize the carry for the sequence model.
+
+        Args:
+            batch_size (int): Batch size.
+            device (torch.device): Device to allocate carry tensors on.
+
+        Returns:
+            dict[str, torch.Tensor]: Initialized carry.
+        """
+
+    @abstractmethod
+    def forward(
+        self,
+        x: torch.Tensor,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Compute the logits for the next tokens in the sequence.
+
+        Args:
+            x (torch.Tensor): (B, T) tensor of input token indices where ``T`` is the
+                number of newly supplied timesteps (``T`` may be 1 for incremental
+                decoding).
+            carry (dict[str, torch.Tensor]): Carry from previous steps for recurrent
+                processing (e.g., hidden states).
+
+        Returns:
+            tuple[torch.Tensor, dict[str, torch.Tensor]]: Logits for the next token
+                at each supplied timestep with shape (B, T, vocab) and updated carry.
+        """
+
+    @property
+    @abstractmethod
+    def vocab_size(self) -> int:
+        """Size of the vocabulary (excluding BOS token)."""
+
+
+class RecurrentDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
+    def __init__(
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        hidden_size: int,
+        num_layers: int = 1,
+        rnn_type: Literal["lstm", "gru"] = "lstm",
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        if num_layers <= 0:
+            raise ValueError("num_layers must be a positive integer.")
+        rnn_kind = rnn_type.lower()
+        if rnn_kind not in {"lstm", "gru"}:
+            raise ValueError("rnn_type must be 'lstm' or 'gru'.")
+
+        if not 0.0 <= dropout <= 1.0:
+            raise ValueError("dropout must be in the range [0, 1].")
+
+        self._vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.rnn_type = rnn_kind
+
+        self.embedding = nn.Embedding(vocab_size + 1, embedding_dim)  # +1 for BOS token
+        rnn_dropout = dropout if num_layers > 1 else 0.0
+        self.lstm: nn.LSTM | None
+        self.gru: nn.GRU | None
+        if rnn_kind == "lstm":
+            self.lstm = nn.LSTM(
+                input_size=embedding_dim,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+            )
+            self.gru = None
+        else:
+            self.gru = nn.GRU(
+                input_size=embedding_dim,
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=rnn_dropout,
+            )
+            self.lstm = None
+        self.output_projection = nn.Linear(hidden_size, vocab_size)
+
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        carry: dict[str, torch.Tensor] = {
+            "hidden": torch.zeros(
+                self.num_layers, batch_size, self.hidden_size, device=device
+            ),
+        }
+        if self.rnn_type == "lstm":
+            carry["cell"] = torch.zeros(
+                self.num_layers, batch_size, self.hidden_size, device=device
+            )
+        return carry
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if x.dim() != 2:
+            raise ValueError("Expected input tensor with shape (batch, timesteps).")
+
+        batch, timesteps = x.size()
+        device = x.device
+
+        if "hidden" not in carry:
+            raise KeyError("Carry must provide a 'hidden' state tensor.")
+
+        hidden = carry["hidden"]
+        if hidden.size(1) != batch:
+            raise ValueError(
+                "Hidden state batch dimension does not match the provided tokens."
+            )
+        if hidden.device != device:
+            raise ValueError(
+                "Hidden state tensor must live on the same device as input tokens."
+            )
+
+        embedded = self.embedding(x)
+
+        if self.rnn_type == "lstm":
+            lstm = self.lstm
+            if lstm is None:
+                raise RuntimeError("LSTM module was not initialized.")
+            if "cell" not in carry:
+                raise KeyError("LSTM carry must provide a 'cell' state tensor.")
+            cell = carry["cell"]
+            if cell.size(1) != batch:
+                raise ValueError(
+                    "Cell state batch dimension does not match the provided tokens."
+                )
+            if cell.device != device:
+                raise ValueError(
+                    "Cell state tensor must live on the same device as input tokens."
+                )
+            outputs, (hidden_next, cell_next) = lstm(embedded, (hidden, cell))
+            updated_carry: dict[str, torch.Tensor] = {
+                "hidden": hidden_next,
+                "cell": cell_next,
+            }
+        else:
+            gru = self.gru
+            if gru is None:
+                raise RuntimeError("GRU module was not initialized.")
+            outputs, hidden_next = gru(embedded, hidden)
+            updated_carry = {
+                "hidden": hidden_next,
+            }
+
+        logits = self.output_projection(outputs)
+        return logits, updated_carry
+
+    @property
+    def vocab_size(self) -> int:
+        return self._vocab_size
+
+
+class _AutoregressiveTransformerBlock(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        ff_hidden_dim: int,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        if embed_dim % num_heads != 0:
+            raise ValueError("Embedding dimension must be divisible by number of heads.")
+
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+
+        self.linear1 = nn.Linear(embed_dim, ff_hidden_dim)
+        self.linear2 = nn.Linear(ff_hidden_dim, embed_dim)
+
+        self.attn_dropout = nn.Dropout(dropout)
+        self.residual_dropout = nn.Dropout(dropout)
+        self.ff_dropout = nn.Dropout(dropout)
+
+    def forward(
+        self,
+        hidden: torch.Tensor,
+        key_carry: torch.Tensor,
+        value_carry: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch, timesteps, _ = hidden.size()
+
+        normed_hidden = self.norm1(hidden)
+
+        q = self.q_proj(normed_hidden)
+        k = self.k_proj(normed_hidden)
+        v = self.v_proj(normed_hidden)
+
+        q = q.view(batch, timesteps, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch, timesteps, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch, timesteps, self.num_heads, self.head_dim).transpose(1, 2)
+
+        carry_length = key_carry.size(2)
+        updated_key_carry = torch.cat((key_carry, k), dim=2)
+        updated_value_carry = torch.cat((value_carry, v), dim=2)
+
+        attn_scores = torch.matmul(q, updated_key_carry.transpose(-2, -1)) / math.sqrt(
+            float(self.head_dim)
+        )
+
+        if timesteps > 1 or carry_length > 0:
+            total_kv_length = carry_length + timesteps
+            kv_positions = torch.arange(
+                total_kv_length, device=hidden.device, dtype=torch.long
+            )
+            query_positions = torch.arange(
+                timesteps, device=hidden.device, dtype=torch.long
+            ).unsqueeze(1)
+            causal_mask = kv_positions.unsqueeze(0) <= (query_positions + carry_length)
+            attn_scores = attn_scores.masked_fill(
+                ~causal_mask.unsqueeze(0).unsqueeze(0), float("-inf")
+            )
+
+        attn_weights = torch.softmax(attn_scores, dim=-1)
+        attn_weights = self.attn_dropout(attn_weights)
+        attn_output = torch.matmul(attn_weights, updated_value_carry)
+        attn_output = attn_output.transpose(1, 2).reshape(
+            batch, timesteps, self.embed_dim
+        )
+        attn_output = self.out_proj(attn_output)
+
+        residual = hidden
+        hidden = residual + self.residual_dropout(attn_output)
+
+        ff_input = self.norm2(hidden)
+        ff_hidden = self.linear1(ff_input)
+        ff_hidden = self.ff_dropout(F.gelu(ff_hidden))
+        ff_hidden = self.linear2(ff_hidden)
+
+        hidden = hidden + self.residual_dropout(ff_hidden)
+        return hidden, updated_key_carry, updated_value_carry
+
+
+class TransformerDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
+    def __init__(
+        self,
+        vocab_size: int,
+        embedding_dim: int,
+        num_heads: int,
+        ff_hidden_dim: int,
+        num_layers: int,
+        max_position_embeddings: int,
+        dropout: float = 0.0,
+        positional_embedding: Literal["learned", "sinusoidal"] = "learned",
+    ) -> None:
+        super().__init__()
+        if num_layers <= 0:
+            raise ValueError("num_layers must be positive.")
+        if max_position_embeddings <= 0:
+            raise ValueError("max_position_embeddings must be positive.")
+        if not 0.0 <= dropout <= 1.0:
+            raise ValueError("dropout must lie in [0, 1].")
+        if embedding_dim % num_heads != 0:
+            raise ValueError("embedding_dim must be divisible by num_heads.")
+        if positional_embedding not in {"learned", "sinusoidal"}:
+            raise ValueError("positional_embedding must be 'learned' or 'sinusoidal'.")
+
+        self._vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.num_heads = num_heads
+        self.ff_hidden_dim = ff_hidden_dim
+        self.num_layers = num_layers
+        self.max_position_embeddings = max_position_embeddings
+        self.head_dim = embedding_dim // num_heads
+        self._positional_embedding_type = positional_embedding
+
+        self.token_embedding = nn.Embedding(
+            vocab_size + 1, embedding_dim
+        )  # +1 for BOS token
+        if self._positional_embedding_type == "learned":
+            self.position_embedding = nn.Embedding(
+                max_position_embeddings, embedding_dim
+            )
+        else:
+            self.position_embedding = SinusoidalPositionalEmbedding(
+                embedding_dim=embedding_dim,
+                max_length=max_position_embeddings,
+            )
+        self.embedding_dropout = nn.Dropout(dropout)
+
+        blocks: list[_AutoregressiveTransformerBlock] = []
+        for _ in range(num_layers):
+            blocks.append(
+                _AutoregressiveTransformerBlock(
+                    embed_dim=embedding_dim,
+                    num_heads=num_heads,
+                    ff_hidden_dim=ff_hidden_dim,
+                    dropout=dropout,
+                )
+            )
+
+        self.layers = nn.ModuleList(blocks)
+        self.final_norm = nn.LayerNorm(embedding_dim)
+        self.output_projection = nn.Linear(embedding_dim, vocab_size)
+        self.key_names = [f"key_{idx}" for idx in range(num_layers)]
+        self.value_names = [f"value_{idx}" for idx in range(num_layers)]
+
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        weight = self.token_embedding.weight
+        carry: dict[str, torch.Tensor] = {
+            "position": torch.zeros(batch_size, dtype=torch.long, device=device),
+        }
+        empty_key = weight.new_empty(batch_size, self.num_heads, 0, self.head_dim).to(
+            device
+        )
+        empty_value = weight.new_empty(batch_size, self.num_heads, 0, self.head_dim).to(
+            device
+        )
+        for key_name, value_name in zip(self.key_names, self.value_names):
+            carry[key_name] = empty_key.clone()
+            carry[value_name] = empty_value.clone()
+
+        return carry
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if x.dim() != 2:
+            raise ValueError("Expected input tensor with shape (batch, timesteps).")
+
+        batch, timesteps = x.size()
+        device = x.device
+        if "position" not in carry:
+            raise KeyError("Carry must include a 'position' tensor.")
+
+        positions = carry["position"]
+        if positions.size(0) != batch:
+            raise ValueError(
+                "Position carry batch dimension does not match the provided tokens."
+            )
+        if positions.device != device:
+            raise ValueError(
+                "Position tensor must live on the same device as input tokens."
+            )
+        if torch.any(positions >= self.max_position_embeddings):
+            raise ValueError(
+                "Position index exceeds configured positional embedding range."
+            )
+
+        position_offsets = torch.arange(timesteps, device=device, dtype=positions.dtype)
+        position_indices = positions.unsqueeze(1) + position_offsets
+        if torch.any(position_indices >= self.max_position_embeddings):
+            raise ValueError(
+                "Position index exceeds configured positional embedding range."
+            )
+
+        hidden = self.token_embedding(x) + self.position_embedding(position_indices)
+        hidden = self.embedding_dropout(hidden)
+
+        updated_carry: dict[str, torch.Tensor] = {}
+
+        for idx, layer in enumerate(self.layers):
+            key_name = self.key_names[idx]
+            value_name = self.value_names[idx]
+            if key_name not in carry or value_name not in carry:
+                raise KeyError(
+                    "Transformer carry is missing key/value tensors for layer" f" {idx}."
+                )
+            key_carry = carry[key_name]
+            value_carry = carry[value_name]
+            if key_carry.size(0) != batch or key_carry.size(1) != self.num_heads:
+                raise ValueError(
+                    "Key carry shape is incompatible with the provided tokens."
+                )
+            if value_carry.size(0) != batch or value_carry.size(1) != self.num_heads:
+                raise ValueError(
+                    "Value carry shape is incompatible with the provided tokens."
+                )
+            if (key_carry.size(-1) != self.head_dim) or (
+                value_carry.size(-1) != self.head_dim
+            ):
+                raise ValueError("Key/value carry head dimension mismatch detected.")
+            if key_carry.device != device or value_carry.device != device:
+                raise ValueError("Key/value carry tensors must share the input device.")
+            hidden, updated_key_carry, updated_value_carry = layer(
+                hidden, key_carry, value_carry
+            )
+            updated_carry[key_name] = updated_key_carry
+            updated_carry[value_name] = updated_value_carry
+
+        hidden = self.final_norm(hidden)
+        logits = self.output_projection(hidden)
+
+        updated_carry["position"] = positions + timesteps
+        return logits, updated_carry
+
+    @property
+    def vocab_size(self) -> int:
+        return self._vocab_size
+
+
+def sinusoidal_position_encoding(
+    length: int,
+    embedding_dim: int,
+    base: float = 10000.0,
+) -> Tensor:
+    """Create 1D sinusoidal positional embeddings.
+
+    Args:
+        length: Number of positions to encode. Must be non-negative.
+        embedding_dim: Dimensionality of each embedding. Must be positive.
+        base: Exponential base used to compute the angular frequencies.
+
+    Returns:
+        A ``(length, embedding_dim)`` tensor of sinusoidal encodings.
+
+    Raises:
+        ValueError: If ``length`` is negative, ``embedding_dim`` is not positive,
+            or ``base`` is not positive.
+    """
+
+    assert length >= 0, "length must be non-negative."
+    assert embedding_dim > 0, "embedding_dim must be positive."
+    assert base > 0, "base must be positive."
+
+    if length == 0:
+        return torch.empty(0, embedding_dim)
+
+    positions = torch.arange(length).unsqueeze(1)
+    div_input = torch.arange(0, embedding_dim, 2)
+    div_term = torch.exp(div_input * (-math.log(base) / embedding_dim))
+    embeddings = torch.zeros(length, embedding_dim)
+    angles = positions * div_term
+    embeddings[:, 0::2] = torch.sin(angles)
+
+    if embedding_dim % 2 == 0:
+        embeddings[:, 1::2] = torch.cos(angles)
+    else:
+        embeddings[:, 1::2] = torch.cos(angles)[:, : embedding_dim // 2]
+
+    return embeddings
+
+
+class SinusoidalPositionalEmbedding(nn.Module):
+    """Sinusoidal positional embeddings for transformer-style models.
+
+    The module caches a precomputed table of embeddings and extends it on demand.
+    Forward accepts either a sequence length or explicit position indices.
+    """
+
+    def __init__(
+        self,
+        embedding_dim: int,
+        max_length: int = 2048,
+        base: float = 10000.0,
+    ) -> None:
+        super().__init__()
+        assert max_length >= 0, "max_length must be non-negative."
+        assert embedding_dim > 0, "embedding_dim must be positive."
+        assert base > 0, "base must be positive."
+
+        self.embedding_dim = int(embedding_dim)
+        self.base = float(base)
+
+        pe = sinusoidal_position_encoding(max_length, self.embedding_dim, base=self.base)
+        self._pe: Tensor
+        self.register_buffer("_pe", pe)
+
+    @property
+    def pe(self) -> Tensor:
+        """Return the cached positional embedding table."""
+        return self._pe
+
+    def forward(
+        self,
+        positions: Optional[Tensor] = None,
+        seq_len: Optional[int] = None,
+    ) -> Tensor:
+        """Look up positional embeddings.
+
+        Args:
+            positions: Optional tensor of position indices. Can have any shape,
+                and the returned embeddings will append ``embedding_dim`` to that
+                shape. Defaults to ``None``.
+            seq_len: Optional sequence length. When provided, returns the first
+                ``seq_len`` embeddings from the table.
+
+        Returns:
+            Tensor of positional embeddings on the same device/dtype as the
+            cached table.
+
+        Raises:
+            ValueError: If both or neither of ``positions`` and ``seq_len`` are
+                provided, or if indices exceed the cached range.
+        """
+
+        if (positions is None) == (seq_len is None):
+            raise ValueError("Provide exactly one of positions or seq_len.")
+
+        if positions is not None:
+            flat_positions = positions.reshape(-1)
+            gathered = self._pe.index_select(0, flat_positions)
+            return gathered.view(
+                positions.shape[0], positions.shape[1], self.embedding_dim
+            )
+        else:
+            return self._pe[:seq_len]
+
+
+class DiffusionPISTimeEncoding(nn.Module):
+    """Time Encoding Module for DiffusionPISGradNet.
+
+    See DiffusionPISGradNet for more details.
+    """
+
+    def __init__(self, harmonics_dim: int, t_emb_dim: int, hidden_dim: int) -> None:
+        super().__init__()
+        self.timestep_phase = nn.Parameter(torch.randn(harmonics_dim)[None])
+        self.t_model = nn.Sequential(
+            nn.Linear(2 * harmonics_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, t_emb_dim),
+        )
+        self.register_buffer(
+            # Frequency range [0.1, 100] spans slow-varying to fast-varying
+            # harmonics, following the PIS/DIS time-encoding convention
+            # (Zhang & Chen 2021, arXiv:2111.15141).
+            "pe",
+            torch.linspace(start=0.1, end=100, steps=harmonics_dim)[None],
+        )
+
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Arguments:
+            t: torch.Tensor
+        """
+        t_sin = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).sin()  # type: ignore
+        t_cos = ((t.unsqueeze(1) * self.pe) + self.timestep_phase).cos()  # type: ignore
+        t_emb = torch.cat([t_sin, t_cos], dim=-1)
+        return self.t_model(t_emb)
+
+
+class DiffusionPISStateEncoding(nn.Module):
+    """State Encoding Module for DiffusionPISGradNet.
+
+    See DiffusionPISGradNet for more details.
+    """
+
+    def __init__(self, x_dim: int, s_emb_dim: int) -> None:
+        super().__init__()
+
+        self.s_model = nn.Linear(x_dim, s_emb_dim)
+
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
+        return self.s_model(s)
+
+
+class DiffusionPISJointPolicy(nn.Module):
+    """Joint Policy Module for DiffusionPISGradNet.
+
+    See DiffusionPISGradNet for more details.
+    """
+
+    def __init__(
+        self,
+        s_emb_dim: int,
+        hidden_dim: int,
+        out_dim: int,
+        num_layers: int,
+        zero_init: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.model = nn.Sequential(
+            nn.GELU(),  # Because this model accepts embeddings (linear projections).
+            nn.Linear(s_emb_dim, hidden_dim),
+            nn.GELU(),
+            *[
+                nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.GELU())
+                for _ in range(num_layers - 1)
+            ],
+            nn.Linear(hidden_dim, out_dim),
+        )
+
+        if zero_init:
+            self.model[-1].weight.data.fill_(1e-8)  # type: ignore
+            self.model[-1].bias.data.fill_(0.0)  # type: ignore
+
+    def forward(self, s_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        return self.model(s_emb + t_emb)
+
+
+class DiffusionPISGradNetForward(nn.Module):
+    """PISGradNet for diffusion sampling.
+
+    This architecture was first introduced in Path Integral Sampler (PIS) (https://arxiv.org/abs/2111.15141)
+    and adapted for GFlowNet-based training by Sendera et al. (https://arxiv.org/abs/2508.03044).
+
+    Attributes:
+        s_dim: The dimension of the states.
+        harmonics_dim: The dimension of the Fourier features.
+        t_emb_dim: The dimension of the time embedding.
+        s_emb_dim: The dimension of the state embedding.
+        hidden_dim: The dimension of the hidden layers.
+        joint_layers: The number of layers in the joint policy.
+        zero_init: Whether to initialize the weights and biases of the final layer to zero.
+        out_dim: The dimension of the output.
+        t_model: The time encoding module.
+        s_model: The state encoding module.
+        joint_model: The joint policy module.
+    """
+
+    def __init__(
+        self,
+        s_dim: int,  # dimension of states (== target.dim)
+        harmonics_dim: int = 64,
+        t_emb_dim: int = 64,
+        s_emb_dim: int = 64,
+        hidden_dim: int = 64,
+        joint_layers: int = 2,
+        zero_init: bool = False,
+        clipping: bool = False,
+        gfn_clip: float = 1e4,
+        t_scale: float = 1.0,
+        log_var_range: float = 4.0,  # kept for parity with learned-var subclass
+        learn_variance: bool = False,
+        # predict_flow: bool,  # TODO: support predict flow for db or subtb
+        # share_embeddings: bool = False,
+        # flow_harmonics_dim: int = 64,
+        # flow_t_emb_dim: int = 64,
+        # flow_s_emb_dim: int = 64,
+        # flow_hidden_dim: int = 64,
+        # flow_layers: int = 2,
+        # lp: bool,  # TODO: support Langevin parameterization
+        # lp_layers: int = 3,
+        # lp_scaling_per_dimension: bool = True,
+        # clipping: bool = False,  # TODO: support clipping
+        # out_clip: float = 1e4,
+        # lp_clip: float = 1e2,
+        # log_var_range: float = 4.0,
+    ):
+        """Initialize the PISGradNetForward.
+
+        Args:
+            s_dim: The dimension of the states.
+            harmonics_dim: The dimension of the Fourier features.
+            t_emb_dim: The dimension of the time embedding.
+            s_emb_dim: The dimension of the state embedding.
+            hidden_dim: The dimension of the hidden layers.
+            joint_layers: The number of layers in the joint policy.
+            zero_init: Whether to initialize the weights and biases of the final layer to zero.
+        """
+        super().__init__()
+        self.s_dim = s_dim
+        self.input_dim = s_dim + 1  # + 1 for time, for the default IdentityPreprocessor
+        self.harmonics_dim = harmonics_dim
+        self.t_emb_dim = t_emb_dim
+        self.s_emb_dim = s_emb_dim
+        self.hidden_dim = hidden_dim
+        self.joint_layers = joint_layers
+        self.zero_init = zero_init
+        self.learn_variance = learn_variance
+        self.out_dim = s_dim + 1 if self.learn_variance else s_dim
+        self.clipping = clipping
+        self.gfn_clip = gfn_clip
+        self.t_scale = t_scale
+        self.log_var_range = log_var_range
+
+        assert (
+            self.s_emb_dim == self.t_emb_dim
+        ), "Dimensionality of state embedding and time embedding should be the same!"
+
+        self.t_model = DiffusionPISTimeEncoding(
+            self.harmonics_dim, self.t_emb_dim, self.hidden_dim
+        )
+        self.s_model = DiffusionPISStateEncoding(self.s_dim, self.s_emb_dim)
+        self.joint_model = DiffusionPISJointPolicy(
+            self.s_emb_dim,
+            self.hidden_dim,
+            self.out_dim,
+            self.joint_layers,
+            self.zero_init,
+        )
+
+    def forward(
+        self,
+        preprocessed_states: torch.Tensor,
+        # grad_logr_fn: Callable,  # TODO: grad_logr_fn for lp
+    ) -> torch.Tensor:
+        """Forward pass of the module.
+
+        Args:
+            preprocessed_states: The preprocessed states (shape: (*batch_shape, s_dim + 1))
+
+        Returns:
+            The output of the module (shape: (*batch_shape, s_dim)).
+        """
+        s = preprocessed_states[..., :-1]
+        t = preprocessed_states[..., -1]
+        s_emb = self.s_model(s)
+        t_emb = self.t_model(t)
+        out = self.joint_model(s_emb, t_emb)
+
+        if self.learn_variance:
+            drift, raw_log_std = out[..., :-1], out[..., [-1]]
+            if self.clipping:
+                drift = torch.clamp(drift, -self.gfn_clip, self.gfn_clip)
+            log_std = torch.tanh(raw_log_std) * self.log_var_range
+            out = torch.cat([drift, log_std], dim=-1)
+        else:
+            if self.clipping:
+                out = torch.clamp(out, -self.gfn_clip, self.gfn_clip)
+
+        if torch.isnan(out).any():
+            raise ValueError("DiffusionPISGradNetForward produced NaNs")
+
+        return out
+
+
+class DiffusionFixedBackwardModule(nn.Module):
+    """Fixed Backward Module for DiffusionPISGradNet.
+
+    Attributes:
+        input_dim: The dimension of the input.
+    """
+
+    def __init__(self, s_dim: int):
+        """Initialize the FixedBackwardModule.
+
+        Args:
+            s_dim: The dimension of the states.
+        """
+        super().__init__()
+        self.input_dim = s_dim + 1  # + 1 for time, for the default IdentityPreprocessor
+
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the module.
+
+        Args:
+            preprocessed_states: The preprocessed states (shape: (*batch_shape, s_dim + 1))
+
+        Returns:
+            The output of the module (shape: (*batch_shape, s_dim)).
+        """
+        return torch.zeros_like(preprocessed_states[..., :-1])
+
+
+class DiffusionPISGradNetBackward(nn.Module):
+    """Learnable backward correction module (PIS-style) for diffusion.
+
+    Produces mean and optional log-std corrections that are tanh-scaled by
+    `pb_scale_range` to stay close to the analytic Brownian bridge.
+    """
+
+    def __init__(
+        self,
+        s_dim: int,
+        harmonics_dim: int = 64,
+        t_emb_dim: int = 64,
+        s_emb_dim: int = 64,
+        hidden_dim: int = 64,
+        joint_layers: int = 2,
+        zero_init: bool = False,
+        clipping: bool = False,
+        gfn_clip: float = 1e4,
+        pb_scale_range: float = 0.1,
+        log_var_range: float = 4.0,
+        learn_variance: bool = True,
+    ) -> None:
+        super().__init__()
+        self.s_dim = s_dim
+        self.out_dim = s_dim + (1 if learn_variance else 0)
+        self.harmonics_dim = harmonics_dim
+        self.t_emb_dim = t_emb_dim
+        self.s_emb_dim = s_emb_dim
+        self.hidden_dim = hidden_dim
+        self.joint_layers = joint_layers
+        self.zero_init = zero_init
+        self.clipping = clipping
+        self.gfn_clip = gfn_clip
+        self.pb_scale_range = pb_scale_range
+        self.log_var_range = log_var_range
+        self.learn_variance = learn_variance
+
+        assert (
+            self.s_emb_dim == self.t_emb_dim
+        ), "Dimensionality of state embedding and time embedding should be the same!"
+
+        self.t_model = DiffusionPISTimeEncoding(
+            self.harmonics_dim, self.t_emb_dim, self.hidden_dim
+        )
+        self.s_model = DiffusionPISStateEncoding(self.s_dim, self.s_emb_dim)
+        self.joint_model = DiffusionPISJointPolicy(
+            self.s_emb_dim,
+            self.hidden_dim,
+            self.out_dim,
+            self.joint_layers,
+            self.zero_init,
+        )
+
+    def forward(self, preprocessed_states: torch.Tensor) -> torch.Tensor:
+        s = preprocessed_states[..., :-1]
+        t = preprocessed_states[..., -1]
+        s_emb = self.s_model(s)
+        t_emb = self.t_model(t)
+        out = self.joint_model(s_emb, t_emb)
+
+        if self.clipping:
+            out = torch.clamp(out, -self.gfn_clip, self.gfn_clip)
+
+        # Tanh-bound outputs to [-1, 1]; the estimator
+        # (PinnedBrownianMotionBackward.to_probability_distribution) applies the
+        # actual pb_scale_range scaling, so we must NOT scale here.
+        drift_corr = torch.tanh(out[..., : self.s_dim])
+        if self.learn_variance and out.shape[-1] == self.s_dim + 1:
+            log_std_corr = torch.tanh(out[..., [-1]])
+            log_std_corr = torch.clamp(
+                log_std_corr, -self.log_var_range, self.log_var_range
+            )
+            out = torch.cat([drift_corr, log_std_corr], dim=-1)
+        else:
+            out = drift_corr
+
+        if torch.isnan(out).any():
+            raise ValueError("DiffusionPISGradNetBackward produced NaNs")
+
+        return out
