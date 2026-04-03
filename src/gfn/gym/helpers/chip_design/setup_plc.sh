@@ -5,10 +5,14 @@
 #   ./setup_plc.sh                  # Download native binary (Linux x86-64)
 #   ./setup_plc.sh --container      # Also build Apptainer .sif image
 #   ./setup_plc.sh --container-only # Only build Apptainer .sif (HPC)
-#   ./setup_plc.sh --version 0.0.3  # Use a specific version
+#   ./setup_plc.sh --version 0.0.4  # Use a specific version
 #
 # The binary is downloaded from Google Cloud Storage:
 #   https://storage.googleapis.com/rl-infra-public/circuit-training/placement_cost/
+#
+# NOTE: The GCS download URL may return 403. If so, the binary is already
+# bundled in this repo at plc_wrapper_main (committed from the original
+# circuit_training release). Just run: chmod +x plc_wrapper_main
 
 set -euo pipefail
 
