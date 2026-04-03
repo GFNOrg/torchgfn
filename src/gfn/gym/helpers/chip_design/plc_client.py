@@ -63,11 +63,7 @@ def _resolve_plc_binary() -> str:
     # 3. Apptainer wrapper script + .sif image
     wrapper = os.path.join(_PKG_DIR, "run_plc_apptainer.sh")
     sif = os.path.join(_PKG_DIR, "plc.sif")
-    if (
-        os.path.isfile(wrapper)
-        and os.access(wrapper, os.X_OK)
-        and os.path.isfile(sif)
-    ):
+    if os.path.isfile(wrapper) and os.access(wrapper, os.X_OK) and os.path.isfile(sif):
         if _find_singularity():
             return wrapper
 
