@@ -196,25 +196,22 @@ class ChipDesign(DiscreteEnv):
 
     def update_masks(self, states: ChipDesignStates) -> None:
         """Updates the forward and backward masks of the states."""
-        fwd = torch.zeros(
-            (*states.batch_shape, self.n_actions),
-            dtype=torch.bool,
-            device=self.device,
-        )
-        bwd = torch.zeros(
-            (*states.batch_shape, self.n_actions - 1),
-            dtype=torch.bool,
-            device=self.device,
-        )
+        batch_shape = states.batch_shape
+        n = states.tensor.shape[:-1].numel()  # flat batch size
 
-        for i in range(len(states)):
-            state_tensor = states.tensor[i]
+        flat_tensor = states.tensor.reshape(n, -1)
+        flat_node_idx = states.current_node_idx.reshape(n)
+        flat_is_sink = states.is_sink_state.reshape(n)
 
-            # Skip sink states — they have no valid actions.
-            if states.is_sink_state[i]:
+        fwd = torch.zeros(n, self.n_actions, dtype=torch.bool, device=self.device)
+        bwd = torch.zeros(n, self.n_actions - 1, dtype=torch.bool, device=self.device)
+
+        for i in range(n):
+            if flat_is_sink[i]:
                 continue
 
-            current_node_idx = states.current_node_idx[i].item()
+            state_tensor = flat_tensor[i]
+            current_node_idx = flat_node_idx[i].item()
 
             if current_node_idx >= self.n_macros:  # All macros placed
                 fwd[i, -1] = True  # Only exit is possible
@@ -230,8 +227,8 @@ class ChipDesign(DiscreteEnv):
                 assert last_placed_loc >= 0, "Last placed location should be >= 0"
                 bwd[i, int(last_placed_loc)] = True
 
-        states.forward_masks = fwd
-        states.backward_masks = bwd
+        states.forward_masks = fwd.reshape(*batch_shape, self.n_actions)
+        states.backward_masks = bwd.reshape(*batch_shape, self.n_actions - 1)
 
     def reset(
         self,
@@ -265,33 +262,55 @@ class ChipDesign(DiscreteEnv):
 
     def step(self, states: ChipDesignStates, actions: Actions) -> ChipDesignStates:
         """Performs a forward step in the environment."""
-        new_tensor = states.tensor.clone()
+        batch_shape = states.batch_shape
+        n = states.tensor.shape[:-1].numel()
 
-        non_exit_mask = ~actions.is_exit
-        if torch.any(non_exit_mask):
-            rows = torch.arange(len(states), device=self.device)[non_exit_mask]
-            cols = states.current_node_idx[non_exit_mask]
-            new_tensor[rows, cols] = actions.tensor[non_exit_mask].squeeze(-1)
+        if n == 0:
+            return self.States(
+                tensor=states.tensor.clone(),
+                current_node_idx=states.current_node_idx.clone(),
+            )
 
-        if torch.any(actions.is_exit):
-            new_tensor[actions.is_exit] = self.sf
+        flat_tensor = states.tensor.reshape(n, self.n_macros).clone()
+        flat_node_idx = states.current_node_idx.reshape(n).clone()
+        flat_actions = actions.tensor.reshape(n, actions.tensor.shape[-1])
+        flat_is_exit = actions.is_exit.reshape(n)
 
-        new_current_node_idx = states.current_node_idx.clone()
-        new_current_node_idx[non_exit_mask] += 1
+        non_exit = ~flat_is_exit
+        if torch.any(non_exit):
+            rows = torch.arange(n, device=self.device)[non_exit]
+            cols = flat_node_idx[non_exit]
+            flat_tensor[rows, cols] = flat_actions[non_exit].squeeze(-1)
 
-        return self.States(tensor=new_tensor, current_node_idx=new_current_node_idx)
+        if torch.any(flat_is_exit):
+            flat_tensor[flat_is_exit] = self.sf
+
+        flat_node_idx[non_exit] += 1
+
+        return self.States(
+            tensor=flat_tensor.reshape(*batch_shape, self.n_macros),
+            current_node_idx=flat_node_idx.reshape(*batch_shape),
+        )
 
     def backward_step(
         self, states: ChipDesignStates, actions: Actions
     ) -> ChipDesignStates:
         """Performs a backward step in the environment."""
-        new_tensor = states.tensor.clone()
-        rows = torch.arange(len(states), device=self.device)
-        cols = states.current_node_idx - 1
-        new_tensor[rows, cols] = -1
+        batch_shape = states.batch_shape
+        n = states.tensor.shape[:-1].numel()
 
-        new_current_node_idx = states.current_node_idx - 1
-        return self.States(tensor=new_tensor, current_node_idx=new_current_node_idx)
+        flat_tensor = states.tensor.reshape(n, self.n_macros).clone()
+        flat_node_idx = states.current_node_idx.reshape(n)
+
+        rows = torch.arange(n, device=self.device)
+        cols = flat_node_idx - 1
+        flat_tensor[rows, cols] = -1
+
+        new_node_idx = flat_node_idx - 1
+        return self.States(
+            tensor=flat_tensor.reshape(*batch_shape, self.n_macros),
+            current_node_idx=new_node_idx.reshape(*batch_shape),
+        )
 
     def analytical_placer(self):
         """Places standard cells using an analytical placer."""
