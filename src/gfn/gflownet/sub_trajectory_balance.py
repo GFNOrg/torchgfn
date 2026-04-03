@@ -208,6 +208,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         is_terminal_mask: MaskTensor,
         sink_states_mask: MaskTensor,
         i: int,
+        log_rewards: torch.Tensor | None = None,
     ) -> TargetsTensor:
         """Calculates the targets tensor for the current sub-trajectory length.
 
@@ -225,19 +226,26 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             sink_states_mask: A mask of shape (max_length, batch_size) indicating
                 whether the state is a sink state.
             i: The sub-trajectory length.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_trajectories,). When None, uses the environment rewards.
+                Useful for intrinsic rewards (see
+                "Towards Improving Exploration through Sibling Augmented
+                GFlowNets", Madan et al., ICLR 2025).
 
         Returns:
             The targets tensor of shape (max_length + 1 - i, batch_size).
         """
         targets = torch.full_like(preds, fill_value=-float("inf"))
-        # Guard behind debug: log_rewards is always set for terminating trajectories;
-        # bare assert would cause a graph break in torch.compile.
+        if log_rewards is None:
+            # Guard behind debug: log_rewards is always set for terminating trajectories;
+            # bare assert would cause a graph break in torch.compile.
+            if self.debug:
+                assert trajectories.log_rewards is not None
+            # cast: log_rewards is always set for terminating trajectories.
+            log_rewards = cast(torch.Tensor, trajectories.log_rewards)
         if self.debug:
-            assert trajectories.log_rewards is not None
-        # cast: log_rewards is always set for terminating trajectories.
-        log_rewards = cast(torch.Tensor, trajectories.log_rewards)[
-            trajectories.terminating_idx >= i
-        ]
+            assert log_rewards.shape == (trajectories.batch_size,)
+        log_rewards = log_rewards[trajectories.terminating_idx >= i]
 
         if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
@@ -333,6 +341,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def get_scores(
         self,
         trajectories: Trajectories,
+        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         env: Env | None = None,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
@@ -341,6 +350,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             env: The environment where the trajectories are sampled from.
             trajectories: The batch of trajectories to evaluate.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_trajectories,). When None, uses the environment rewards.
+                Useful for intrinsic rewards (see
+                "Towards Improving Exploration through Sibling Augmented
+                GFlowNets", Madan et al., ICLR 2025).
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
@@ -389,6 +403,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 is_terminal_mask,
                 sink_states_mask,
                 i,
+                log_rewards=log_rewards,
             )
 
             flattening_mask = trajectories.terminating_idx.lt(
@@ -559,6 +574,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
+        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -567,6 +583,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             env: The environment where the trajectories are sampled from.
             trajectories: The batch of trajectories to compute the loss with.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_trajectories,). When None, uses the environment rewards.
+                Useful for intrinsic rewards (see
+                "Towards Improving Exploration through Sibling Augmented
+                GFlowNets", Madan et al., ICLR 2025).
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
                 Note: for geometric-based sub-trajectory weighting, 'mean' is not
@@ -598,12 +619,15 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             logF_s0 = log_state_flows[0].masked_fill(log_state_flows[0].isinf(), 0.0)
             total_log_pf = log_pf_traj.sum(dim=0)
             total_log_pb = log_pb_traj.sum(dim=0)
-            # Guard behind debug: log_rewards is always set for terminating trajectories;
-            # bare assert would cause a graph break in torch.compile.
+            if log_rewards is None:
+                # Guard behind debug: log_rewards is always set for terminating
+                # trajectories; bare assert would cause a graph break in torch.compile.
+                if self.debug:
+                    assert trajectories.log_rewards is not None
+                # cast: log_rewards is always set for terminating trajectories.
+                log_rewards = cast(torch.Tensor, trajectories.log_rewards)
             if self.debug:
-                assert trajectories.log_rewards is not None
-            # cast: log_rewards is always set for terminating trajectories.
-            log_rewards = cast(torch.Tensor, trajectories.log_rewards)
+                assert log_rewards.shape == (trajectories.batch_size,)
             if math.isfinite(self.log_reward_clip_min):
                 log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
             tb_scores = logF_s0 + total_log_pf - total_log_pb - log_rewards
@@ -611,7 +635,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         # Get all scores and masks from the trajectories.
         scores, flattening_masks = self.get_scores(
-            trajectories, recalculate_all_logprobs=recalculate_all_logprobs, env=env
+            trajectories,
+            log_rewards=log_rewards,
+            recalculate_all_logprobs=recalculate_all_logprobs,
+            env=env,
         )
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)

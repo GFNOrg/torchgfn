@@ -279,6 +279,7 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
         self,
         env: DiscreteEnv,
         states_container: StatesContainer[DiscreteStates],
+        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -293,6 +294,11 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             env: The discrete environment where the states are sampled from.
             states_container: The StatesContainer object containing both intermediary and
                 terminating states.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_terminating_states,). When None, uses the environment rewards
+                from the states container. Useful for intrinsic rewards (see
+                "Towards Improving Exploration through Sibling Augmented
+                GFlowNets", Madan et al., ICLR 2025).
             recalculate_all_logprobs: Whether to re-evaluate all logprobs (unused for FM).
             reduction: The reduction method to use ('mean', 'sum', or 'none').
 
@@ -319,10 +325,16 @@ class FMGFlowNet(GFlowNet[StatesContainer[DiscreteStates]]):
             states_container.intermediary_states,
             reduction=reduction,
         )
+
+        terminating_log_rewards = (
+            log_rewards
+            if log_rewards is not None
+            else states_container.terminating_log_rewards
+        )
         rm_loss = self.reward_matching_loss(
             env,
             states_container.terminating_states,
-            states_container.terminating_log_rewards,
+            terminating_log_rewards,
             reduction=reduction,
         )
         return fm_loss + self.alpha * rm_loss

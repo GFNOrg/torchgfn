@@ -239,10 +239,17 @@ class TBGAFN(TBGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
+        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
-        loss = super().loss(env, trajectories, recalculate_all_logprobs, reduction)
+        loss = super().loss(
+            env,
+            trajectories,
+            log_rewards=log_rewards,
+            recalculate_all_logprobs=recalculate_all_logprobs,
+            reduction=reduction,
+        )
         rnd_loss = self.rnd.compute_rnd_loss(trajectories.states)
         return loss + rnd_loss
 

@@ -209,6 +209,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self,
         env: Env,
         transitions: Transitions,
+        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
         r"""Calculates the scores for a batch of transitions.
@@ -219,6 +220,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         Args:
             env: The environment where the transitions are sampled from.
             transitions: The Transitions object to evaluate.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_transitions,). When None, uses the environment rewards
+                from the transitions. Useful for intrinsic rewards (see
+                "Towards Improving Exploration through Sibling Augmented
+                GFlowNets", Madan et al., ICLR 2025).
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
@@ -261,11 +267,13 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         is_terminating = transitions.is_terminating
         is_intermediate = ~is_terminating
 
-        # cast: log_rewards is always populated for valid transitions;
-        # assert is behind debug to avoid graph breaks in torch.compile.
-        log_rewards = cast(torch.Tensor, transitions.log_rewards)
+        # Use custom log_rewards if provided, otherwise fall back to the
+        # transition's environment rewards.
+        if log_rewards is None:
+            log_rewards = cast(torch.Tensor, transitions.log_rewards)
         if self.debug:
             assert log_rewards is not None
+            assert log_rewards.shape == (transitions.n_transitions,)
         if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
         log_F_s_next[is_terminating] = log_rewards[is_terminating]
@@ -332,6 +340,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self,
         env: Env,
         transitions: Transitions,
+        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
     ) -> torch.Tensor:
@@ -343,6 +352,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         Args:
             env: The environment where the transitions are sampled from.
             transitions: The Transitions object to compute the loss with.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_transitions,). When None, uses the environment rewards.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
                 Run with self.debug=False for improved performance.
@@ -356,6 +367,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         scores = self.get_scores(
             env,
             transitions,
+            log_rewards=log_rewards,
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
         scores = self.loss_fn(scores)
