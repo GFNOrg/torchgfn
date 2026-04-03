@@ -314,10 +314,13 @@ class ConditionalArgs(CommonArgs):
 class ChipDesignArgs(CommonArgs):
     n_iterations: int = 10
     embedding_dim: int = 32
+    hidden_dim: int = 32
+    n_hidden: int = 1
     batch_size: int = 16
     seed: int = 4444
     lr: float = 1e-3
     log_every: int = 10
+    singularity_image: str | None = None
     no_cuda: bool = True  # Disable CUDA for tests
     singularity_image: str | None = None
 
