@@ -341,21 +341,22 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     def get_scores(
         self,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         env: Env | None = None,
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         r"""Computes sub-trajectory balance scores for all submitted trajectories.
 
         Args:
-            env: The environment where the trajectories are sampled from.
             trajectories: The batch of trajectories to evaluate.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            env: The environment where the trajectories are sampled from.
             log_rewards: Optional custom log rewards tensor of shape
                 (n_trajectories,). When None, uses the environment rewards.
                 Useful for intrinsic rewards (see
                 "Towards Improving Exploration through Sibling Augmented
                 GFlowNets", Madan et al., ICLR 2025).
-            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
             A tuple (scores, flattening_masks):
@@ -574,15 +575,21 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes the sub-trajectory balance loss.
 
         Args:
             env: The environment where the trajectories are sampled from.
             trajectories: The batch of trajectories to compute the loss with.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            reduction: The reduction method to use ('mean', 'sum', or 'none').
+                Note: for geometric-based sub-trajectory weighting, 'mean' is not
+                supported and is coerced to 'sum' (a warning is emitted when
+                debug=True).
             log_rewards: Optional custom log rewards tensor of shape
                 (n_trajectories,). When None, uses the environment rewards.
                 When provided, this overrides the terminal reward term used by
@@ -592,11 +599,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 rewards in that mode. Useful for intrinsic rewards affecting the
                 terminal boundary term (see "Towards Improving Exploration
                 through Sibling Augmented GFlowNets", Madan et al., ICLR 2025).
-            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
-            reduction: The reduction method to use ('mean', 'sum', or 'none').
-                Note: for geometric-based sub-trajectory weighting, 'mean' is not
-                supported and is coerced to 'sum' (a warning is emitted when
-                debug=True).
 
         Returns:
             The computed sub-trajectory balance loss as a tensor. The shape depends on

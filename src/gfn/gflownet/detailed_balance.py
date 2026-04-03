@@ -209,8 +209,9 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self,
         env: Env,
         transitions: Transitions,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         r"""Calculates the scores for a batch of transitions.
 
@@ -220,12 +221,12 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         Args:
             env: The environment where the transitions are sampled from.
             transitions: The Transitions object to evaluate.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             log_rewards: Optional custom log rewards tensor of shape
                 (n_transitions,). When None, uses the environment rewards
                 from the transitions. Useful for intrinsic rewards (see
                 "Towards Improving Exploration through Sibling Augmented
                 GFlowNets", Madan et al., ICLR 2025).
-            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
             A tensor of shape (n_transitions,) representing the scores for each
@@ -340,9 +341,10 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         self,
         env: Env,
         transitions: Transitions,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes the detailed balance loss.
 
@@ -352,11 +354,11 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         Args:
             env: The environment where the transitions are sampled from.
             transitions: The Transitions object to compute the loss with.
-            log_rewards: Optional custom log rewards tensor of shape
-                (n_transitions,). When None, uses the environment rewards.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
                 Run with self.debug=False for improved performance.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_transitions,). When None, uses the environment rewards.
 
         Returns:
             The computed detailed balance loss as a tensor. The shape depends on the

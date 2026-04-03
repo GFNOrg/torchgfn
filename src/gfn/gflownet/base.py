@@ -420,9 +420,10 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
     def get_scores(
         self,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         env: Env | None = None,
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         r"""Calculates scores for a batch of trajectories.
 
@@ -431,14 +432,14 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
 
         Args:
             trajectories: The Trajectories object to evaluate.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            env: The environment (unused in base TB, but required by some
+                subclasses such as RTB and SubTB).
             log_rewards: Optional custom log rewards tensor of shape
                 (n_trajectories,). When None, uses the environment rewards
                 from the trajectories. Useful for intrinsic rewards (see
                 "Towards Improving Exploration through Sibling Augmented
                 GFlowNets", Madan et al., ICLR 2025).
-            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
-            env: The environment (unused in base TB, but required by some
-                subclasses such as RTB and SubTB).
 
         Returns:
             A tensor of shape (batch_size,) containing the scores for each trajectory.

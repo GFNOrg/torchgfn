@@ -91,9 +91,10 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes the trajectory balance loss.
 
@@ -103,13 +104,13 @@ class TBGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             env: The environment where the trajectories are sampled from (unused).
             trajectories: The Trajectories object to compute the loss with.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            reduction: The reduction method to use ('mean', 'sum', or 'none').
             log_rewards: Optional custom log rewards tensor of shape
                 (n_trajectories,). When None, uses the environment rewards.
                 Useful for intrinsic rewards (see
                 "Towards Improving Exploration through Sibling Augmented
                 GFlowNets", Madan et al., ICLR 2025).
-            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
-            reduction: The reduction method to use ('mean', 'sum', or 'none').
 
         Returns:
             The computed trajectory balance loss as a tensor. The shape depends on the
@@ -227,9 +228,10 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
     def get_scores(
         self,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         env: Env | None = None,
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """RTB residuals (without logZ): ``log_pf_post - log_pf_prior - beta * log_R``.
 
@@ -240,7 +242,7 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
             Shape ``(N,)`` per-trajectory scores.
         """
         return self._compute_rtb_scores(
-            env, trajectories, log_rewards, recalculate_all_logprobs
+            env, trajectories, log_rewards=log_rewards, recalculate_all_logprobs=recalculate_all_logprobs
         )
 
     def _compute_rtb_scores(
@@ -356,9 +358,10 @@ class RelativeTrajectoryBalanceGFlowNet(RelativeTBBase):
         self,
         env: Env,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes the RTB loss on a batch of trajectories."""
         scores = self._compute_rtb_scores(
@@ -578,9 +581,10 @@ class TrustPCLGFlowNet(RelativeTrajectoryBalanceGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         r"""Computes the Trust-PCL loss: :math:`\alpha^2 \cdot \mathcal{L}_{\text{RTB}}`.
 
@@ -617,9 +621,10 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes the log partition variance loss.
 
@@ -629,13 +634,13 @@ class LogPartitionVarianceGFlowNet(TrajectoryBasedGFlowNet):
         Args:
             env: The environment where the trajectories are sampled from (unused).
             trajectories: The Trajectories object to compute the loss with.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            reduction: The reduction method to use ('mean', 'sum', or 'none').
             log_rewards: Optional custom log rewards tensor of shape
                 (n_trajectories,). When None, uses the environment rewards.
                 Useful for intrinsic rewards (see
                 "Towards Improving Exploration through Sibling Augmented
                 GFlowNets", Madan et al., ICLR 2025).
-            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
-            reduction: The reduction method to use ('mean', 'sum', or 'none').
 
         Returns:
             The computed log partition variance loss as a tensor. The shape depends on
@@ -709,9 +714,10 @@ class RelativeLogPartitionVarianceGFlowNet(RelativeTBBase):
         self,
         env: Env,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes the Relative LPV loss on a batch of trajectories."""
         scores = self._compute_rtb_scores(

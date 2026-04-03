@@ -165,6 +165,7 @@ class TBGAFN(TBGFlowNet):
         self,
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
+        *,
         log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes Trajectory Balance scores with intrinsic rewards for a batch of
@@ -245,9 +246,10 @@ class TBGAFN(TBGFlowNet):
         self,
         env: Env,
         trajectories: Trajectories,
-        log_rewards: torch.Tensor | None = None,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         loss = super().loss(
             env,
