@@ -1,5 +1,6 @@
 """Tests that the optional `log_rewards` parameter correctly overrides
-environment rewards in all GFlowNet loss implementations.
+environment rewards in the TB/DB/SubTB/FM/LPV/RTB GFlowNet loss implementations
+covered by this file.
 
 For each loss variant we verify two properties:
 
