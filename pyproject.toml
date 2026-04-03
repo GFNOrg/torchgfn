@@ -145,12 +145,14 @@ exclude = [
     "**/.*", # Exclude dot files and folders
 ]
 
-# strictly disable the checks for None handling
-reportOptionalMemberAccess = "none" # e.g., variable.method()
-reportOptionalSubscript = "none"    # e.g., variable['key']
-reportOptionalCall = "none"         # e.g., variable()
-reportOptionalOperand = "none"      # e.g., variable + 1
-reportOptionalIterable = "none"     # e.g., for x in variable:
+reportOptionalMemberAccess = "error"
+reportUnusedImport = true
+reportUnusedVariable = true
+reportOptionalSubscript = true
+reportOptionalCall = true
+reportOptionalIterable = true
+reportOptionalContextManager = true
+reportOptionalOperand = true
 
 strict = [
 
@@ -181,17 +183,9 @@ pythonpath = [
     "tutorials",
     "testing",
 ]
-reportOptionalMemberAccess = "error"
 filterwarnings = [
     "ignore::pytest.PytestConfigWarning",
 ]
-reportUnusedImport = true
-reportUnusedVariable = true
-reportOptionalSubscript = true
-reportOptionalCall = true
-reportOptionalIterable = true
-reportOptionalContextManager = true
-reportOptionalOperand = true
 
 [tool.tox]
 legacy_tox_ini = '''
