@@ -170,6 +170,14 @@ class ChipDesign(DiscreteEnv):
 
         return BaseChipDesignStates
 
+    def close(self) -> None:
+        """Closes the PlacementCost subprocess to free resources."""
+        if hasattr(self, "plc") and self.plc is not None:
+            self.plc.close()
+
+    def __del__(self) -> None:
+        self.close()
+
     def _apply_state_to_plc(self, state_tensor: torch.Tensor):
         """Applies a single state tensor to the plc object."""
         assert state_tensor.shape == (self.n_macros,)
