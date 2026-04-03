@@ -422,6 +422,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
         env: Env | None = None,
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         r"""Calculates scores for a batch of trajectories.
 
@@ -433,6 +435,11 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             env: The environment (unused in base TB, but required by some
                 subclasses such as RTB and SubTB).
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_trajectories,). When None, uses the environment rewards
+                from the trajectories. Useful for intrinsic rewards (see
+                "Towards Improving Exploration through Sibling Augmented
+                GFlowNets", Madan et al., ICLR 2025).
 
         Returns:
             A tensor of shape (batch_size,) containing the scores for each trajectory.
@@ -448,11 +455,13 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
         total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)  # [N]
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)  # [N]
 
-        # cast: log_rewards is always set for terminating trajectories;
-        # assert is behind debug to avoid graph breaks in torch.compile.
-        log_rewards = cast(torch.Tensor, trajectories.log_rewards)
+        # Use custom log_rewards if provided, otherwise fall back to the
+        # trajectory's environment rewards.
+        if log_rewards is None:
+            log_rewards = cast(torch.Tensor, trajectories.log_rewards)
         if self.debug:
             assert log_rewards is not None
+            assert log_rewards.shape == (trajectories.batch_size,)
         # Fast path: skip clamp when log_reward_clip_min is disabled (default).
         if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)

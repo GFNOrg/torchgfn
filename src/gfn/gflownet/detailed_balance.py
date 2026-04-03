@@ -210,6 +210,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         env: Env,
         transitions: Transitions,
         recalculate_all_logprobs: bool = True,
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         r"""Calculates the scores for a batch of transitions.
 
@@ -220,11 +222,31 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             env: The environment where the transitions are sampled from.
             transitions: The Transitions object to evaluate.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_transitions,). When None, uses the environment rewards
+                from the transitions. Useful for intrinsic rewards (see
+                "Towards Improving Exploration through Sibling Augmented
+                GFlowNets", Madan et al., ICLR 2025).
+                **Not supported when** ``forward_looking=True``: raises
+                ``ValueError`` in that case because the forward-looking
+                objective still calls ``env.log_reward()`` for intermediate
+                state adjustments, so custom rewards cannot fully replace
+                environment rewards.
 
         Returns:
             A tensor of shape (n_transitions,) representing the scores for each
             transition.
         """
+        # Reject custom log_rewards in forward-looking mode (documented in docstring).
+        if log_rewards is not None and self.forward_looking:
+            raise ValueError(
+                "custom log_rewards are not supported when forward_looking=True: "
+                "the forward-looking DB objective calls env.log_reward() for "
+                "intermediate-state adjustments, so environment rewards cannot be "
+                "fully replaced. Either use forward_looking=False or do not pass "
+                "log_rewards."
+            )
+
         # Guard bad inputs under debug to avoid graph breaks in torch.compile.
         if self.debug and transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
@@ -261,11 +283,13 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         is_terminating = transitions.is_terminating
         is_intermediate = ~is_terminating
 
-        # cast: log_rewards is always populated for valid transitions;
-        # assert is behind debug to avoid graph breaks in torch.compile.
-        log_rewards = cast(torch.Tensor, transitions.log_rewards)
+        # Use custom log_rewards if provided, otherwise fall back to the
+        # transition's environment rewards.
+        if log_rewards is None:
+            log_rewards = cast(torch.Tensor, transitions.log_rewards)
         if self.debug:
             assert log_rewards is not None
+            assert log_rewards.shape == (transitions.n_transitions,)
         if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
         log_F_s_next[is_terminating] = log_rewards[is_terminating]
@@ -334,6 +358,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         transitions: Transitions,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes the detailed balance loss.
 
@@ -346,6 +372,8 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
                 Run with self.debug=False for improved performance.
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_transitions,). When None, uses the environment rewards.
 
         Returns:
             The computed detailed balance loss as a tensor. The shape depends on the
@@ -356,6 +384,7 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
         scores = self.get_scores(
             env,
             transitions,
+            log_rewards=log_rewards,
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
         scores = self.loss_fn(scores)
