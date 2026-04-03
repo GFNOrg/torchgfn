@@ -320,7 +320,6 @@ class ChipDesignArgs(CommonArgs):
     seed: int = 4444
     lr: float = 1e-3
     log_every: int = 10
-    singularity_image: str | None = None
     no_cuda: bool = True  # Disable CUDA for tests
     singularity_image: str | None = None
 
