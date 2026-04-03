@@ -322,6 +322,7 @@ class ChipDesignArgs(CommonArgs):
     log_every: int = 10
     no_cuda: bool = True  # Disable CUDA for tests
     singularity_image: str | None = None
+    cd_finetune: bool = False  # Disable for faster tests
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
