@@ -11,7 +11,7 @@ from gfn.gym.helpers.chip_design import (
     SAMPLE_NETLIST_FILE,
 )
 from gfn.gym.helpers.chip_design import utils as placement_util
-from gfn.gym.helpers.chip_design.utils import cost_info_function
+from gfn.gym.helpers.chip_design.utils import cost_info_function, optimize_orientations
 from gfn.states import DiscreteStates
 
 
@@ -124,6 +124,7 @@ class ChipDesign(DiscreteEnv):
         device: str | None = None,
         debug: bool = False,
         singularity_image: Optional[str] = None,
+        cd_finetune: bool = True,
     ):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -134,6 +135,7 @@ class ChipDesign(DiscreteEnv):
             singularity_image=singularity_image,
         )
         self.std_cell_placer_mode = std_cell_placer_mode
+        self.cd_finetune = cd_finetune
 
         self.wirelength_weight = wirelength_weight
         self.density_weight = density_weight
@@ -329,6 +331,14 @@ class ChipDesign(DiscreteEnv):
             self._apply_state_to_plc(state_tensor)
 
             self.analytical_placer()
+
+            if self.cd_finetune:
+                optimize_orientations(
+                    self.plc,
+                    wirelength_weight=self.wirelength_weight,
+                    density_weight=self.density_weight,
+                    congestion_weight=self.congestion_weight,
+                )
 
             cost, _ = cost_info_function(
                 plc=self.plc,

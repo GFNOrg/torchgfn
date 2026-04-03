@@ -32,6 +32,67 @@ import numpy as np
 from . import plc_client
 
 COST_COMPONENTS = ["wirelength", "congestion", "density"]
+ORIENTATIONS = ["N", "S", "E", "W", "FN", "FS", "FE", "FW"]
+
+
+def optimize_orientations(
+    plc: plc_client.PlacementCost,
+    wirelength_weight: float = 1.0,
+    density_weight: float = 1.0,
+    congestion_weight: float = 0.5,
+    max_iterations: int = 2,
+) -> None:
+    """Coordinate descent over macro orientations.
+
+    For each macro, tries all 8 orientations and greedily picks the one
+    that minimizes the proxy cost. Repeats for ``max_iterations`` sweeps
+    (convergence is typically reached in 1-2).
+    """
+    macro_indices = list(nodes_of_types(plc, ["MACRO"]))
+    if not macro_indices:
+        return
+
+    for _ in range(max_iterations):
+        improved = False
+        for node_index in macro_indices:
+            if not plc.is_node_placed(node_index):
+                continue
+            current_orient = plc.get_macro_orientation(node_index)
+            best_orient = current_orient
+            best_cost = _proxy_cost(
+                plc, wirelength_weight, density_weight, congestion_weight
+            )
+            for orient in ORIENTATIONS:
+                if orient == current_orient:
+                    continue
+                plc.update_macro_orientation(node_index, orient)
+                cost = _proxy_cost(
+                    plc, wirelength_weight, density_weight, congestion_weight
+                )
+                if cost < best_cost:
+                    best_cost = cost
+                    best_orient = orient
+            plc.update_macro_orientation(node_index, best_orient)
+            if best_orient != current_orient:
+                improved = True
+        if not improved:
+            break
+
+
+def _proxy_cost(
+    plc: plc_client.PlacementCost,
+    wirelength_weight: float,
+    density_weight: float,
+    congestion_weight: float,
+) -> float:
+    cost = 0.0
+    if wirelength_weight > 0:
+        cost += wirelength_weight * plc.get_cost()
+    if congestion_weight > 0:
+        cost += congestion_weight * plc.get_congestion_cost()
+    if density_weight > 0:
+        cost += density_weight * plc.get_density_cost()
+    return cost
 
 
 def cost_info_function(
