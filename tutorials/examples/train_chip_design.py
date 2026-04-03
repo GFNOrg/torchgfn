@@ -34,7 +34,11 @@ def main(args):
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
-    env = ChipDesign(device=str(device), singularity_image=args.singularity_image)
+    env = ChipDesign(
+        device=str(device),
+        singularity_image=args.singularity_image,
+        cd_finetune=args.cd_finetune,
+    )
 
     preprocessor = ChipDesignPreprocessor(env, embedding_dim=args.embedding_dim)
 
@@ -91,14 +95,42 @@ def main(args):
                 f"Mean cost: {mean_cost:.4f} | logZ: {gflownet.logZ.item():.4f}"  # type: ignore[operator]
             )
 
-    print("Training finished.")
-    # Sample some final states and print them
-    final_states = gflownet.sample_terminating_states(env, n=5)
+    print("\nTraining finished. Evaluating with and without CD optimization...")
+    n_eval = 20
+    final_states = gflownet.sample_terminating_states(env, n=n_eval)
     assert isinstance(final_states, ChipDesignStates)
-    final_rewards = torch.exp(env.log_reward(final_states))
-    print("Sampled final placements (macro locations):")
-    for i in range(len(final_states)):
-        print(final_states.tensor[i], " with reward ", final_rewards[i].item())
+
+    # Evaluate with current cd_finetune setting
+    rewards_current = torch.exp(env.log_reward(final_states))
+
+    # Evaluate with opposite setting for comparison
+    original_cd = env.cd_finetune
+    env.cd_finetune = not original_cd
+    rewards_other = torch.exp(env.log_reward(final_states))
+    env.cd_finetune = original_cd
+
+    if original_cd:
+        rewards_with_cd, rewards_without_cd = rewards_current, rewards_other
+    else:
+        rewards_with_cd, rewards_without_cd = rewards_other, rewards_current
+
+    print(f"\n{'Placement':<20} {'With CD':>10} {'Without CD':>12} {'CD Gain':>10}")
+    print("-" * 55)
+    for i in range(min(10, n_eval)):
+        gain = rewards_with_cd[i].item() - rewards_without_cd[i].item()
+        print(
+            f"{str(final_states.tensor[i].tolist()):<20} "
+            f"{rewards_with_cd[i].item():>10.4f} "
+            f"{rewards_without_cd[i].item():>12.4f} "
+            f"{gain:>+10.4f}"
+        )
+    print("-" * 55)
+    print(
+        f"{'Mean':<20} "
+        f"{rewards_with_cd.mean().item():>10.4f} "
+        f"{rewards_without_cd.mean().item():>12.4f} "
+        f"{(rewards_with_cd - rewards_without_cd).mean().item():>+10.4f}"
+    )
 
 
 if __name__ == "__main__":
@@ -117,5 +149,11 @@ if __name__ == "__main__":
         help='Path to .sif image for plc_wrapper_main, or "auto".',
     )
     parser.add_argument("--log_every", type=int, default=100)
+    parser.add_argument(
+        "--cd_finetune",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run coordinate descent orientation optimization (default: True).",
+    )
     args = parser.parse_args()
     main(args)
