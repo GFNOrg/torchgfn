@@ -242,7 +242,10 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
             Shape ``(N,)`` per-trajectory scores.
         """
         return self._compute_rtb_scores(
-            env, trajectories, log_rewards=log_rewards, recalculate_all_logprobs=recalculate_all_logprobs
+            env,
+            trajectories,
+            log_rewards=log_rewards,
+            recalculate_all_logprobs=recalculate_all_logprobs,
         )
 
     def _compute_rtb_scores(
