@@ -134,6 +134,8 @@ def get_blockages_from_comments(
     filenames: Union[str, List[str]],
 ) -> Optional[List[List[float]]]:
     """Returns list of blockages if they exist in the file's comments section."""
+    if isinstance(filenames, str):
+        filenames = [filenames]
     for filename in filenames:
         if not filename:
             continue
