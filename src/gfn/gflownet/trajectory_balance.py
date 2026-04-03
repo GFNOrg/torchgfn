@@ -195,8 +195,8 @@ class RelativeTBBase(TrajectoryBasedGFlowNet):
             raise ValueError(
                 f"prior_pf has {len(trainable)} trainable parameter(s) "
                 f"(first: {trainable[0]!r}).  Freeze all prior parameters with "
-                f"`for p in prior_pf.parameters(): p.requires_grad_(False)` "
-                f"before constructing the RTB objective."
+                "`for p in prior_pf.parameters(): p.requires_grad_(False)` "
+                "before constructing the RTB objective."
             )
 
         # Store the prior as a plain attribute (not an nn.Module submodule)
@@ -511,7 +511,8 @@ class TrustPCLGFlowNet(RelativeTrajectoryBalanceGFlowNet):
         if not isinstance(logZ, type(None)) and init_logZ != 0.0:
             # If logZ is explicitly provided, we ignore init_v_soft_s0 and use logZ directly.
             warning.warn(
-                "TrustPCLGFlowNet's init_v_soft_s0 is ignored because logZ is explicitly provided. Ensure this is intentional."
+                "TrustPCLGFlowNet's init_v_soft_s0 is ignored because logZ is explicitly"
+                " provided. Ensure this is intentional."
             )
 
         super().__init__(
