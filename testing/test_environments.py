@@ -785,7 +785,10 @@ def test_perfect_binary_tree_bwd_step():
 def test_chip_design():
     BATCH_SIZE = 2
 
-    env = ChipDesign()
+    try:
+        env = ChipDesign()
+    except FileNotFoundError:
+        pytest.skip("plc_wrapper_main not available (Linux x86-64 only)")
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.tensor.shape == (BATCH_SIZE, env.n_macros)
     assert torch.all(states.tensor == -1)

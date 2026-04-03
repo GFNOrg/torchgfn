@@ -13,6 +13,18 @@
 #   year={2021},
 #   publisher={Nature Publishing Group}
 # }
+#
+# Requires Linux x86-64. plc_wrapper_main is a closed-source binary from Google.
+#
+# Setup:
+#   Linux x86-64 (native):
+#     cd src/gfn/gym/helpers/chip_design && ./setup_plc.sh
+#
+#   HPC (via Apptainer/Singularity):
+#     cd src/gfn/gym/helpers/chip_design && ./setup_plc.sh --container-only
+#
+#   Explicit path:
+#     export PLC_WRAPPER_MAIN=/path/to/plc_wrapper_main
 
 import os
 
@@ -21,4 +33,16 @@ SAMPLE_NETLIST_FILE = os.path.join(
 )
 SAMPLE_INIT_PLACEMENT = os.path.join(
     os.path.dirname(__file__), "test_data", "initial.plc"
+)
+
+MEDIUM_NETLIST_FILE = os.path.join(
+    os.path.dirname(__file__), "test_data", "netlist_medium.pb.txt"
+)
+MEDIUM_INIT_PLACEMENT = os.path.join(
+    os.path.dirname(__file__), "test_data", "initial_medium.plc"
+)
+
+PLC_DOWNLOAD_URL = (
+    "https://storage.googleapis.com/rl-infra-public/"
+    "circuit-training/placement_cost/plc_wrapper_main_{version}"
 )
