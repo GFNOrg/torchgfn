@@ -52,6 +52,11 @@ class ChipDesignStates(DiscreteStates):
         cloned = self.__class__(
             self.tensor.clone(),
             current_node_idx=self.current_node_idx.clone(),
+            conditions=(
+                self.conditions.clone() if self.conditions is not None else None
+            ),
+            device=self.tensor.device,
+            debug=self.debug,
         )
         if self._forward_masks_cache is not None:
             cloned.forward_masks = self._forward_masks_cache.clone()
