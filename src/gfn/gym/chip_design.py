@@ -1,6 +1,7 @@
 """GFlowNet environment for chip placement."""
 
-from typing import ClassVar, Optional, Sequence, Tuple, cast
+from dataclasses import dataclass
+from typing import ClassVar, Dict, List, Optional, Sequence, Tuple, cast
 
 import torch
 
@@ -13,6 +14,60 @@ from gfn.gym.helpers.chip_design import (
 from gfn.gym.helpers.chip_design import utils as placement_util
 from gfn.gym.helpers.chip_design.utils import cost_info_function, optimize_orientations
 from gfn.states import DiscreteStates
+
+
+@dataclass
+class CostStats:
+    """Pre-computed cost statistics for a netlist."""
+
+    mean: float
+    std: float
+    min: float
+    range: float  # max - min
+
+    @staticmethod
+    def precompute(
+        netlists: List[Tuple[str, str]],
+        n_samples: int = 100,
+        wirelength_weight: float = 1.0,
+        density_weight: float = 1.0,
+        congestion_weight: float = 0.5,
+        singularity_image: Optional[str] = None,
+    ) -> Dict[str, "CostStats"]:
+        """Pre-compute cost statistics for multiple netlists.
+
+        Args:
+            netlists: List of ``(netlist_file, init_placement)`` tuples.
+            n_samples: Number of random placements per netlist.
+            wirelength_weight: Wirelength weight for cost computation.
+            density_weight: Density weight for cost computation.
+            congestion_weight: Congestion weight for cost computation.
+            singularity_image: Optional singularity image path.
+
+        Returns:
+            Dict mapping netlist file paths to their ``CostStats``.
+        """
+        stats = {}
+        for netlist_file, init_placement in netlists:
+            env = ChipDesign(
+                netlist_file=netlist_file,
+                init_placement=init_placement,
+                wirelength_weight=wirelength_weight,
+                density_weight=density_weight,
+                congestion_weight=congestion_weight,
+                singularity_image=singularity_image,
+                cd_finetune=False,
+                reward_norm=None,
+            )
+            env._estimate_cost_stats(n_samples)
+            stats[netlist_file] = CostStats(
+                mean=env._cost_mean,
+                std=env._cost_std,
+                min=env._cost_min,
+                range=env._cost_max,
+            )
+            env.close()
+        return stats
 
 
 class ChipDesignStates(DiscreteStates):
@@ -125,7 +180,28 @@ class ChipDesign(DiscreteEnv):
         debug: bool = False,
         singularity_image: Optional[str] = None,
         cd_finetune: bool = True,
+        reward_norm: Optional[str] = None,
+        reward_temper: float = 1.0,
+        reward_norm_samples: int = 100,
+        cost_stats: Optional[CostStats] = None,
     ):
+        """Initializes the chip design environment.
+
+        Args:
+            reward_norm: Reward normalization mode. ``None`` for raw
+                ``-cost``, ``"zscore"`` for z-score normalization, or
+                ``"minmax"`` for min-max normalization. Statistics are
+                estimated from ``reward_norm_samples`` random placements
+                unless ``cost_stats`` is provided.
+            reward_temper: Temperature scaling applied after normalization.
+                Higher values sharpen the reward distribution.
+            reward_norm_samples: Number of random placements used to
+                estimate normalization statistics.
+            cost_stats: Pre-computed cost statistics. Use
+                ``CostStats.precompute()`` to compute these once for
+                multiple netlists, then pass them here to avoid
+                recomputation.
+        """
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -136,6 +212,8 @@ class ChipDesign(DiscreteEnv):
         )
         self.std_cell_placer_mode = std_cell_placer_mode
         self.cd_finetune = cd_finetune
+        self.reward_norm = reward_norm
+        self.reward_temper = reward_temper
 
         self.wirelength_weight = wirelength_weight
         self.density_weight = density_weight
@@ -151,6 +229,24 @@ class ChipDesign(DiscreteEnv):
             m for m in self._sorted_node_indices if not self.plc.is_node_soft_macro(m)
         ]
         self.n_macros = len(self._hard_macro_indices)
+
+        # Cost statistics for reward normalization.
+        if cost_stats is not None:
+            self._cost_mean = cost_stats.mean
+            self._cost_std = cost_stats.std
+            self._cost_min = cost_stats.min
+            self._cost_max = cost_stats.range
+        elif reward_norm is not None:
+            self._cost_mean = 0.0
+            self._cost_std = 1.0
+            self._cost_min = 0.0
+            self._cost_max = 1.0
+            self._estimate_cost_stats(reward_norm_samples)
+        else:
+            self._cost_mean = 0.0
+            self._cost_std = 1.0
+            self._cost_min = 0.0
+            self._cost_max = 1.0
 
         s0 = torch.full((self.n_macros,), -1, dtype=torch.long, device=device)
         sf = torch.full((self.n_macros,), -2, dtype=torch.long, device=device)
@@ -314,6 +410,39 @@ class ChipDesign(DiscreteEnv):
             current_node_idx=new_node_idx.reshape(*batch_shape),
         )
 
+    def _estimate_cost_stats(self, n_samples: int) -> None:
+        """Estimates cost distribution from random placements."""
+        import random as pyrandom
+
+        costs = []
+        for _ in range(n_samples):
+            self.plc.unplace_all_nodes()
+            grid_cells = list(range(self.n_grid_cells))
+            for macro_idx in self._hard_macro_indices:
+                pyrandom.shuffle(grid_cells)
+                for cell in grid_cells:
+                    if self.plc.can_place_node(macro_idx, cell):
+                        self.plc.place_node(macro_idx, cell)
+                        break
+
+            self.analytical_placer()
+            cost, _ = cost_info_function(
+                plc=self.plc,
+                done=True,
+                wirelength_weight=self.wirelength_weight,
+                density_weight=self.density_weight,
+                congestion_weight=self.congestion_weight,
+            )
+            costs.append(cost)
+
+        self.plc.unplace_all_nodes()
+
+        costs_t = torch.tensor(costs, dtype=torch.float64)
+        self._cost_mean = costs_t.mean().item()
+        self._cost_std = max(costs_t.std().item(), 1e-8)
+        self._cost_min = costs_t.min().item()
+        self._cost_max = max(costs_t.max().item() - costs_t.min().item(), 1e-8)
+
     def analytical_placer(self):
         """Places standard cells using an analytical placer."""
         if self.std_cell_placer_mode == "fd":
@@ -322,6 +451,14 @@ class ChipDesign(DiscreteEnv):
             raise ValueError(
                 f"{self.std_cell_placer_mode} is not a supported std_cell_placer_mode."
             )
+
+    def _normalize_cost(self, cost: float) -> float:
+        """Applies reward normalization to a raw cost value."""
+        if self.reward_norm == "zscore":
+            return (cost - self._cost_mean) / self._cost_std
+        elif self.reward_norm == "minmax":
+            return (cost - self._cost_min) / self._cost_max
+        return cost
 
     def log_reward(self, final_states: ChipDesignStates) -> torch.Tensor:
         """Computes the log reward of the final states."""
@@ -347,5 +484,5 @@ class ChipDesign(DiscreteEnv):
                 density_weight=self.density_weight,
                 congestion_weight=self.congestion_weight,
             )
-            rewards[i] = -cost
+            rewards[i] = -self._normalize_cost(cost) * self.reward_temper
         return rewards
