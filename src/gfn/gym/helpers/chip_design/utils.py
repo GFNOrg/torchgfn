@@ -206,6 +206,7 @@ def create_placement_cost(
     blockages: Optional[List[List[float]]] = None,
     fixed_macro_names_regex: Optional[List[str]] = None,
     legacy_congestion_grid: bool = False,
+    singularity_image: Optional[str] = None,
 ) -> plc_client.PlacementCost:
     """Creates a placement_cost object."""
     if not netlist_file:
@@ -223,6 +224,7 @@ def create_placement_cost(
         netlist_file,
         macro_macro_x_spacing=macro_macro_x_spacing,
         macro_macro_y_spacing=macro_macro_y_spacing,
+        singularity_image=singularity_image,
     )
 
     plc.make_soft_macros_square()

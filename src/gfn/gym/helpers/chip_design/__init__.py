@@ -22,3 +22,5 @@ SAMPLE_NETLIST_FILE = os.path.join(
 SAMPLE_INIT_PLACEMENT = os.path.join(
     os.path.dirname(__file__), "test_data", "initial.plc"
 )
+DEFAULT_SIF_IMAGE = os.path.join(os.path.dirname(__file__), "plc_wrapper.sif")
+SINGULARITY_DEF = os.path.join(os.path.dirname(__file__), "plc_wrapper.def")

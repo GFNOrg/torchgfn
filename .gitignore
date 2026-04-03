@@ -192,3 +192,6 @@ models/
 
 .lprof
 .claude/
+
+# Singularity images
+*.sif

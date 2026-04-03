@@ -6,7 +6,10 @@ import torch
 
 from gfn.actions import Actions
 from gfn.env import DiscreteEnv
-from gfn.gym.helpers.chip_design import SAMPLE_INIT_PLACEMENT, SAMPLE_NETLIST_FILE
+from gfn.gym.helpers.chip_design import (
+    SAMPLE_INIT_PLACEMENT,
+    SAMPLE_NETLIST_FILE,
+)
 from gfn.gym.helpers.chip_design import utils as placement_util
 from gfn.gym.helpers.chip_design.utils import cost_info_function
 from gfn.states import DiscreteStates
@@ -24,8 +27,13 @@ class ChipDesignStates(DiscreteStates):
         self,
         tensor: torch.Tensor,
         current_node_idx: Optional[torch.Tensor] = None,
+        conditions: Optional[torch.Tensor] = None,
+        device: Optional[torch.device] = None,
+        debug: bool = False,
     ):
-        super().__init__(tensor=tensor)
+        super().__init__(
+            tensor=tensor, conditions=conditions, device=device, debug=debug
+        )
         if current_node_idx is None:
             is_unplaced = tensor == -1
             is_unplaced_padded = torch.cat(
@@ -188,6 +196,11 @@ class ChipDesign(DiscreteEnv):
 
         for i in range(len(states)):
             state_tensor = states.tensor[i]
+
+            # Skip sink states — they have no valid actions.
+            if states.is_sink_state[i]:
+                continue
+
             current_node_idx = states.current_node_idx[i].item()
 
             if current_node_idx >= self.n_macros:  # All macros placed

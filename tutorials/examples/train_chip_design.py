@@ -34,7 +34,7 @@ def main(args):
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
     )
-    env = ChipDesign(device=str(device))
+    env = ChipDesign(device=str(device), singularity_image=args.singularity_image)
 
     preprocessor = ChipDesignPreprocessor(env, embedding_dim=args.embedding_dim)
 
@@ -102,5 +102,11 @@ if __name__ == "__main__":
     parser.add_argument("--embedding_dim", type=int, default=32)
     parser.add_argument("--hidden_dim", type=int, default=64)
     parser.add_argument("--n_hidden", type=int, default=2)
+    parser.add_argument(
+        "--singularity_image",
+        type=str,
+        default=None,
+        help='Path to .sif image for plc_wrapper_main, or "auto".',
+    )
     args = parser.parse_args()
     main(args)

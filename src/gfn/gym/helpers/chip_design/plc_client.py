@@ -17,12 +17,25 @@
 import json
 import logging
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
-from typing import Any, Text
+from typing import Any, Optional, Text
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PLC_WRAPPER = os.path.join(os.path.dirname(__file__), "plc_wrapper_main")
+DEFAULT_SIF_IMAGE = os.path.join(os.path.dirname(__file__), "plc_wrapper.sif")
+
+
+def _find_singularity() -> Optional[str]:
+    """Returns the path to singularity/apptainer, or None."""
+    for name in ("singularity", "apptainer"):
+        path = shutil.which(name)
+        if path is not None:
+            return path
+    return None
 
 
 class PlacementCost:
@@ -34,11 +47,10 @@ class PlacementCost:
     def __init__(
         self,
         netlist_file: Text,
-        plc_wrapper_main: str = os.path.join(
-            os.path.dirname(__file__), "plc_wrapper_main"
-        ),
+        plc_wrapper_main: str = DEFAULT_PLC_WRAPPER,
         macro_macro_x_spacing: float = 0.0,
         macro_macro_y_spacing: float = 0.0,
+        singularity_image: Optional[str] = None,
     ) -> None:
         """Creates a PlacementCost client object.
 
@@ -47,17 +59,36 @@ class PlacementCost:
 
         Args:
           netlist_file: Path to the netlist proto text file.
+          plc_wrapper_main: Path to the plc_wrapper_main binary.
           macro_macro_x_spacing: Macro-to-macro x spacing in microns.
           macro_macro_y_spacing: Macro-to-macro y spacing in microns.
+          singularity_image: Path to a Singularity/Apptainer .sif image.
+            If provided, the plc_wrapper_main binary is executed inside the
+            container. If ``"auto"``, uses the default .sif image bundled
+            with this package (if it exists).
         """
         if not plc_wrapper_main:
             raise ValueError("plc_wrapper_main should be specified.")
+
+        if singularity_image == "auto":
+            if os.path.isfile(DEFAULT_SIF_IMAGE):
+                singularity_image = DEFAULT_SIF_IMAGE
+            else:
+                logger.info(
+                    "No .sif image found at %s, running binary directly.",
+                    DEFAULT_SIF_IMAGE,
+                )
+                singularity_image = None
+
+        plc_wrapper_main = os.path.abspath(plc_wrapper_main)
+        netlist_file = os.path.abspath(netlist_file)
 
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         address = tempfile.NamedTemporaryFile().name
         self.sock.bind(address)
         self.sock.listen(1)
-        args = [
+
+        plc_args = [
             plc_wrapper_main,
             "--uid=0",
             "--gid=0",
@@ -66,6 +97,34 @@ class PlacementCost:
             f"--macro_macro_x_spacing={macro_macro_x_spacing}",
             f"--macro_macro_y_spacing={macro_macro_y_spacing}",
         ]
+
+        if singularity_image is not None:
+            singularity_image = os.path.abspath(singularity_image)
+            if not os.path.isfile(singularity_image):
+                raise FileNotFoundError(
+                    f"Singularity image not found: {singularity_image}. "
+                    f"Build it with: singularity build plc_wrapper.sif plc_wrapper.def"
+                )
+            singularity_bin = _find_singularity()
+            if singularity_bin is None:
+                raise RuntimeError(
+                    "singularity_image was specified but neither "
+                    "'singularity' nor 'apptainer' is on PATH."
+                )
+            bind_paths = {
+                os.path.dirname(plc_wrapper_main),
+                os.path.dirname(netlist_file),
+                os.path.dirname(address),
+            }
+            bind_arg = ",".join(sorted(bind_paths))
+            args = [
+                singularity_bin, "exec",
+                "--bind", bind_arg,
+                singularity_image,
+            ] + plc_args
+        else:
+            args = plc_args
+
         self.process = subprocess.Popen([str(a) for a in args])
         self.conn, _ = self.sock.accept()
 
