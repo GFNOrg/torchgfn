@@ -227,11 +227,26 @@ class DBGFlowNet(PFBasedGFlowNet[Transitions]):
                 from the transitions. Useful for intrinsic rewards (see
                 "Towards Improving Exploration through Sibling Augmented
                 GFlowNets", Madan et al., ICLR 2025).
+                **Not supported when** ``forward_looking=True``: raises
+                ``ValueError`` in that case because the forward-looking
+                objective still calls ``env.log_reward()`` for intermediate
+                state adjustments, so custom rewards cannot fully replace
+                environment rewards.
 
         Returns:
             A tensor of shape (n_transitions,) representing the scores for each
             transition.
         """
+        # Reject custom log_rewards in forward-looking mode (documented in docstring).
+        if log_rewards is not None and self.forward_looking:
+            raise ValueError(
+                "custom log_rewards are not supported when forward_looking=True: "
+                "the forward-looking DB objective calls env.log_reward() for "
+                "intermediate-state adjustments, so environment rewards cannot be "
+                "fully replaced. Either use forward_looking=False or do not pass "
+                "log_rewards."
+            )
+
         # Guard bad inputs under debug to avoid graph breaks in torch.compile.
         if self.debug and transitions.is_backward:
             raise ValueError("Backward transitions are not supported")
