@@ -585,9 +585,13 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories to compute the loss with.
             log_rewards: Optional custom log rewards tensor of shape
                 (n_trajectories,). When None, uses the environment rewards.
-                Useful for intrinsic rewards (see
-                "Towards Improving Exploration through Sibling Augmented
-                GFlowNets", Madan et al., ICLR 2025).
+                When provided, this overrides the terminal reward term used by
+                the loss. In particular, for ``forward_looking=True``, the
+                state-flow computation may still depend on ``env.log_reward(...)``,
+                so custom ``log_rewards`` do not fully replace environment
+                rewards in that mode. Useful for intrinsic rewards affecting the
+                terminal boundary term (see "Towards Improving Exploration
+                through Sibling Augmented GFlowNets", Madan et al., ICLR 2025).
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
                 Note: for geometric-based sub-trajectory weighting, 'mean' is not
