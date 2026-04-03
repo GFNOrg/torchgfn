@@ -118,8 +118,10 @@ class PlacementCost:
             }
             bind_arg = ",".join(sorted(bind_paths))
             args = [
-                singularity_bin, "exec",
-                "--bind", bind_arg,
+                singularity_bin,
+                "exec",
+                "--bind",
+                bind_arg,
                 singularity_image,
             ] + plc_args
         else:

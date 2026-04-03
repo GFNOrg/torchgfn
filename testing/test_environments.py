@@ -868,7 +868,6 @@ def test_chip_design():
     assert torch.all(rewards == rewards[0])
 
 
-
 # -----------------------------------------------------------------------------
 # Tests for default sf fill value based on dtype
 # -----------------------------------------------------------------------------

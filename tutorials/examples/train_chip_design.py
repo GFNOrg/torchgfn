@@ -65,8 +65,8 @@ def main(args):
     optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
 
     print("Sampling initial states...")
-    # Sample some final states and print them
     final_states = gflownet.sample_terminating_states(env, n=5)
+    assert isinstance(final_states, ChipDesignStates)
     final_rewards = torch.exp(env.log_reward(final_states))
     print("Sampled final placements (macro locations):")
     for i in range(len(final_states)):
