@@ -297,6 +297,15 @@ class ChipDesign(DiscreteEnv):
         batch_shape = states.batch_shape
         n = states.tensor.shape[:-1].numel()  # flat batch size
 
+        if n == 0:
+            states.forward_masks = torch.zeros(
+                *batch_shape, self.n_actions, dtype=torch.bool, device=self.device
+            )
+            states.backward_masks = torch.zeros(
+                *batch_shape, self.n_actions - 1, dtype=torch.bool, device=self.device
+            )
+            return
+
         flat_tensor = states.tensor.reshape(n, -1)
         flat_node_idx = states.current_node_idx.reshape(n)
         flat_is_sink = states.is_sink_state.reshape(n)
