@@ -1,15 +1,12 @@
 """Tests for the ChipDesign environment."""
 
-import math
-import os
-import tempfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import torch
 
-from gfn.gym.chip_design import ChipDesign, ChipDesignStates, CostStats
-from gfn.gym.helpers.chip_design import SAMPLE_INIT_PLACEMENT, SAMPLE_NETLIST_FILE
+from gfn.gym.chip_design import ChipDesign, CostStats
+from gfn.gym.helpers.chip_design import SAMPLE_INIT_PLACEMENT
 from gfn.gym.helpers.chip_design import utils as placement_util
 from gfn.gym.helpers.chip_design.plc_client import _find_singularity, _resolve_plc_binary
 
