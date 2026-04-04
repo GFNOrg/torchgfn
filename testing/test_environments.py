@@ -13,7 +13,8 @@ from gfn.estimators import (
     PinnedBrownianMotionForward,
 )
 from gfn.gflownet import TBGFlowNet
-from gfn.gym import Box, ConditionalHyperGrid, DiscreteEBM, HyperGrid
+from gfn.gym import Box, ChipDesign, ConditionalHyperGrid, DiscreteEBM, HyperGrid
+from gfn.gym.chip_design import ChipDesignStates
 from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.perfect_tree import PerfectBinaryTree
@@ -838,6 +839,36 @@ def test_perfect_binary_tree_bwd_step():
     expected_states = torch.tensor([[0], [0]], dtype=torch.long)
     assert torch.equal(states.tensor, expected_states)
     assert torch.all(states.is_initial_state)
+
+
+def test_chip_design():
+    BATCH_SIZE = 2
+
+    try:
+        env = ChipDesign(device="cpu")
+    except FileNotFoundError:
+        pytest.skip("plc_wrapper_main not available (Linux x86-64 only)")
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.tensor.shape == (BATCH_SIZE, env.n_macros)
+    assert torch.all(states.tensor == -1)
+
+    # Place macros
+    for i in range(env.n_macros):
+        actions = env.actions_from_tensor(format_tensor([i] * BATCH_SIZE))
+        expected_tensor = states.tensor.clone()
+        states = env._step(states, actions)
+        expected_tensor[..., i] = i
+        assert torch.equal(states.tensor, expected_tensor)
+
+    # Exit action (valid)
+    actions = env.actions_from_tensor(format_tensor([env.n_actions - 1] * BATCH_SIZE))
+    final_states = env._step(states, actions)
+    assert torch.all(final_states.is_sink_state)
+
+    # Check rewards
+    assert isinstance(final_states, ChipDesignStates)
+    rewards = env.log_reward(final_states)
+    assert torch.all(rewards == rewards[0])
 
 
 # -----------------------------------------------------------------------------

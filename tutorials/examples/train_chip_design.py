@@ -1,0 +1,159 @@
+import argparse
+
+import torch
+import torch.nn as nn
+from tqdm import tqdm
+
+from gfn.estimators import DiscretePolicyEstimator
+from gfn.gflownet import TBGFlowNet
+from gfn.gym.chip_design import ChipDesign, ChipDesignStates
+from gfn.preprocessors import Preprocessor
+from gfn.utils.modules import MLP
+
+
+class ChipDesignPreprocessor(Preprocessor):
+    def __init__(self, env, embedding_dim=64):
+        super().__init__(output_dim=env.n_macros * embedding_dim)
+        self.embedding = nn.Embedding(
+            env.n_grid_cells + 2, embedding_dim
+        )  # +2 for -1 and -2
+        self.n_macros = env.n_macros
+        self.embedding_dim = embedding_dim
+
+    def preprocess(self, states):
+        # states.tensor is (batch_size, n_macros) with values from -2 to n_grid_cells-1
+        # We add 2 to make them non-negative for embedding.
+        preprocessed_states = states.tensor + 2
+        embedded = self.embedding(preprocessed_states)
+        # embedded shape: (batch_size, n_macros, embedding_dim)
+        # flatten it
+        return embedded.view(-1, self.n_macros * self.embedding_dim)
+
+
+def main(args):
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu"
+    )
+    env = ChipDesign(
+        device=str(device),
+        singularity_image=args.singularity_image,
+        cd_finetune=args.cd_finetune,
+    )
+
+    preprocessor = ChipDesignPreprocessor(env, embedding_dim=args.embedding_dim)
+
+    output_dim = preprocessor.output_dim
+    assert output_dim is not None
+    module_pf = MLP(
+        input_dim=output_dim,
+        output_dim=env.n_actions,
+        hidden_dim=args.hidden_dim,
+        n_hidden_layers=args.n_hidden,
+    )
+    module_pb = MLP(
+        input_dim=output_dim,
+        output_dim=env.n_actions - 1,
+        hidden_dim=args.hidden_dim,
+        n_hidden_layers=args.n_hidden,
+        trunk=module_pf.trunk,
+    )
+
+    pf_estimator = DiscretePolicyEstimator(
+        module_pf, env.n_actions, preprocessor=preprocessor
+    )
+    pb_estimator = DiscretePolicyEstimator(
+        module_pb, env.n_actions, preprocessor=preprocessor, is_backward=True
+    )
+
+    gflownet = TBGFlowNet(pf=pf_estimator, pb=pb_estimator, init_logZ=0.0).to(device)
+    optimizer = torch.optim.Adam(gflownet.parameters(), lr=args.lr)
+
+    print("Sampling initial states...")
+    final_states = gflownet.sample_terminating_states(env, n=5)
+    assert isinstance(final_states, ChipDesignStates)
+    final_rewards = torch.exp(env.log_reward(final_states))
+    print("Sampled final placements (macro locations):")
+    for i in range(len(final_states)):
+        print(final_states.tensor[i], " with reward ", final_rewards[i].item())
+
+    for i in tqdm(range(args.n_iterations)):
+        trajectories = gflownet.sample_trajectories(env, n=args.batch_size)
+        training_samples = gflownet.to_training_samples(trajectories)
+        optimizer.zero_grad()
+        loss = gflownet.loss(env, training_samples)
+        loss.backward()
+        optimizer.step()
+
+        if (i + 1) % args.log_every == 0:
+            with torch.no_grad():
+                states = gflownet.sample_terminating_states(env, n=args.batch_size)
+                assert isinstance(states, ChipDesignStates)
+                log_rewards = env.log_reward(states)
+                mean_cost = -log_rewards.mean().item()
+            print(
+                f"Iter {i+1} | Loss: {loss.item():.4f} | "
+                f"Mean cost: {mean_cost:.4f} | logZ: {gflownet.logZ.item():.4f}"  # type: ignore[operator]
+            )
+
+    print("\nTraining finished. Evaluating with and without CD optimization...")
+    n_eval = 20
+    final_states = gflownet.sample_terminating_states(env, n=n_eval)
+    assert isinstance(final_states, ChipDesignStates)
+
+    # Evaluate with current cd_finetune setting
+    rewards_current = torch.exp(env.log_reward(final_states))
+
+    # Evaluate with opposite setting for comparison
+    original_cd = env.cd_finetune
+    env.cd_finetune = not original_cd
+    rewards_other = torch.exp(env.log_reward(final_states))
+    env.cd_finetune = original_cd
+
+    if original_cd:
+        rewards_with_cd, rewards_without_cd = rewards_current, rewards_other
+    else:
+        rewards_with_cd, rewards_without_cd = rewards_other, rewards_current
+
+    print(f"\n{'Placement':<20} {'With CD':>10} {'Without CD':>12} {'CD Gain':>10}")
+    print("-" * 55)
+    for i in range(min(10, n_eval)):
+        gain = rewards_with_cd[i].item() - rewards_without_cd[i].item()
+        print(
+            f"{str(final_states.tensor[i].tolist()):<20} "
+            f"{rewards_with_cd[i].item():>10.4f} "
+            f"{rewards_without_cd[i].item():>12.4f} "
+            f"{gain:>+10.4f}"
+        )
+    print("-" * 55)
+    print(
+        f"{'Mean':<20} "
+        f"{rewards_with_cd.mean().item():>10.4f} "
+        f"{rewards_without_cd.mean().item():>12.4f} "
+        f"{(rewards_with_cd - rewards_without_cd).mean().item():>+10.4f}"
+    )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no_cuda", action="store_true")
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--n_iterations", type=int, default=1000)
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--embedding_dim", type=int, default=32)
+    parser.add_argument("--hidden_dim", type=int, default=64)
+    parser.add_argument("--n_hidden", type=int, default=2)
+    parser.add_argument(
+        "--singularity_image",
+        type=str,
+        default=None,
+        help='Path to .sif image for plc_wrapper_main, or "auto".',
+    )
+    parser.add_argument("--log_every", type=int, default=100)
+    parser.add_argument(
+        "--cd_finetune",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run coordinate descent orientation optimization (default: True).",
+    )
+    args = parser.parse_args()
+    main(args)

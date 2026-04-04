@@ -1,0 +1,18 @@
+Bootstrap: docker
+From: ubuntu:20.04
+
+%labels
+    Author torchgfn
+    Description Minimal runtime for plc_wrapper_main (requires GLIBC >= 2.27)
+
+%post
+    apt-get update && apt-get install -y --no-install-recommends \
+        libc6 \
+        && rm -rf /var/lib/apt/lists/*
+
+%runscript
+    exec "$@"
+
+# NOTE: On HPC clusters without fakeroot support, build this image with:
+#   python -m gfn.gym.helpers.chip_design.build_container
+# which uses `singularity pull docker://ubuntu:20.04` instead.

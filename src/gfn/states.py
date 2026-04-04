@@ -561,6 +561,10 @@ class States(ABC):
                     f"Expected shape {self.state_shape} or {full_shape}, got {other.shape}."
                 )
 
+        # Ensure other is on the same device as self.tensor. This is a no-op
+        # when devices already match, and torch.compile handles .to() fine.
+        other = other.to(self.tensor.device)
+
         # Broadcast single-state inputs instead of branching on shape at runtime.
         if other.shape == self.state_shape:
             other_expanded = other.view(
@@ -591,11 +595,7 @@ class States(ABC):
                 "is_initial_state is not implemented by default "
                 f"for {self.__class__.__name__}"
             )
-        # We do not cast devices here to avoid breaking the graph when using
-        # torch.compile. We use `ensure_same_device` to catch silent device drift
-        # during testing.
         if self.debug:
-            ensure_same_device(self.device, self.__class__.s0.device)
             if self.__class__.s0.shape != self.state_shape:
                 raise ValueError(
                     f"s0 must have shape {self.state_shape}; got {self.__class__.s0.shape}"
@@ -620,12 +620,7 @@ class States(ABC):
                 "is_sink_state is not implemented by default "
                 f"for {self.__class__.__name__}"
             )
-
-        # We do not cast devices here to avoid breaking the graph when using
-        # torch.compile. We use `ensure_same_device` to catch silent device drift
-        # during testing.
         if self.debug:
-            ensure_same_device(self.device, self.__class__.sf.device)
             if self.__class__.sf.shape != self.state_shape:
                 raise ValueError(
                     f"sf must have shape {self.state_shape}; got {self.__class__.sf.shape}"
