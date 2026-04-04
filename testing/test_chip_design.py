@@ -29,7 +29,7 @@ def _fmt(vals):
 def env():
     try:
         e = ChipDesign(device="cpu", cd_finetune=False, reward_norm=None)
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         pytest.skip("plc_wrapper_main not available (Linux x86-64 only)")
     yield e
     e.close()
@@ -45,7 +45,7 @@ def env_with_reward():
     """Creates env, places macros [0, 3], computes log_reward ONCE."""
     try:
         e = ChipDesign(device="cpu", cd_finetune=False, reward_norm=None)
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         pytest.skip("plc_wrapper_main not available (Linux x86-64 only)")
 
     states = e.reset(batch_shape=1)
@@ -330,7 +330,7 @@ class TestRewardNormalization:
 
     def test_log_reward_identical(self, env_with_reward):
         """Batch of 2 identical placements -> equal rewards."""
-        e, final, lr_single = env_with_reward
+        e, final, _lr_single = env_with_reward
         # Build batch of 2 identical final states
         t = final.tensor.expand(2, -1).clone()
         batch_states = e.States(tensor=t)
@@ -393,7 +393,7 @@ class TestRewardNormalization:
                 reward_norm="zscore",
                 cost_stats=stats,
             )
-        except FileNotFoundError:
+        except (FileNotFoundError, OSError):
             pytest.skip("plc_wrapper_main not available")
         try:
             assert e._cost_mean == 1.0
@@ -508,7 +508,7 @@ class TestFileParsing:
     def test_cost_info_not_done(self):
         """done=False -> cost is 0."""
         plc = MagicMock()
-        cost, info = placement_util.cost_info_function(plc, done=False)
+        cost, _info = placement_util.cost_info_function(plc, done=False)
         assert cost == 0.0
 
     def test_cost_info_done(self):
@@ -533,7 +533,7 @@ class TestFileParsing:
     def test_cost_info_zero_weights(self):
         """All weights 0 -> cost 0, methods not called."""
         plc = MagicMock()
-        cost, info = placement_util.cost_info_function(
+        cost, _info = placement_util.cost_info_function(
             plc,
             done=True,
             wirelength_weight=0.0,
