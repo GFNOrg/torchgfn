@@ -151,10 +151,16 @@ class Transitions(Container):
         Returns:
             A string summary of the transitions.
         """
-        states_tensor = self.states.tensor
-        next_states_tensor = self.next_states.tensor
+        if not hasattr(self.states, "tensor"):
+            # GraphStates and similar types don't have a simple .tensor attr.
+            return (
+                f"Transitions(n_transitions={self.n_transitions}, "
+                f"actions={self.actions})"
+            )
 
-        # FIXME: This is not working for GraphStates.
+        states_tensor = self.states.tensor.detach().cpu()
+        next_states_tensor = self.next_states.tensor.detach().cpu()
+
         states_repr = ",\t".join(
             [
                 f"{str(state.numpy())} -> {str(next_state.numpy())}"
@@ -163,7 +169,7 @@ class Transitions(Container):
         )
         return (
             f"Transitions(n_transitions={self.n_transitions}, "
-            f"transitions={states_repr}, actions={self.actions}, "
+            f"transitions={states_repr}, actions={self.actions})"
         )
 
     @property

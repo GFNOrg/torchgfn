@@ -62,12 +62,19 @@ class Container(ABC):
         Args:
             path: The directory path where the container will be saved.
         """
+        from gfn.actions import Actions
+        from gfn.states import States
+
         for key, val in self.__dict__.items():
             if isinstance(val, Env):
                 continue
             elif isinstance(val, Container):
                 val.save(os.path.join(path, key))
+            elif isinstance(val, (States, Actions)):
+                torch.save(val.tensor, os.path.join(path, key + ".pt"))
             elif isinstance(val, torch.Tensor):
+                torch.save(val, os.path.join(path, key + ".pt"))
+            elif val is None or isinstance(val, (bool, int, float, str)):
                 torch.save(val, os.path.join(path, key + ".pt"))
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
@@ -78,13 +85,25 @@ class Container(ABC):
         Args:
             path: The directory path from which to load the container.
         """
+        from gfn.actions import Actions
+        from gfn.states import States
+
         for key, val in self.__dict__.items():
             if isinstance(val, Env):
                 continue
             elif isinstance(val, Container):
                 val.load(os.path.join(path, key))
+            elif isinstance(val, (States, Actions)):
+                tensor = torch.load(os.path.join(path, key + ".pt"), weights_only=True)
+                val.tensor = tensor
             elif isinstance(val, torch.Tensor):
-                self.__dict__[key] = torch.load(os.path.join(path, key + ".pt"))
+                self.__dict__[key] = torch.load(
+                    os.path.join(path, key + ".pt"), weights_only=True
+                )
+            elif val is None or isinstance(val, (bool, int, float, str)):
+                file_path = os.path.join(path, key + ".pt")
+                if os.path.exists(file_path):
+                    self.__dict__[key] = torch.load(file_path, weights_only=False)
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
 
