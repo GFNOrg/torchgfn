@@ -200,7 +200,7 @@ def render_states(states: GraphStates, state_evaluator: callable, directed: bool
         directed: Whether to render directed or undirected edges
     """
     rewards = state_evaluator(states)
-    fig, ax = plt.subplots(2, 4, figsize=(15, 7))
+    _, ax = plt.subplots(2, 4, figsize=(15, 7))
     for i in range(8):
         current_ax = ax[i // 4, i % 4]
         state = states[i]

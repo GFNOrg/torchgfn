@@ -433,7 +433,7 @@ def main(args):
     # Adjust layout and save to home directory.
     if args.plot:
         # Create a figure with 3 subplots arranged horizontally
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+        _, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
 
         # Plot 1: Modes Discovered
         sns.lineplot(

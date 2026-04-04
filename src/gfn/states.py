@@ -1711,9 +1711,11 @@ class GraphStates(States):
             assert other.x is not None
             assert other.edge_index is not None
             assert other.edge_attr is not None
-        other_x = other.x  # Guaranteed non-None for valid graph states.
-        other_edge_index = other.edge_index
-        other_edge_attr_t = other.edge_attr
+        # Guaranteed non-None for valid graph states; use cast so
+        # torch.compile never sees a runtime assert.
+        other_x = cast(torch.Tensor, other.x)
+        other_edge_index = cast(torch.Tensor, other.edge_index)
+        other_edge_attr_t = cast(torch.Tensor, other.edge_attr)
 
         other_edges = sorted(other_edge_index.t().tolist())
         other_edge_attr = other_edge_attr_t[
@@ -1724,15 +1726,15 @@ class GraphStates(States):
             if graph.x is None or graph.edge_index is None or graph.edge_attr is None:
                 continue
 
-            if graph.x.size(0) != other.x.size(0):
+            if graph.x.size(0) != other_x.size(0):
                 continue
 
             # FIXME: What if the nodes are not sorted?
-            if not torch.all(graph.x == other.x):
+            if not torch.all(graph.x == other_x):
                 continue
 
             # Check if the number of edges is the same
-            if graph.edge_index.size(1) != other.edge_index.size(1):
+            if graph.edge_index.size(1) != other_edge_index.size(1):
                 continue
 
             # Check if edge indices are the same (this is more complex due to potential reordering)
@@ -1742,7 +1744,7 @@ class GraphStates(States):
                 continue
 
             # Check if the number of edge attributes is the same
-            if graph.edge_attr.size(0) != other.edge_attr.size(0):
+            if graph.edge_attr.size(0) != other_edge_attr_t.size(0):
                 continue
 
             # Check if edge attributes are the same (after sorting)

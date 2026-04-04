@@ -996,7 +996,7 @@ def plot_communities_in_environment(  # noqa: C901
 
         state_priority = {"finished": 0, "running": 1, "crashed": 2, "failed": 3}
 
-        for handle, label_key in zip(legend_handles, legend_labels):
+        for _handle, label_key in zip(legend_handles, legend_labels):
             parts = label_key.split("_strategy_")
             if len(parts) != 2:
                 continue
@@ -1624,7 +1624,7 @@ def plot_community_variance_over_time(  # noqa: C901
 
         legend_entries = {}  # (size, strategy) -> handle
 
-        for community_id, comm_data in sorted(communities_with_metric.items()):
+        for _community_id, comm_data in sorted(communities_with_metric.items()):
             metadata = comm_data["metadata"]
             metric_data = comm_data["metrics"][metric]
 
@@ -1769,7 +1769,7 @@ def plot_community_variance_over_time(  # noqa: C901
 
         # Print statistics summary
         print(f"\nVariance Statistics for {env_config_id}:")
-        for community_id, comm_data in sorted(communities_with_metric.items()):
+        for _community_id, comm_data in sorted(communities_with_metric.items()):
             metadata = comm_data["metadata"]
             metric_data = comm_data["metrics"][metric]
 
@@ -1909,7 +1909,7 @@ def plot_variance_comparison_by_size_and_strategy(  # noqa: C901
     df = pd.DataFrame(all_stats)
 
     # Create figure with comparison plots
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    _, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     # Plot 1: Average Std Dev by Community Size
     ax1 = axes[0, 0]
@@ -1931,7 +1931,7 @@ def plot_variance_comparison_by_size_and_strategy(  # noqa: C901
     ax1.grid(True, alpha=0.3, axis="y")
 
     # Add count labels on bars
-    for i, (bar, count) in enumerate(zip(bars, size_groups["count"])):
+    for _i, (bar, count) in enumerate(zip(bars, size_groups["count"])):
         ax1.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height(),
@@ -1963,7 +1963,7 @@ def plot_variance_comparison_by_size_and_strategy(  # noqa: C901
     ax2.grid(True, alpha=0.3, axis="x")
 
     # Add count labels
-    for i, (bar, count) in enumerate(zip(bars, strategy_groups["count"])):
+    for _i, (bar, count) in enumerate(zip(bars, strategy_groups["count"])):
         ax2.text(
             bar.get_width(),
             bar.get_y() + bar.get_height() / 2,
@@ -2214,7 +2214,7 @@ def main():
     runs_list = fetch_wandb_runs()
 
     # Analyze wandb community groups (these are the "communities" of agents)
-    run_to_community, community_runs = analyze_groups(runs_list)
+    run_to_community, _community_runs = analyze_groups(runs_list)
 
     # Handle --identify-deletions mode (early exit)
     if args.identify_deletions:

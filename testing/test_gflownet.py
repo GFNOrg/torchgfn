@@ -231,7 +231,7 @@ def test_subtb_get_scores_vectorized_matches_original(seed: int):
         save_logprobs=True,
         save_estimator_outputs=False,
     )
-    max_len = trajectories.max_length  # noqa: F841 used implicitly by shapes
+    trajectories.max_length
 
     def original_get_scores(self, env, trajectories, recalculate_all_logprobs=True):
         log_pf_trajectories_, log_pb_trajectories_ = self.get_pfs_and_pbs(

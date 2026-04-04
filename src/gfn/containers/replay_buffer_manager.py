@@ -67,7 +67,7 @@ class ReplayBufferManager:
 
         while self.is_running:
             # Receive data
-            sender_rank, msg, msg_data_len = self._recv_object()
+            sender_rank, msg, _msg_data_len = self._recv_object()
 
             # Recieved some data to add to the buffer.
             if msg.message_type == MessageType.DATA:

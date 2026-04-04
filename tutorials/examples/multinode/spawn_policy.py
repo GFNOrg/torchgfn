@@ -740,7 +740,7 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
         print(
             f"Rank {self.myrank:<10} -  {'param elements':<15} {'iter':<10} {'total params elements commd':<25}"
         )
-        for name, param in named_params:
+        for _name, param in named_params:
             param.device
             param_shape = param.data.shape
             print(
@@ -954,8 +954,8 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             acc = torch.zeros_like(param.data)
             all_donors = []
 
-            for i, src in enumerate(donors):
-                tensor_win, tensor_buf = self._mpi_tensor_wins[name]
+            for _i, src in enumerate(donors):
+                tensor_win, _tensor_buf = self._mpi_tensor_wins[name]
                 tensor_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
                 flat_size = np.prod(param_shape)
                 assert flat_size > 0
@@ -996,7 +996,7 @@ class AsyncSelectiveAveragingPolicympi4pyGeneral(SpawnPolicy):
             # param_shape = param.data.shape
             acc = torch.zeros_like(param[0].data)
 
-            for i, donor_tensor in enumerate(param):
+            for _i, donor_tensor in enumerate(param):
                 # Adding all the donor tensors/params
                 acc.add_(donor_tensor)
 
@@ -1121,7 +1121,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         print(
             f"Rank {self.myrank:<10} -  {'param elements':<15} {'#comm_iters':<10} {'total params elements communicated':<25}"
         )
-        for name, param in named_params:
+        for _name, param in named_params:
             param.device
             param_shape = param.data.shape
             print(
@@ -1200,7 +1200,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         model: GFlowNet,
     ) -> None:
         offset = 0
-        for name, param in model.named_parameters():
+        for _name, param in model.named_parameters():
             win = self._mpi_tensor_wins[0]
             win.Lock(rank=self.myrank, lock_type=MPI.LOCK_EXCLUSIVE)
             size = param.data.numel()
@@ -1365,7 +1365,7 @@ class AsyncSelectiveAveragingPolicympi4pyFast(SpawnPolicy):
         self.acc.zero_()
 
         if self.averaging_strategy == "mean":
-            for i, src in enumerate(donors):
+            for _i, src in enumerate(donors):
                 tensor_win.Lock(rank=src, lock_type=MPI.LOCK_SHARED)
                 tensor_win.Get([self.donor_tensor_flat, MPI.FLOAT], target_rank=src)
                 tensor_win.Unlock(rank=src)

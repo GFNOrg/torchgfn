@@ -1193,7 +1193,7 @@ class RecurrentDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
         if x.dim() != 2:
             raise ValueError("Expected input tensor with shape (batch, timesteps).")
 
-        batch, timesteps = x.size()
+        batch, _timesteps = x.size()
         device = x.device
 
         if "hidden" not in carry:

@@ -844,10 +844,16 @@ def test_perfect_binary_tree_bwd_step():
 def test_chip_design():
     BATCH_SIZE = 2
 
+    import platform
+
     try:
         env = ChipDesign(device="cpu")
     except FileNotFoundError:
         pytest.skip("plc_wrapper_main not available (Linux x86-64 only)")
+    except OSError:
+        if platform.system() == "Darwin":
+            pytest.skip("ChipDesign binary not supported on macOS")
+        raise
     states = env.reset(batch_shape=BATCH_SIZE)
     assert states.tensor.shape == (BATCH_SIZE, env.n_macros)
     assert torch.all(states.tensor == -1)

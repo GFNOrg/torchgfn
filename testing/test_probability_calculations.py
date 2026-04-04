@@ -428,7 +428,7 @@ def test_trajectory_states_sink_consistency():
     should correspond to dummy actions. This was previously an assertion in
     get_trajectory_pfs_and_pbs function.
     """
-    env, pf_estimator, _, pf_sampler = _build_env_pf_pb()
+    env, _pf_estimator, _, pf_sampler = _build_env_pf_pb()
     trajectories = pf_sampler.sample_trajectories(
         env,
         n=5,

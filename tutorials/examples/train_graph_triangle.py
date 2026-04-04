@@ -107,7 +107,7 @@ def render_states(states: GraphStates, evaluator: Callable[[GraphStates], torch.
     from matplotlib import patches
 
     rewards = evaluator(states)
-    fig, ax = plt.subplots(2, 4, figsize=(12, 6))
+    _, ax = plt.subplots(2, 4, figsize=(12, 6))
     for i in range(min(8, len(states))):
         a = ax[i // 4, i % 4]
         g = states[i].tensor
