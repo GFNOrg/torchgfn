@@ -18,6 +18,7 @@ from gfn.gym.helpers.chip_design.plc_client import _find_singularity, _resolve_p
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _fmt(vals):
     """Long tensor with trailing dim-1 for actions."""
     return torch.tensor(vals, dtype=torch.long).unsqueeze(-1)
@@ -26,6 +27,7 @@ def _fmt(vals):
 # ---------------------------------------------------------------------------
 # Module-scoped fixture -- ONE env for the entire module
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def env():
@@ -40,6 +42,7 @@ def env():
 # ---------------------------------------------------------------------------
 # Function-scoped fixture: env + cached placement & reward (ONE log_reward call)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="function")
 def env_with_reward():
@@ -68,6 +71,7 @@ def env_with_reward():
 # ===================================================================
 # A. ChipDesignStates (9 tests)
 # ===================================================================
+
 
 class TestChipDesignStates:
 
@@ -155,6 +159,7 @@ class TestChipDesignStates:
 # B. Environment Core (8 tests)
 # ===================================================================
 
+
 class TestEnvironmentCore:
 
     def test_reset_initial(self, env):
@@ -234,6 +239,7 @@ class TestEnvironmentCore:
 # C. Masks (4 tests)
 # ===================================================================
 
+
 class TestMasks:
 
     def test_masks_initial(self, env):
@@ -287,6 +293,7 @@ class TestMasks:
 # D. Sentinel Handling (3 tests)
 # ===================================================================
 
+
 class TestSentinelHandling:
 
     def test_apply_state_unplaced(self, env):
@@ -315,6 +322,7 @@ class TestSentinelHandling:
 # ===================================================================
 # E. Reward & Normalization (7 tests)
 # ===================================================================
+
 
 class TestRewardNormalization:
 
@@ -404,6 +412,7 @@ class TestRewardNormalization:
 # F. PLC Resolution (4 tests, pure Python, monkeypatch)
 # ===================================================================
 
+
 class TestPLCResolution:
 
     def test_resolve_plc_binary_env_var(self, tmp_path, monkeypatch):
@@ -437,10 +446,12 @@ class TestPLCResolution:
 
     def test_find_singularity_apptainer(self, monkeypatch):
         """shutil.which returns path only for apptainer."""
+
         def fake_which(name):
             if name == "apptainer":
                 return "/usr/bin/apptainer"
             return None
+
         monkeypatch.setattr(
             "gfn.gym.helpers.chip_design.plc_client.shutil.which",
             fake_which,
@@ -451,6 +462,7 @@ class TestPLCResolution:
 # ===================================================================
 # G. File Parsing (8 tests, pure Python)
 # ===================================================================
+
 
 class TestFileParsing:
 
@@ -510,8 +522,11 @@ class TestFileParsing:
         plc.get_congestion_cost.return_value = 0.4
         plc.get_density_cost.return_value = 0.5
         cost, info = placement_util.cost_info_function(
-            plc, done=True,
-            wirelength_weight=1.0, density_weight=1.0, congestion_weight=0.5,
+            plc,
+            done=True,
+            wirelength_weight=1.0,
+            density_weight=1.0,
+            congestion_weight=0.5,
         )
         expected = 1.0 * 0.3 + 0.5 * 0.4 + 1.0 * 0.5
         assert abs(cost - expected) < 1e-9
@@ -523,8 +538,11 @@ class TestFileParsing:
         """All weights 0 -> cost 0, methods not called."""
         plc = MagicMock()
         cost, info = placement_util.cost_info_function(
-            plc, done=True,
-            wirelength_weight=0.0, density_weight=0.0, congestion_weight=0.0,
+            plc,
+            done=True,
+            wirelength_weight=0.0,
+            density_weight=0.0,
+            congestion_weight=0.0,
         )
         assert cost == 0.0
         plc.get_cost.assert_not_called()
@@ -535,6 +553,7 @@ class TestFileParsing:
 # ===================================================================
 # H. Integration (5 tests, require binary)
 # ===================================================================
+
 
 class TestIntegration:
 
