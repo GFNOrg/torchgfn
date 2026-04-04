@@ -1,3 +1,4 @@
+# pyright: reportUnusedImport=false
 import logging
 
 logger = logging.getLogger(__name__)

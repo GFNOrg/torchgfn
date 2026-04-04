@@ -49,7 +49,7 @@ def graph_states_share_storage(a: GraphStates, b: GraphStates) -> bool:
     def _tensor_ptrs(g: Data) -> tuple[int, ...]:
         """Return the data_ptr() of every tensor field in the graph."""
         out: list[int] = []
-        for key, t in g:
+        for _, t in g:
             if torch.is_tensor(t) and t.numel() > 0:  # ignore empty tensors.
                 out.append(t.data_ptr())
 

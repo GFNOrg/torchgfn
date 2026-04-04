@@ -22,7 +22,7 @@ _PAIRS = (
     "UG",
 )
 # We sometimes want a pair of bases (as ints) from a pair-int.
-_INT_PAIRS = tuple((base_as_int(p[0]), base_as_int(p[1])) for i, p in enumerate(_PAIRS))
+_INT_PAIRS = tuple((base_as_int(p[0]), base_as_int(p[1])) for _, p in enumerate(_PAIRS))
 # Sometimes we'd like to go from the str or tuple form to the pair-int.
 _PAIRS_INV: dict[Union[str, tuple[int, int]], int] = {p: i for i, p in enumerate(_PAIRS)}
 _PAIRS_INV.update({t: i for i, t in enumerate(_INT_PAIRS)})

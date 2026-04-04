@@ -126,7 +126,7 @@ class CodonDesignEnv(DiscreteEnv):
     ) -> torch.Tensor:
 
         states_tensor = states.tensor
-        batch_size, seq_len = states_tensor.shape
+        batch_size, _seq_len = states_tensor.shape
         current_length = (states_tensor != -1).sum(dim=1)
         new_states = states_tensor.clone()
 

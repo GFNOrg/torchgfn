@@ -344,7 +344,7 @@ class RNAFolderBase2(RNAFolderBase):
         closed, and returns the lower energy and mode (0=open, 1=closed).
         """
         # Make the working arrays local
-        K, U, V = soln.get_arrays()
+        _K, _U, V = soln.get_arrays()
 
         vmin = self.non_pairing
         mode = -1
@@ -429,7 +429,7 @@ class RNAFolderBase2(RNAFolderBase):
         or paired with any interior nucleotide k, where i<k<j.
         """
         # Make the working arrays local
-        K, U, V = soln.get_arrays()
+        _K, U, V = soln.get_arrays()
 
         # Consider several hypotheses about the addition of j
         # to the range [i,j-1] without pairing them. In each hypothesis

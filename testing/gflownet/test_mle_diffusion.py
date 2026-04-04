@@ -115,7 +115,7 @@ def test_backward_bridge_mean_std_match_formula():
     s_dim = 2
     num_steps = 2
     sigma = 1.0
-    pf, pb = _build_estimators(s_dim=s_dim, learn_variance=False, num_steps=num_steps)
+    _, pb = _build_estimators(s_dim=s_dim, learn_variance=False, num_steps=num_steps)
 
     # Manually run the PB module once at t=1.
     dt = 1.0 / num_steps

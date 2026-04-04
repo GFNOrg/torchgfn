@@ -717,7 +717,7 @@ def main(args) -> dict:  # noqa: C901
     logger.info("Finished all iterations")
     total_time = time.time() - time_start
     if args.timing:
-        timing["total_rest_time"] = [total_time - sum(sum(v) for k, v in timing.items())]
+        timing["total_rest_time"] = [total_time - sum(sum(v) for _, v in timing.items())]
 
     timing["total_time"] = [total_time]
 

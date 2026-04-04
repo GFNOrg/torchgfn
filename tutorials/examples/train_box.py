@@ -121,7 +121,7 @@ def plot_trajectories(
     # Sample trajectories
     trajectories = sampler.sample_trajectories(env, n=n_trajectories)
 
-    fig, ax = plt.subplots(figsize=(8, 8))
+    _, ax = plt.subplots(figsize=(8, 8))
 
     # Get all states: shape is (max_length+1, batch_size, state_dim)
     all_states = trajectories.states.tensor.cpu().numpy()

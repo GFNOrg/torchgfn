@@ -76,7 +76,7 @@ def main(args):
     # 4. Train the gflownet.
     logging.info("Starting training loop...")
 
-    for it in tqdm(range(args.n_iterations), dynamic_ncols=True):
+    for _it in tqdm(range(args.n_iterations), dynamic_ncols=True):
 
         # Sample new reward weights from a Dirichlet distribution
         weights = (np.random.dirichlet([1, 1, 1])).tolist()
@@ -113,7 +113,7 @@ def main(args):
 
     # Sample final sequences using fixed reward weights (eg, 30% GC, 30% MFE, 40% CAI) to evaluate policy performance
     with torch.no_grad():
-        samples, gc_list, mfe_list, cai_list = evaluate(
+        samples, _gc_list, _mfe_list, _cai_list = evaluate(
             env, sampler, weights=torch.tensor([0.3, 0.3, 0.4]), n_samples=args.n_samples
         )
 

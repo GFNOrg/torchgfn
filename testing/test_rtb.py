@@ -123,7 +123,7 @@ def test_rel_lpv_loss_backward_and_grads():
 
 def test_rel_lpv_no_logz_parameters():
     """RelLPV should have no logZ-related parameters."""
-    env, pf_post, pf_prior = _make_hypergrid_estimators()
+    _env, pf_post, pf_prior = _make_hypergrid_estimators()
 
     gfn = RelativeLogPartitionVarianceGFlowNet(
         pf=pf_post,
@@ -181,7 +181,7 @@ def test_rel_lpv_matches_rtb_at_optimal_logz():
 
 def test_rel_lpv_prior_not_in_parameters():
     """Prior should not leak into the module's parameters."""
-    env, pf_post, pf_prior = _make_hypergrid_estimators()
+    _env, pf_post, pf_prior = _make_hypergrid_estimators()
 
     gfn = RelativeLogPartitionVarianceGFlowNet(
         pf=pf_post,

@@ -51,7 +51,7 @@ def _make_hypergrid_estimators():
 
 def test_alpha_equals_inverse_beta():
     """alpha property must equal 1/beta."""
-    env, pf, prior = _make_hypergrid_estimators()
+    _, pf, prior = _make_hypergrid_estimators()
     for alpha_val in [0.5, 1.0, 2.0]:
         gfn = TrustPCLGFlowNet(policy=pf, reference_policy=prior, alpha=alpha_val)
         assert torch.allclose(
@@ -68,7 +68,7 @@ def test_alpha_equals_inverse_beta():
 
 def test_v_soft_s0_equals_alpha_times_logz():
     """v_soft_s0 must equal alpha * logZ."""
-    env, pf, prior = _make_hypergrid_estimators()
+    _, pf, prior = _make_hypergrid_estimators()
     gfn = TrustPCLGFlowNet(
         policy=pf,
         reference_policy=prior,
@@ -85,7 +85,7 @@ def test_v_soft_s0_equals_alpha_times_logz():
 
 def test_rl_constructor_maps_to_rtb():
     """RL-style constructor args must map correctly to RTB internals."""
-    env, pf, prior = _make_hypergrid_estimators()
+    _, pf, prior = _make_hypergrid_estimators()
     gfn = TrustPCLGFlowNet(
         policy=pf,
         reference_policy=prior,

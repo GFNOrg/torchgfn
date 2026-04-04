@@ -342,7 +342,7 @@ def initialize_distributed_compute(
         logger.info("CCL backend requested...")
         try:
             # Note - intel must be imported before oneccl!
-            import oneccl_bindings_for_pytorch  # noqa: F401
+            import oneccl_bindings_for_pytorch  # noqa: F401  # pyright: ignore[reportUnusedImport]
         except ImportError as e:
             raise Exception("import oneccl_bindings_for_pytorch failed, {}".format(e))
 
@@ -350,7 +350,7 @@ def initialize_distributed_compute(
         logger.info("MPI backend requested...")
         assert torch.distributed.is_mpi_available()
         try:
-            import torch_mpi  # noqa: F401
+            import torch_mpi  # noqa: F401  # pyright: ignore[reportUnusedImport]
         except ImportError as e:
             raise Exception("import torch_mpi failed, {}".format(e))
 
