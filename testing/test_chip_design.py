@@ -13,7 +13,6 @@ from gfn.gym.helpers.chip_design import SAMPLE_INIT_PLACEMENT, SAMPLE_NETLIST_FI
 from gfn.gym.helpers.chip_design import utils as placement_util
 from gfn.gym.helpers.chip_design.plc_client import _find_singularity, _resolve_plc_binary
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
