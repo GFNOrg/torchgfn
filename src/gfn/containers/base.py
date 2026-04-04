@@ -74,9 +74,7 @@ class Container(ABC):
                 torch.save(val.tensor, os.path.join(path, key + ".pt"))
                 conditions = getattr(val, "conditions", None)
                 if conditions is not None:
-                    torch.save(
-                        conditions, os.path.join(path, key + "_conditions.pt")
-                    )
+                    torch.save(conditions, os.path.join(path, key + "_conditions.pt"))
             elif isinstance(val, Actions):
                 torch.save(val.tensor, os.path.join(path, key + ".pt"))
             elif isinstance(val, torch.Tensor):
@@ -108,18 +106,26 @@ class Container(ABC):
                 )
                 val.tensor = tensor
             elif isinstance(val, torch.Tensor):
-                self.__dict__[key] = torch.load(
-                    os.path.join(path, key + ".pt"),
-                    weights_only=True,
-                    map_location=self.device,
+                setattr(
+                    self,
+                    key,
+                    torch.load(
+                        os.path.join(path, key + ".pt"),
+                        weights_only=True,
+                        map_location=self.device,
+                    ),
                 )
             elif val is None or isinstance(val, (bool, int, float, str)):
                 file_path = os.path.join(path, key + ".pt")
                 if os.path.exists(file_path):
-                    self.__dict__[key] = torch.load(
-                        file_path,
-                        weights_only=True,
-                        map_location=self.device,
+                    setattr(
+                        self,
+                        key,
+                        torch.load(
+                            file_path,
+                            weights_only=True,
+                            map_location=self.device,
+                        ),
                     )
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
