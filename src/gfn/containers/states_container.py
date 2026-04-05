@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from gfn.env import Env
     from gfn.states import States
 
-from gfn.containers.base import Container
+from gfn.containers.base import Container, TensorDictBase
 from gfn.utils.common import ensure_same_device
 
 StateType = TypeVar("StateType", bound="States")
@@ -164,6 +164,38 @@ class StatesContainer(Container, Generic[StateType]):
         log_rewards = self.log_rewards
         assert log_rewards is not None
         return log_rewards[self.is_terminating]
+
+    def to_tensordict(self) -> TensorDictBase:
+        """Serialize the states container into a TensorDict."""
+        from tensordict import TensorDict
+
+        d: dict[str, torch.Tensor] = {
+            "states": self.states.tensor,
+            "is_terminating": self.is_terminating,
+        }
+        conditions = getattr(self.states, "conditions", None)
+        if conditions is not None:
+            d["states_conditions"] = conditions
+        if self._log_rewards is not None:
+            d["log_rewards"] = self._log_rewards
+        return TensorDict(d, batch_size=[])
+
+    @classmethod
+    def from_tensordict(  # type: ignore[override]
+        cls, env: "Env", td: TensorDictBase
+    ) -> "StatesContainer[StateType]":
+        """Reconstruct a StatesContainer from a TensorDict."""
+        states = cast(StateType, env.states_from_tensor(td["states"]))
+        if "states_conditions" in td.keys():
+            states.conditions = td["states_conditions"]
+        return cls(
+            env=env,
+            states=states,
+            is_terminating=td["is_terminating"].clone(),
+            log_rewards=(
+                td["log_rewards"].clone() if "log_rewards" in td.keys() else None
+            ),
+        )
 
     def extend(self, other: StatesContainer[StateType]) -> None:
         """Extends this container with another StatesContainer object.

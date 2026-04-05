@@ -6,7 +6,7 @@ from typing import Sequence
 import torch
 
 from gfn.actions import Actions
-from gfn.containers.base import Container
+from gfn.containers.base import Container, TensorDictBase
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
@@ -302,6 +302,51 @@ class Trajectories(Container):
             log_rewards=log_rewards,
             log_probs=log_probs,
             estimator_outputs=estimator_outputs,
+        )
+
+    def to_tensordict(self) -> TensorDictBase:
+        """Serialize trajectories into a TensorDict."""
+        from tensordict import TensorDict
+
+        d: dict[str, torch.Tensor] = {
+            "states": self.states.tensor,
+            "actions": self.actions.tensor,
+            "terminating_idx": self.terminating_idx,
+            "is_backward": torch.tensor(self.is_backward),
+        }
+        conditions = getattr(self.states, "conditions", None)
+        if conditions is not None:
+            d["states_conditions"] = conditions
+        if self._log_rewards is not None:
+            d["log_rewards"] = self._log_rewards
+        if self.log_probs is not None:
+            d["log_probs"] = self.log_probs
+        if self.estimator_outputs is not None:
+            d["estimator_outputs"] = self.estimator_outputs
+        return TensorDict(d, batch_size=[])
+
+    @classmethod
+    def from_tensordict(cls, env: "Env", td: TensorDictBase) -> "Trajectories":
+        """Reconstruct Trajectories from a TensorDict."""
+        states = env.states_from_tensor(td["states"])
+        if "states_conditions" in td.keys():
+            states.conditions = td["states_conditions"]
+        actions = env.actions_from_tensor(td["actions"])
+        return cls(
+            env=env,
+            states=states,
+            actions=actions,
+            terminating_idx=td["terminating_idx"].clone(),
+            is_backward=td["is_backward"].item(),
+            log_rewards=(
+                td["log_rewards"].clone() if "log_rewards" in td.keys() else None
+            ),
+            log_probs=(td["log_probs"].clone() if "log_probs" in td.keys() else None),
+            estimator_outputs=(
+                td["estimator_outputs"].clone()
+                if "estimator_outputs" in td.keys()
+                else None
+            ),
         )
 
     def extend(self, other: Trajectories) -> None:

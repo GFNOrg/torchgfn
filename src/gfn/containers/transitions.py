@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from gfn.env import Env
     from gfn.states import States
 
-from gfn.containers.base import Container
+from gfn.containers.base import Container, TensorDictBase
 from gfn.utils.common import ensure_same_device
 
 
@@ -274,6 +274,52 @@ class Transitions(Container):
             is_backward=self.is_backward,
             log_rewards=log_rewards,
             log_probs=log_probs,
+        )
+
+    def to_tensordict(self) -> TensorDictBase:
+        """Serialize transitions into a TensorDict."""
+        from tensordict import TensorDict
+
+        d: dict[str, torch.Tensor] = {
+            "states": self.states.tensor,
+            "actions": self.actions.tensor,
+            "is_terminating": self.is_terminating,
+            "next_states": self.next_states.tensor,
+            "is_backward": torch.tensor(self.is_backward),
+        }
+        conditions = getattr(self.states, "conditions", None)
+        if conditions is not None:
+            d["states_conditions"] = conditions
+        next_conditions = getattr(self.next_states, "conditions", None)
+        if next_conditions is not None:
+            d["next_states_conditions"] = next_conditions
+        if self._log_rewards is not None:
+            d["log_rewards"] = self._log_rewards
+        if self.log_probs is not None:
+            d["log_probs"] = self.log_probs
+        return TensorDict(d, batch_size=[])
+
+    @classmethod
+    def from_tensordict(cls, env: "Env", td: TensorDictBase) -> "Transitions":
+        """Reconstruct Transitions from a TensorDict."""
+        states = env.states_from_tensor(td["states"])
+        if "states_conditions" in td.keys():
+            states.conditions = td["states_conditions"]
+        actions = env.actions_from_tensor(td["actions"])
+        next_states = env.states_from_tensor(td["next_states"])
+        if "next_states_conditions" in td.keys():
+            next_states.conditions = td["next_states_conditions"]
+        return cls(
+            env=env,
+            states=states,
+            actions=actions,
+            is_terminating=td["is_terminating"].clone(),
+            next_states=next_states,
+            is_backward=td["is_backward"].item(),
+            log_rewards=(
+                td["log_rewards"].clone() if "log_rewards" in td.keys() else None
+            ),
+            log_probs=td["log_probs"].clone() if "log_probs" in td.keys() else None,
         )
 
     def extend(self, other: Transitions) -> None:

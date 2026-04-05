@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Protocol, Union, cast, runtime_checkable
 
 import torch
@@ -266,23 +265,23 @@ class ReplayBuffer:
         # Uniform sampling (replacement-free) for the non-prioritised case.
         return cast(ContainerUnion, self.training_container.sample(n_samples))
 
-    def save(self, directory: str):
-        """Saves the buffer to disk.
+    def save(self, path: str):
+        """Saves the buffer to a single ``.pt`` file.
 
         Args:
-            directory: The directory path where the buffer will be saved.
+            path: File path (e.g. ``"replay_buffer.pt"``).
         """
         if self.training_container is not None:
-            self.training_container.save(os.path.join(directory, "training_container"))
+            self.training_container.save(path)
 
-    def load(self, directory: str):
-        """Loads the buffer from disk.
+    def load(self, path: str):
+        """Loads buffer contents from a ``.pt`` file saved by :meth:`save`.
 
         Args:
-            directory: The directory path from which to load the buffer.
+            path: File path to the saved buffer.
         """
         if self.training_container is not None:
-            self.training_container.load(os.path.join(directory, "training_container"))
+            self.training_container = type(self.training_container).load(self.env, path)
 
 
 class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):

@@ -1,12 +1,13 @@
-"""Extended tests for gfn.containers: base, transitions, replay_buffer."""
+"""Extended tests for gfn.containers: save/load, replay_buffer, transitions."""
 
-import os
 import tempfile
 
 import pytest
 import torch
 
 from gfn.containers.replay_buffer import ReplayBuffer, TerminatingStateBuffer
+from gfn.containers.states_container import StatesContainer
+from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.gym import HyperGrid
 
@@ -42,37 +43,93 @@ def sample_trajectories(env):
 
 
 # ---------------------------------------------------------------------------
-# Container base — save/load (B2 TDD)
+# TensorDict save/load roundtrips
 # ---------------------------------------------------------------------------
 
 
-def test_container_save_load_roundtrip(env, sample_trajectories):
-    """Trajectories should survive a save/load roundtrip."""
-    trajs = sample_trajectories
-    transitions = trajs.to_transitions()
+def test_transitions_save_load_roundtrip(env, sample_trajectories):
+    """Transitions should survive a save/load roundtrip via TensorDict."""
+    transitions = sample_trajectories.to_transitions()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "transitions")
-        os.makedirs(path)
+        path = f"{tmpdir}/transitions.pt"
         transitions.save(path)
-        # Create a fresh empty transitions object
-        loaded = Transitions(env=env)
-        loaded.load(path)
+        loaded = Transitions.load(env, path)
         assert loaded.n_transitions == transitions.n_transitions
+        assert torch.equal(loaded.states.tensor, transitions.states.tensor)
+        assert torch.equal(loaded.actions.tensor, transitions.actions.tensor)
+        assert torch.equal(loaded.is_terminating, transitions.is_terminating)
+        assert torch.equal(loaded.next_states.tensor, transitions.next_states.tensor)
+        assert loaded.is_backward == transitions.is_backward
 
 
-def test_container_save_with_none_attributes(env, sample_trajectories):
-    """B2: save() should not crash on containers with None/bool/int attrs."""
+def test_trajectories_save_load_roundtrip(env, sample_trajectories):
+    """Trajectories should survive a save/load roundtrip via TensorDict."""
     trajs = sample_trajectories
-    transitions = trajs.to_transitions()
-    # transitions has: is_backward (bool), _log_rewards (None or Tensor),
-    # log_probs (None or Tensor)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "transitions")
-        os.makedirs(path)
-        # This should not raise ValueError for non-Tensor attributes
+        path = f"{tmpdir}/trajectories.pt"
+        trajs.save(path)
+        loaded = Trajectories.load(env, path)
+        assert loaded.batch_size == trajs.batch_size
+        assert torch.equal(loaded.states.tensor, trajs.states.tensor)
+        assert torch.equal(loaded.actions.tensor, trajs.actions.tensor)
+        assert torch.equal(loaded.terminating_idx, trajs.terminating_idx)
+        assert loaded.is_backward == trajs.is_backward
+
+
+def test_trajectories_save_load_preserves_log_probs(env, sample_trajectories):
+    """Log probs should survive the roundtrip."""
+    trajs = sample_trajectories
+    assert trajs.has_log_probs  # save_logprobs=True in fixture
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = f"{tmpdir}/trajs.pt"
+        trajs.save(path)
+        loaded = Trajectories.load(env, path)
+        assert loaded.has_log_probs
+        assert loaded.log_probs is not None and trajs.log_probs is not None
+        assert torch.equal(loaded.log_probs, trajs.log_probs)
+
+
+def test_states_container_save_load_roundtrip(env, sample_trajectories):
+    """StatesContainer should survive a save/load roundtrip."""
+
+    trajs = sample_trajectories
+    # Build a StatesContainer from trajectories (like FMGFlowNet does)
+    states = trajs.states
+    n = states.batch_shape[-1]
+    is_terminating = torch.zeros(n, dtype=torch.bool)
+    sc = StatesContainer(env=env, states=states[0], is_terminating=is_terminating)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = f"{tmpdir}/states.pt"
+        sc.save(path)
+        loaded = StatesContainer.load(env, path)
+        assert len(loaded) == len(sc)
+
+
+def test_save_load_without_optional_fields(env):
+    """Containers with None log_rewards/log_probs should roundtrip cleanly."""
+    transitions = Transitions(env=env)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = f"{tmpdir}/empty.pt"
         transitions.save(path)
+        loaded = Transitions.load(env, path)
+        assert loaded.n_transitions == 0
+
+
+def test_to_tensordict_keys(env, sample_trajectories):
+    """Verify the TensorDict has the expected keys."""
+    transitions = sample_trajectories.to_transitions()
+    td = transitions.to_tensordict()
+    keys = set(td.keys())
+    assert "states" in keys
+    assert "actions" in keys
+    assert "is_terminating" in keys
+    assert "next_states" in keys
+    assert "is_backward" in keys
 
 
 # ---------------------------------------------------------------------------
@@ -81,8 +138,7 @@ def test_container_save_with_none_attributes(env, sample_trajectories):
 
 
 def test_container_sample_returns_correct_size(env, sample_trajectories):
-    trajs = sample_trajectories
-    transitions = trajs.to_transitions()
+    transitions = sample_trajectories.to_transitions()
     n = min(3, len(transitions))
     sampled = transitions.sample(n)
     assert len(sampled) == n
@@ -94,18 +150,15 @@ def test_container_has_log_probs_false_when_none(env):
 
 
 def test_container_has_log_probs_true_when_present(env, sample_trajectories):
-    trajs = sample_trajectories
-    # trajs have log_probs since save_logprobs=True
-    assert trajs.has_log_probs is True
+    assert sample_trajectories.has_log_probs is True
 
 
 # ---------------------------------------------------------------------------
-# Transitions.__repr__ (B3 TDD)
+# Transitions.__repr__
 # ---------------------------------------------------------------------------
 
 
 def test_transitions_repr_basic(env, sample_trajectories):
-    """Transitions.__repr__ should return a string without crashing."""
     transitions = sample_trajectories.to_transitions()
     r = repr(transitions)
     assert "Transitions" in r
@@ -130,10 +183,8 @@ def test_transitions_all_log_rewards(env, sample_trajectories):
 
 
 def test_replay_buffer_initialize(env, sample_trajectories):
-    """ReplayBuffer.initialize() should return the correct empty container type."""
     rb = ReplayBuffer(env=env, capacity=100)
     result = rb.initialize(sample_trajectories)
-    # initialize returns an empty container of the same type
     assert result is not None
 
 
@@ -143,6 +194,22 @@ def test_replay_buffer_add_and_sample(env, sample_trajectories):
     assert len(rb) == len(sample_trajectories)
     sampled = rb.sample(4)
     assert len(sampled) == 4
+
+
+def test_replay_buffer_save_load(env, sample_trajectories):
+    """ReplayBuffer save/load should roundtrip via the new single-file API."""
+    rb = ReplayBuffer(env=env, capacity=100)
+    rb.add(sample_trajectories)
+    n_before = len(rb)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = f"{tmpdir}/buffer.pt"
+        rb.save(path)
+
+        rb2 = ReplayBuffer(env=env, capacity=100)
+        rb2.add(sample_trajectories)  # initialize the container type
+        rb2.load(path)
+        assert len(rb2) == n_before
 
 
 # ---------------------------------------------------------------------------
@@ -155,5 +222,4 @@ def test_terminating_state_buffer_init_and_add(env, sample_trajectories):
     assert len(buf) == 0
     buf.add(sample_trajectories)
     assert len(buf) > 0
-    # Should contain terminating states
     assert buf.training_container is not None
