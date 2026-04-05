@@ -29,7 +29,7 @@ repos:
     hooks:
       - id: flake8
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.394  # REPLACE WITH YOUR SYSTEM PYRIGHT VERSION!!!
+    rev: v1.1.408
     hooks:
       - id: pyright
         language: system  # Use the system's shell and Python
