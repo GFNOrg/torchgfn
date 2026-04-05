@@ -120,6 +120,36 @@ def test_save_load_without_optional_fields(env):
         assert loaded.n_transitions == 0
 
 
+def test_transitions_save_load_preserves_log_rewards(env, sample_trajectories):
+    """Log rewards should survive the roundtrip."""
+    transitions = sample_trajectories.to_transitions()
+    # Force log_rewards computation
+    original_lr = transitions.log_rewards
+    assert original_lr is not None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = f"{tmpdir}/transitions.pt"
+        transitions.save(path)
+        loaded = Transitions.load(env, path)
+        assert loaded._log_rewards is not None
+        assert torch.allclose(loaded._log_rewards, original_lr)
+
+
+def test_trajectories_save_load_preserves_log_rewards(env, sample_trajectories):
+    """Trajectory log rewards should survive the roundtrip."""
+    trajs = sample_trajectories
+    original_lr = trajs.log_rewards
+    assert original_lr is not None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = f"{tmpdir}/trajs.pt"
+        trajs.save(path)
+        loaded = Trajectories.load(env, path)
+        loaded_lr = loaded.log_rewards
+        assert loaded_lr is not None
+        assert torch.allclose(loaded_lr, original_lr)
+
+
 def test_to_tensordict_keys(env, sample_trajectories):
     """Verify the TensorDict has the expected keys."""
     transitions = sample_trajectories.to_transitions()
