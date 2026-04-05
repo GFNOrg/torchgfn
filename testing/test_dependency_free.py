@@ -331,13 +331,12 @@ class TestModeExistenceChecks:
 
 class TestDistributedReports:
     def test_report_load_imbalance(self, caplog):
-        # Import the function but it normally needs mpi4py at module level.
-        # We import only the functions, which are pure python.
-        # Skip if mpi4py not available
+        # distributed.py imports mpi4py at module level; skip if MPI unavailable.
+        # mpi4py raises RuntimeError (not ImportError) when the shared lib is missing.
         try:
             from gfn.utils.distributed import report_load_imbalance
-        except ImportError:
-            pytest.skip("mpi4py not installed")
+        except (ImportError, RuntimeError):
+            pytest.skip("mpi4py / MPI library not available")
 
         timing = [
             {"step_a": [1.0, 2.0, 3.0], "step_b": [0.5, 0.5, 0.5]},
@@ -351,8 +350,8 @@ class TestDistributedReports:
     def test_report_time_info(self, caplog):
         try:
             from gfn.utils.distributed import report_time_info
-        except ImportError:
-            pytest.skip("mpi4py not installed")
+        except (ImportError, RuntimeError):
+            pytest.skip("mpi4py / MPI library not available")
 
         timing = [
             {"train": [0.1, 0.2, 0.3]},
