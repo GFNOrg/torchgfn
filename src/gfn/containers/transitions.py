@@ -151,15 +151,21 @@ class Transitions(Container):
         Returns:
             A string summary of the transitions.
         """
-        if not hasattr(self.states, "tensor"):
-            # GraphStates and similar types don't have a simple .tensor attr.
+        states_tensor = getattr(self.states, "tensor", None)
+        next_states_tensor = getattr(self.next_states, "tensor", None)
+
+        if not (
+            torch.is_tensor(states_tensor) and torch.is_tensor(next_states_tensor)
+        ):
+            # GraphStates and similar types may expose `.tensor`, but not as a
+            # torch.Tensor, so tensor-only operations like `.detach()` are unsafe.
             return (
                 f"Transitions(n_transitions={self.n_transitions}, "
                 f"actions={self.actions})"
             )
 
-        states_tensor = self.states.tensor.detach().cpu()
-        next_states_tensor = self.next_states.tensor.detach().cpu()
+        states_tensor = states_tensor.detach().cpu()
+        next_states_tensor = next_states_tensor.detach().cpu()
 
         states_repr = ",\t".join(
             [

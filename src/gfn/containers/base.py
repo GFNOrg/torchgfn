@@ -101,16 +101,26 @@ class Container(ABC):
             elif isinstance(val, Container):
                 val.load(os.path.join(path, key))
             elif isinstance(val, (States, Actions)):
-                tensor = torch.load(os.path.join(path, key + ".pt"), weights_only=True)
+                tensor = torch.load(
+                    os.path.join(path, key + ".pt"),
+                    weights_only=True,
+                    map_location=self.device,
+                )
                 val.tensor = tensor
             elif isinstance(val, torch.Tensor):
                 self.__dict__[key] = torch.load(
-                    os.path.join(path, key + ".pt"), weights_only=True
+                    os.path.join(path, key + ".pt"),
+                    weights_only=True,
+                    map_location=self.device,
                 )
             elif val is None or isinstance(val, (bool, int, float, str)):
                 file_path = os.path.join(path, key + ".pt")
                 if os.path.exists(file_path):
-                    self.__dict__[key] = torch.load(file_path, weights_only=False)
+                    self.__dict__[key] = torch.load(
+                        file_path,
+                        weights_only=True,
+                        map_location=self.device,
+                    )
             else:
                 raise ValueError(f"Unexpected {key} of type {type(val)}")
 
