@@ -154,9 +154,7 @@ class Transitions(Container):
         states_tensor = getattr(self.states, "tensor", None)
         next_states_tensor = getattr(self.next_states, "tensor", None)
 
-        if not (
-            torch.is_tensor(states_tensor) and torch.is_tensor(next_states_tensor)
-        ):
+        if not (torch.is_tensor(states_tensor) and torch.is_tensor(next_states_tensor)):
             # GraphStates and similar types may expose `.tensor`, but not as a
             # torch.Tensor, so tensor-only operations like `.detach()` are unsafe.
             return (
