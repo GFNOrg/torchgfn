@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Sequence
 
@@ -8,6 +7,8 @@ if TYPE_CHECKING:
     from gfn.states import States
 
 import torch
+from tensordict import TensorDict
+from tensordict.base import TensorDictBase
 
 from gfn.env import Env
 
@@ -56,37 +57,51 @@ class Container(ABC):
         """
         return self[torch.randperm(len(self))[:n_samples]]
 
+    @abstractmethod
+    def to_tensordict(self) -> TensorDictBase:
+        """Serialize the container's data into a TensorDict.
+
+        Returns:
+            A TensorDict containing all tensor data and scalar metadata.
+            The ``env`` reference is not included; it must be supplied
+            when reconstructing via :meth:`from_tensordict`.
+        """
+
+    @classmethod
+    @abstractmethod
+    def from_tensordict(cls, env: Env, td: TensorDictBase) -> Container:
+        """Reconstruct a container from a TensorDict.
+
+        Args:
+            env: The environment needed to reconstruct States/Actions.
+            td: The TensorDict produced by :meth:`to_tensordict`.
+
+        Returns:
+            A new container instance.
+        """
+
     def save(self, path: str) -> None:
-        """Saves the container and its contents to a directory.
+        """Saves the container to a single ``.pt`` file.
 
         Args:
-            path: The directory path where the container will be saved.
+            path: File path (e.g. ``"trajectories.pt"``).
         """
-        for key, val in self.__dict__.items():
-            if isinstance(val, Env):
-                continue
-            elif isinstance(val, Container):
-                val.save(os.path.join(path, key))
-            elif isinstance(val, torch.Tensor):
-                torch.save(val, os.path.join(path, key + ".pt"))
-            else:
-                raise ValueError(f"Unexpected {key} of type {type(val)}")
+        torch.save(self.to_tensordict().to_dict(), path)
 
-    def load(self, path: str) -> None:
-        """Loads the container's contents from a directory, overwriting current contents.
+    @classmethod
+    def load(cls, env: Env, path: str) -> Container:
+        """Loads a container from a ``.pt`` file saved by :meth:`save`.
 
         Args:
-            path: The directory path from which to load the container.
+            env: The environment needed to reconstruct States/Actions.
+            path: File path to the saved container.
+
+        Returns:
+            A new container instance.
         """
-        for key, val in self.__dict__.items():
-            if isinstance(val, Env):
-                continue
-            elif isinstance(val, Container):
-                val.load(os.path.join(path, key))
-            elif isinstance(val, torch.Tensor):
-                self.__dict__[key] = torch.load(os.path.join(path, key + ".pt"))
-            else:
-                raise ValueError(f"Unexpected {key} of type {type(val)}")
+        raw = torch.load(path, weights_only=True, map_location=env.device)
+        td = TensorDict(raw, batch_size=[])
+        return cls.from_tensordict(env, td)
 
     @property
     @abstractmethod

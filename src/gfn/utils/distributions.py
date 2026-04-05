@@ -263,21 +263,20 @@ class IsotropicGaussian(Distribution):
         return actions
 
     def log_prob(self, actions: torch.Tensor) -> torch.Tensor:
-        noise = (actions - self.loc) / self.scale
         scale_squeezed = self.scale.squeeze(-1)
+        # Mask for deterministic transitions (scale ≈ 0) and exit sentinels.
+        safe_mask = (scale_squeezed.abs() < 1e-6) | (actions[..., 0].isinf())
+
+        # Clamp scale to avoid division by zero; the result is discarded for
+        # masked entries, but clamping prevents NaN from leaking into gradients
+        # (torch.where evaluates both branches during backprop).
+        safe_scale = self.scale.clamp(min=1e-6)
+        noise = (actions - self.loc) / safe_scale
+
         logprobs = torch.where(
-            (
-                (
-                    scale_squeezed.abs() < 1e-6
-                )  # Deterministic transitions (e.g. Brownian bridge s1→s0 where std=0
-                #  naturally). By convention log_prob=0 for such transitions; the TB
-                #  loss cancels them between P_F and P_B.
-                | (
-                    actions[..., 0].isinf()
-                )  # Exit action sentinel (forward -inf actions)
-            ),
+            safe_mask,
             torch.zeros_like(scale_squeezed),
             -0.5
-            * (math.log(2 * math.pi) + 2 * torch.log(self.scale) + noise**2).sum(dim=-1),
+            * (math.log(2 * math.pi) + 2 * torch.log(safe_scale) + noise**2).sum(dim=-1),
         )
         return logprobs
