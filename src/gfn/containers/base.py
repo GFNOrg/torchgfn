@@ -70,7 +70,14 @@ class Container(ABC):
                 continue
             elif isinstance(val, Container):
                 val.save(os.path.join(path, key))
-            elif isinstance(val, (States, Actions)):
+            elif isinstance(val, States):
+                torch.save(val.tensor, os.path.join(path, key + ".pt"))
+                conditions = getattr(val, "conditions", None)
+                if conditions is not None:
+                    torch.save(
+                        conditions, os.path.join(path, key + "_conditions.pt")
+                    )
+            elif isinstance(val, Actions):
                 torch.save(val.tensor, os.path.join(path, key + ".pt"))
             elif isinstance(val, torch.Tensor):
                 torch.save(val, os.path.join(path, key + ".pt"))
