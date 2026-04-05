@@ -337,7 +337,7 @@ class Trajectories(Container):
             states=states,
             actions=actions,
             terminating_idx=td["terminating_idx"].clone(),
-            is_backward=td["is_backward"].item(),
+            is_backward=bool(td["is_backward"].item()),
             log_rewards=(
                 td["log_rewards"].clone() if "log_rewards" in td.keys() else None
             ),

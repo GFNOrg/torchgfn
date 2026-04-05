@@ -315,7 +315,7 @@ class Transitions(Container):
             actions=actions,
             is_terminating=td["is_terminating"].clone(),
             next_states=next_states,
-            is_backward=td["is_backward"].item(),
+            is_backward=bool(td["is_backward"].item()),
             log_rewards=(
                 td["log_rewards"].clone() if "log_rewards" in td.keys() else None
             ),
