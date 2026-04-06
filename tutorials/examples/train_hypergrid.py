@@ -53,7 +53,8 @@ from tutorials.examples.multinode.spawn_policy import (
 )
 
 from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
-from gfn.containers.replay_buffer_manager import ContainerUnion, ReplayBufferManager
+from gfn.containers.replay_buffer import ContainerUnion
+from gfn.containers.replay_buffer_manager import ReplayBufferManager
 from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
