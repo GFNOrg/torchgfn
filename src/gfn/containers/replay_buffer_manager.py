@@ -6,7 +6,6 @@ import torch.distributed as dist
 
 from gfn.containers.message import Message, MessageType
 from gfn.containers.replay_buffer import (
-    ContainerUnion,
     NormBasedDiversePrioritizedReplayBuffer,
     ReplayBuffer,
 )
@@ -20,7 +19,7 @@ class ReplayBufferManager:
         env: Env,
         rank: int,
         num_training_ranks: int,
-        scoring_function: Optional[Callable[[ContainerUnion], dict[str, float]]] = None,
+        scoring_function: Optional[Callable[..., dict[str, float]]] = None,
         diverse_replay_buffer: bool = False,
         capacity: int = 10000,
         remote_manager_rank: int | None = None,
@@ -53,7 +52,7 @@ class ReplayBufferManager:
                 remote_buffer_freq=1,
             )
 
-    def default_scoring_function(self, obj) -> dict[str, float]:
+    def default_scoring_function(self, obj, sender_rank: int = -1) -> dict[str, float]:
         """Default score function if none provided, placeholder."""
         return {"score": math.inf}
 
@@ -72,7 +71,9 @@ class ReplayBufferManager:
             # Recieved some data to add to the buffer.
             if msg.message_type == MessageType.DATA:
                 self.replay_buffer.add(msg.message_data)
-                score_dict = self.scoring_function(msg.message_data)
+                score_dict = self.scoring_function(
+                    msg.message_data, sender_rank=sender_rank
+                )
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()
                 length_message_tensor = torch.IntTensor([len(message_tensor)])

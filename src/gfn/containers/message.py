@@ -11,6 +11,8 @@ class MessageType(Enum):
     DATA = auto()
     GET_METADATA = auto()
     EXIT = auto()
+    MODE_REPORT = auto()  # Buffer -> Coordinator: new mode hashes + training rank
+    GET_POPULATION_STATS = auto()  # Training rank -> Coordinator: request stats
 
 
 class Message:

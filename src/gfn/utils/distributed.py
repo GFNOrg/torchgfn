@@ -288,14 +288,23 @@ class DistributedContext:
     buffer_group: Optional[dist.ProcessGroup] = None
     assigned_training_ranks: Optional[List[int]] = None
     dc_mpi4py: Optional[DistributedContextmpi4py] = None
+    coordinator_rank: Optional[int] = None  # Global rank of the coordinator, if any.
 
     def is_buffer_rank(self) -> bool:
         """Check if the current rank is part of the buffer group."""
+        if self.coordinator_rank is not None and self.my_rank == self.coordinator_rank:
+            return False
         return self.my_rank >= self.num_training_ranks
 
     def is_training_rank(self) -> bool:
         """Check if the current rank is part of the training group."""
         return self.my_rank < self.num_training_ranks
+
+    def is_coordinator_rank(self) -> bool:
+        """Check if the current rank is the coordinator."""
+        return (
+            self.coordinator_rank is not None and self.my_rank == self.coordinator_rank
+        )
 
     def cleanup(self) -> None:
         """Cleans up the distributed process group."""
@@ -315,6 +324,7 @@ def initialize_distributed_compute(
     dist_backend: str,
     num_remote_buffers: int,
     num_agent_groups: int,
+    use_coordinator: bool = False,
 ) -> DistributedContext:
     """Initializes distributed compute using ccl, mpi, or gloo backends.
 
@@ -322,6 +332,8 @@ def initialize_distributed_compute(
         dist_backend: The backend to use for distributed compute.
         num_remote_buffers: The number of remote buffers to use.
         num_agent_groups: The number of agent groups.
+        use_coordinator: If True, the last rank becomes a coordinator that
+            aggregates mode discoveries across buffer managers.
     """
     assert dist_backend in [
         "ccl",
@@ -387,12 +399,18 @@ def initialize_distributed_compute(
     my_rank = dist.get_rank()  # Global!
     world_size = dist.get_world_size()  # Global!
 
-    num_training_ranks = world_size - num_remote_buffers
+    num_coordinators = 1 if use_coordinator else 0
+    num_training_ranks = world_size - num_remote_buffers - num_coordinators
 
     # make sure that we have atmost 1 remote buffer per training rank.
     assert num_training_ranks >= num_remote_buffers
+    assert num_training_ranks > 0, (
+        f"Not enough ranks for training: world_size={world_size}, "
+        f"buffers={num_remote_buffers}, coordinators={num_coordinators}"
+    )
     logger.info("num_train = %d", num_training_ranks)
     logger.info("num_remote_buffers = %d", num_remote_buffers)
+    logger.info("num_coordinators = %d", num_coordinators)
 
     # for now, let us enforce that each agent gets equal number of ranks.
     # TODO: later, we can relax this condition.
@@ -460,8 +478,14 @@ def initialize_distributed_compute(
             logger.info(
                 "  -> Training group, assigned buffer rank = %s", assigned_buffer
             )
+        elif use_coordinator and my_rank == world_size - 1:
+            logger.info("  -> Coordinator rank")
         else:
             logger.info("  -> Buffer group")
+
+    coordinator_rank = (world_size - 1) if use_coordinator else None
+    if use_coordinator:
+        logger.info("Coordinator rank = %d", coordinator_rank)
 
     dist.barrier()
     logger.info("Distributed compute initialized, rank = %d", my_rank)
@@ -483,6 +507,7 @@ def initialize_distributed_compute(
         buffer_group=buffer_group,
         assigned_training_ranks=assigned_training_ranks.get(my_rank, None),
         dc_mpi4py=dc,
+        coordinator_rank=coordinator_rank,
     )
 
 
