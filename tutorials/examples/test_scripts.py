@@ -822,7 +822,7 @@ def test_chip_design_smoke():
     namespace_args = Namespace(**args_dict)
     try:
         train_chip_design_main(namespace_args)  # Runs without errors.
-    except FileNotFoundError:
+    except OSError:
         pytest.skip("plc_wrapper_main not available (Linux x86-64 only)")
 
 
