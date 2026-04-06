@@ -53,6 +53,7 @@ class ReplayBuffer:
         prioritized_sampling: bool = False,
         remote_manager_rank: int | None = None,
         remote_buffer_freq: int = 1,
+        async_score: bool = False,
     ):
         """Initializes a ReplayBuffer instance.
 
@@ -66,6 +67,9 @@ class ReplayBuffer:
                 None if no remote manager is assigned.
             remote_buffer_freq: Frequency (in number of add() calls) at which to contact
                 the remote buffer manager.
+            async_score: If True, trajectory sends are fire-and-forget; scores
+                are collected lazily on the next add() call (1-iteration stale).
+                Decouples training throughput from buffer scoring latency.
         """
         self.env = env
         self.capacity = capacity
@@ -79,6 +83,8 @@ class ReplayBuffer:
         self.remote_manager_rank = remote_manager_rank
         self.remote_buffer_freq = remote_buffer_freq
         self._add_counter = 0
+        self.async_score = async_score
+        self._pending_score: bool = False  # True when a score recv is outstanding.
         if self.remote_manager_rank is not None:
             backend = dist.get_backend()
             if backend != "gloo":
@@ -103,6 +109,11 @@ class ReplayBuffer:
         The type of the training container is dynamically set based on the type of the
         first added container.
 
+        When ``async_score`` is enabled, scores are collected lazily: the first
+        call returns None (no pending score yet), and subsequent calls return the
+        score from the *previous* submission.  This decouples training throughput
+        from buffer scoring latency.
+
         Args:
             training_container: The Trajectories, Transitions, or StatesContainer
                 object to add.
@@ -126,33 +137,67 @@ class ReplayBuffer:
             if isinstance(self.pending_container, Trajectories):
                 self.pending_container.estimator_outputs = None
             if self._add_counter % self.remote_buffer_freq == 0:
-                score = self._send_objs(self.pending_container)
-                self.pending_container = None
-                return score
+                if self.async_score:
+                    # Collect stale score from previous send (if any), then
+                    # fire-and-forget the new batch.
+                    stale_score = self._collect_pending_score()
+                    self._send_objs_async(self.pending_container)
+                    self.pending_container = None
+                    return stale_score
+                else:
+                    score = self._send_objs(self.pending_container)
+                    self.pending_container = None
+                    return score
 
     def _send_objs(self, training_container: ContainerUnion) -> dict[str, float]:
-        """Sends a training container to the remote manager."""
+        """Sends a training container to the remote manager (synchronous)."""
+        self._send_data(training_container)
+        return self._recv_score()
+
+    def _send_objs_async(self, training_container: ContainerUnion) -> None:
+        """Sends a training container without waiting for the score response.
+
+        The score will be collected on the next call to ``_collect_pending_score``.
+        """
+        self._send_data(training_container)
+        self._pending_score = True
+
+    def _collect_pending_score(self) -> dict[str, float] | None:
+        """Collect a pending score response from a previous async send.
+
+        Returns None if no score is pending (e.g., first iteration).
+        """
+        if not self._pending_score:
+            return None
+        score = self._recv_score()
+        self._pending_score = False
+        return score
+
+    def drain_pending_score(self) -> dict[str, float] | None:
+        """Public method to drain any outstanding async score before shutdown.
+
+        Should be called before sending the EXIT signal when async_score is
+        enabled, to avoid leaving the buffer manager with an undelivered
+        response.
+        """
+        return self._collect_pending_score()
+
+    def _send_data(self, training_container: ContainerUnion) -> None:
+        """Send a training container to the remote manager."""
         msg = Message(MessageType.DATA, training_container)
         msg_tensor = msg.serialize()
-
-        # First send the length so the receiver knows how many bytes
         length_tensor = torch.IntTensor([len(msg_tensor)])
         dist.send(length_tensor, dst=self.remote_manager_rank)
-
-        # Now send the actual content
         dist.send(msg_tensor, dst=self.remote_manager_rank)
 
-        # Receive the length of the score dictionary
+    def _recv_score(self) -> dict[str, float]:
+        """Receive a score dictionary from the remote manager."""
         length_tensor = torch.zeros(1, dtype=torch.int32)
         dist.recv(length_tensor, src=self.remote_manager_rank)
         length = length_tensor.item()
-
-        # Receive the actual score dictionary
         score_tensor = torch.ByteTensor(length)
         dist.recv(score_tensor, src=self.remote_manager_rank)
-        score_dict = Message.deserialize(score_tensor).message_data
-
-        return score_dict
+        return Message.deserialize(score_tensor).message_data
 
     def __repr__(self) -> str:
         """Returns a string representation of the ReplayBuffer.
@@ -310,6 +355,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         p_norm_distance: float = 1.0,
         remote_manager_rank: int | None = None,
         remote_buffer_freq: int = 1,
+        async_score: bool = False,
     ):
         """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
 
@@ -323,6 +369,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
                 None if no remote manager is assigned.
             remote_buffer_freq: Frequency (in number of add() calls) at which to contact
                 the remote buffer manager.
+            async_score: If True, trajectory sends are fire-and-forget; scores
+                are collected lazily on the next add() call.
         """
         super().__init__(
             env,
@@ -330,6 +378,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             prioritized_capacity=True,
             remote_manager_rank=remote_manager_rank,
             remote_buffer_freq=remote_buffer_freq,
+            async_score=async_score,
         )
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
