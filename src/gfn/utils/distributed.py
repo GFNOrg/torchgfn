@@ -150,12 +150,14 @@ class DistributedContextmpi4py:
 def initialize_distributed_compute_mpi4py(
     num_remote_buffers: int,
     num_agent_groups: int,
+    num_coordinators: int = 0,
 ) -> DistributedContextmpi4py:
     """Initializes distributed compute using mpi4py.
 
     Args:
         num_remote_buffers: The number of remote buffers to use.
         num_agent_groups: The number of agent groups.
+        num_coordinators: Number of coordinator ranks (0 or 1).
     """
     pmi_size = MPI.COMM_WORLD.Get_size()
     print(f"+ Initializing distributed compute, PMI_SIZE={pmi_size}")
@@ -184,12 +186,13 @@ def initialize_distributed_compute_mpi4py(
     my_rank = rank  # dist.get_rank()  # Global!
     # world_size = dist.get_world_size()  # Global!
 
-    num_training_ranks = world_size - num_remote_buffers
+    num_training_ranks = world_size - num_remote_buffers - num_coordinators
 
     # make sure that we have atmost 1 remote buffer per training rank.
     assert num_training_ranks >= num_remote_buffers
     print("num_train = ", num_training_ranks)
     print("num_remote_buffers = ", num_remote_buffers)
+    print("num_coordinators = ", num_coordinators)
 
     # for now, let us enforce that each agent gets equal number of ranks.
     # TODO: later, we can relax this condition.
@@ -493,6 +496,7 @@ def initialize_distributed_compute(
     dc = initialize_distributed_compute_mpi4py(
         num_remote_buffers=num_remote_buffers,
         num_agent_groups=num_agent_groups,
+        num_coordinators=num_coordinators,
     )
 
     return DistributedContext(
