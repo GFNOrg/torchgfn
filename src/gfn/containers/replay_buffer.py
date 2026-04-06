@@ -119,7 +119,7 @@ class ReplayBuffer:
                 object to add.
         """
         assert isinstance(training_container, ContainerUnion), "Must be a container type"
-        self._add_objs(training_container)
+        self._local_add(training_container)
 
         # Handle remote buffer communication.
         if self.remote_manager_rank is not None:
@@ -237,8 +237,12 @@ class ReplayBuffer:
         else:
             raise ValueError(f"Unsupported type: {type(training_container)}")
 
-    def _add_objs(self, training_container: ContainerUnion):
-        """Adds a training object to the buffer, handling the capacity.
+    def _local_add(self, training_container: ContainerUnion):
+        """Adds a training object to the local buffer, handling capacity.
+
+        Subclasses override this to customize local insertion logic (e.g.,
+        diversity filtering). The base class ``add()`` calls this method,
+        then handles remote buffer communication separately.
 
         Args:
             training_container: The Trajectories, Transitions, or StatesContainer object
@@ -398,90 +402,86 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             )
         return repr_tensor
 
-    def add(self, training_container: ContainerUnion):
-        """Adds a training object to the buffer with diversity-based prioritization.
+    def _local_add(self, training_container: ContainerUnion):
+        """Adds with diversity-based prioritization to the local buffer.
 
-        Args:
-            training_container: The Trajectories, Transitions, or StatesContainer object
-                to add.
+        Overrides the base class hook so that ``add()`` (which handles remote
+        communication) delegates local insertion here.
         """
-        if not isinstance(training_container, ContainerUnion):
-            raise TypeError("Must be a container type")
-
         to_add = len(training_container)
         self._is_full |= len(self) + to_add >= self.capacity
 
         # The buffer isn't full yet.
         if len(self) < self.capacity:
-            self._add_objs(training_container)
+            super()._local_add(training_container)
+            return
 
         # Our buffer is full and we will prioritize diverse, high reward additions.
-        else:
-            log_rewards = training_container.log_rewards
+        log_rewards = training_container.log_rewards
 
-            if log_rewards is None:
-                raise ValueError("log_rewards must be defined for prioritized replay.")
+        if log_rewards is None:
+            raise ValueError("log_rewards must be defined for prioritized replay.")
 
-            # Sort the incoming elements by their logrewards.
-            ix = torch.argsort(log_rewards, descending=True)
-            training_container = cast(ContainerUnion, training_container[ix])  # type: ignore
+        # Sort the incoming elements by their logrewards.
+        ix = torch.argsort(log_rewards, descending=True)
+        training_container = cast(ContainerUnion, training_container[ix])  # type: ignore
 
-            # Filter all batch logrewards lower than the smallest logreward in buffer.
-            assert (
-                self.training_container is not None
-                and self.training_container.log_rewards is not None
-                and training_container.log_rewards is not None
-            )
-            min_reward_in_buffer = self.training_container.log_rewards.min()
-            idx_bigger_rewards = training_container.log_rewards >= min_reward_in_buffer
-            training_container = training_container[idx_bigger_rewards]
+        # Filter all batch logrewards lower than the smallest logreward in buffer.
+        assert (
+            self.training_container is not None
+            and self.training_container.log_rewards is not None
+            and training_container.log_rewards is not None
+        )
+        min_reward_in_buffer = self.training_container.log_rewards.min()
+        idx_bigger_rewards = training_container.log_rewards >= min_reward_in_buffer
+        training_container = training_container[idx_bigger_rewards]
 
-            # If all trajectories were filtered, stop there.
-            if not len(training_container):
-                return
+        # If all trajectories were filtered, stop there.
+        if not len(training_container):
+            return
 
-            if self.cutoff_distance >= 0:
-                # Filter the batch for diverse final_states with high reward.
-                batch = self._diversity_repr(training_container)
-                batch_dim = training_container.terminating_states.batch_shape[0]
-                batch_batch_dist = torch.cdist(
+        if self.cutoff_distance >= 0:
+            # Filter the batch for diverse final_states with high reward.
+            batch = self._diversity_repr(training_container)
+            batch_dim = training_container.terminating_states.batch_shape[0]
+            batch_batch_dist = torch.cdist(
+                batch.view(batch_dim, -1).unsqueeze(0),
+                batch.view(batch_dim, -1).unsqueeze(0),
+                p=self.p_norm_distance,
+            ).squeeze(0)
+
+            # Finds the min distance at each row, and removes rows below the cutoff.
+            r, w = torch.triu_indices(*batch_batch_dist.shape)  # Remove upper diag.
+            batch_batch_dist[r, w] = torch.finfo(batch_batch_dist.dtype).max
+            batch_batch_dist = batch_batch_dist.min(-1)[0]
+            idx_batch_batch = batch_batch_dist > self.cutoff_distance
+            training_container = training_container[idx_batch_batch]
+
+            # Compute all pairwise distances between the remaining batch & buffer.
+            batch = self._diversity_repr(training_container)
+            buffer = self._diversity_repr(self.training_container)
+            batch_dim = training_container.terminating_states.batch_shape[0]
+            tmp = self.training_container.terminating_states
+            buffer_dim = tmp.batch_shape[0]
+            batch_buffer_dist = (
+                torch.cdist(
                     batch.view(batch_dim, -1).unsqueeze(0),
-                    batch.view(batch_dim, -1).unsqueeze(0),
+                    buffer.view(buffer_dim, -1).unsqueeze(0),
                     p=self.p_norm_distance,
-                ).squeeze(0)
-
-                # Finds the min distance at each row, and removes rows below the cutoff.
-                r, w = torch.triu_indices(*batch_batch_dist.shape)  # Remove upper diag.
-                batch_batch_dist[r, w] = torch.finfo(batch_batch_dist.dtype).max
-                batch_batch_dist = batch_batch_dist.min(-1)[0]
-                idx_batch_batch = batch_batch_dist > self.cutoff_distance
-                training_container = training_container[idx_batch_batch]
-
-                # Compute all pairwise distances between the remaining batch & buffer.
-                batch = self._diversity_repr(training_container)
-                buffer = self._diversity_repr(self.training_container)
-                batch_dim = training_container.terminating_states.batch_shape[0]
-                tmp = self.training_container.terminating_states
-                buffer_dim = tmp.batch_shape[0]
-                batch_buffer_dist = (
-                    torch.cdist(
-                        batch.view(batch_dim, -1).unsqueeze(0),
-                        buffer.view(buffer_dim, -1).unsqueeze(0),
-                        p=self.p_norm_distance,
-                    )
-                    .squeeze(0)
-                    .min(-1)[0]  # Min calculated over rows - the batch elements.
                 )
+                .squeeze(0)
+                .min(-1)[0]  # Min calculated over rows - the batch elements.
+            )
 
-                # Filter the batch for diverse final_states w.r.t the buffer.
-                idx_batch_buffer = batch_buffer_dist > self.cutoff_distance
-                training_container = cast(
-                    ContainerUnion, training_container[idx_batch_buffer]
-                )
+            # Filter the batch for diverse final_states w.r.t the buffer.
+            idx_batch_buffer = batch_buffer_dist > self.cutoff_distance
+            training_container = cast(
+                ContainerUnion, training_container[idx_batch_buffer]
+            )
 
-            # If any training object remain after filtering, add them.
-            if len(training_container):
-                self._add_objs(training_container)
+        # If any training objects remain after filtering, add them.
+        if len(training_container):
+            super()._local_add(training_container)
 
 
 class TerminatingStateBuffer(ReplayBuffer):
@@ -497,11 +497,12 @@ class TerminatingStateBuffer(ReplayBuffer):
         super().__init__(env, capacity, **kwargs)
         self.training_container = StatesContainer(env)
 
-    def add(self, training_container: ContainerUnion):
-        # Extract the terminating states from the training objects.
-        if not isinstance(training_container, ContainerUnion):
-            raise TypeError("Must be a StatesContainer")
+    def _local_add(self, training_container: ContainerUnion):
+        """Extracts terminating states and adds them to the local buffer.
 
+        Overrides the base class hook so that ``add()`` (which handles remote
+        communication) delegates local insertion here.
+        """
         terminating_states = training_container.terminating_states
         log_rewards = training_container.log_rewards
 
@@ -514,4 +515,4 @@ class TerminatingStateBuffer(ReplayBuffer):
             log_rewards=log_rewards,
         )
 
-        self._add_objs(terminating_states_container)
+        super()._local_add(terminating_states_container)
