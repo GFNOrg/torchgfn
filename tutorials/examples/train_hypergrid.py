@@ -25,9 +25,7 @@ import torch
 from matplotlib.gridspec import GridSpec
 from tqdm import trange
 
-from gfn.containers import NormBasedDiversePrioritizedReplayBuffer, ReplayBuffer
-from gfn.containers.replay_buffer import ContainerUnion
-from gfn.containers.replay_buffer_manager import ReplayBufferManager
+from gfn.containers import ReplayBuffer
 from gfn.estimators import DiscretePolicyEstimator, Estimator, ScalarEstimator
 from gfn.gflownet import (
     DBGFlowNet,
