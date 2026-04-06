@@ -68,7 +68,7 @@ class ReplayBufferManager:
             # Receive data
             sender_rank, msg, _msg_data_len = self._recv_object()
 
-            # Recieved some data to add to the buffer.
+            # Received some data to add to the buffer.
             if msg.message_type == MessageType.DATA:
                 self.replay_buffer.add(msg.message_data)
                 score_dict = self.scoring_function(
