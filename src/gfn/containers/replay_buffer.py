@@ -173,14 +173,44 @@ class ReplayBuffer:
         self._pending_score = False
         return score
 
-    def drain_pending_score(self) -> dict[str, float] | None:
-        """Public method to drain any outstanding async score before shutdown.
+    def drain_pending_score(self, timeout_sec: float = 30.0) -> dict[str, float] | None:
+        """Drain any outstanding async score before shutdown.
 
         Should be called before sending the EXIT signal when async_score is
         enabled, to avoid leaving the buffer manager with an undelivered
         response.
+
+        Uses a timeout to avoid hanging indefinitely if the buffer manager
+        has crashed.  Returns None on timeout (score is lost).
         """
-        return self._collect_pending_score()
+        if not self._pending_score:
+            return None
+
+        import logging
+        from threading import Thread
+
+        result: list = []
+
+        def _recv_worker():
+            try:
+                result.append(self._recv_score())
+            except Exception:
+                pass  # Buffer manager may have crashed.
+
+        t = Thread(target=_recv_worker, daemon=True)
+        t.start()
+        t.join(timeout=timeout_sec)
+
+        self._pending_score = False  # Clear regardless of success.
+        if result:
+            return result[0]
+
+        logging.getLogger(__name__).warning(
+            "drain_pending_score timed out after %.0fs — buffer manager "
+            "may have crashed. Proceeding with shutdown.",
+            timeout_sec,
+        )
+        return None
 
     def _send_data(self, training_container: ContainerUnion) -> None:
         """Send a training container to the remote manager."""
