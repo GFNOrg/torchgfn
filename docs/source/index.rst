@@ -18,5 +18,6 @@
    guides/recurrent_policies
    guides/diffusion_gflownets
    guides/creating_environments
+   guides/common_operations
    guides/advanced
    guides/tutorials
