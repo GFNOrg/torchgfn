@@ -518,9 +518,11 @@ def test_box(delta: float, loss: str):
         assert np.isclose(final_jsd, tgt, atol=atol), f"final_jsd: {final_jsd} vs {tgt}"
 
 
-def test_graph_ring_smoke():
-    """Smoke test for the graph ring training script."""
+@pytest.mark.parametrize("use_gnn", [True, False])
+def test_graph_ring_smoke(use_gnn):
+    """Smoke test for the graph ring training script with GNN and MLP modules."""
     args = GraphRingArgs()
+    args.use_gnn = use_gnn
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_graph_ring_main(namespace_args)  # Just ensure it runs without errors.
