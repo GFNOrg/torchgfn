@@ -140,3 +140,61 @@ class TestTorchBackendSingleProcess:
     # NOTE: send/recv cannot be tested in a single-process gloo group — gloo
     # does not support self-sends and segfaults when attempted from threads.
     # Full send/recv testing requires a multi-process launcher (e.g. mpirun).
+
+
+# ---------------------------------------------------------------------------
+# MPI4py backend single-process tests
+# ---------------------------------------------------------------------------
+
+try:
+    import mpi4py  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+    _mpi4py_available = True
+except (ImportError, RuntimeError):
+    _mpi4py_available = False
+
+
+@pytest.mark.skipif(not _mpi4py_available, reason="mpi4py not available")
+class TestMPI4pyBackendSingleProcess:
+    """Tests using mpi4py with COMM_WORLD (world_size=1 without mpirun)."""
+
+    def test_get_rank(self):
+        assert get_rank(backend="mpi") == 0
+
+    def test_get_world_size(self):
+        assert get_world_size(backend="mpi") == 1
+
+    def test_barrier(self):
+        # Should not raise.
+        barrier(backend="mpi")
+
+    def test_all_reduce_sum(self):
+        t = torch.tensor([3.0, 4.0])
+        all_reduce(t, op="SUM", backend="mpi")
+        # world_size=1, so all_reduce is identity.
+        assert torch.allclose(t, torch.tensor([3.0, 4.0]))
+
+    def test_all_reduce_max(self):
+        t = torch.tensor([1.0, 5.0, 3.0])
+        all_reduce(t, op="MAX", backend="mpi")
+        assert torch.allclose(t, torch.tensor([1.0, 5.0, 3.0]))
+
+    def test_all_reduce_min(self):
+        t = torch.tensor([1.0, 5.0, 3.0])
+        all_reduce(t, op="MIN", backend="mpi")
+        assert torch.allclose(t, torch.tensor([1.0, 5.0, 3.0]))
+
+    def test_all_gather(self):
+        t = torch.tensor([1.0, 2.0])
+        output = [torch.zeros(2)]
+        all_gather(output, t, backend="mpi")
+        assert torch.allclose(output[0], t)
+
+    def test_broadcast(self):
+        t = torch.tensor([7.0, 8.0])
+        broadcast(t, src=0, backend="mpi")
+        assert torch.allclose(t, torch.tensor([7.0, 8.0]))
+
+    # NOTE: send/recv cannot be tested in a single-process MPI communicator —
+    # self-sends with blocking Send/Recv will deadlock or behave unexpectedly.
+    # Full send/recv testing requires a multi-process launcher (e.g. mpirun).
