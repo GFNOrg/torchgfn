@@ -147,7 +147,7 @@ class TestTorchBackendSingleProcess:
 # ---------------------------------------------------------------------------
 
 try:
-    import mpi4py  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    from mpi4py import MPI  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
     _mpi4py_available = True
 except (ImportError, RuntimeError):
