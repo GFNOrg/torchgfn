@@ -172,9 +172,9 @@ class Actions(ABC):
 
         The individual actions need to have the same batch shape. An example application
         is when the individual actions represent per-step actions of a batch of
-        trajectories (in which case, the common batch_shape would be (n_trajectories,),
+        trajectories (in which case, the common batch_shape would be (batch_size,),
         and the resulting Actions object would have batch_shape
-        (n_steps, n_trajectories)).
+        (n_steps, batch_size)).
 
         Args:
             actions_list: List of Actions objects to stack.

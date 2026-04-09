@@ -52,7 +52,7 @@ class _TBTrajectoriesStub:
         self, log_rewards: torch.Tensor, conditions: torch.Tensor | None = None
     ):
         self._log_rewards = log_rewards
-        self.n_trajectories = log_rewards.shape[0]
+        self.batch_size = log_rewards.shape[0]
         self.conditions = conditions
 
     @property
@@ -138,10 +138,10 @@ class _SubTBDummyTrajectories:
     def __init__(self, terminating_idx: torch.Tensor, max_length: int):
         self.terminating_idx = terminating_idx
         self.max_length = max_length
-        self.n_trajectories = terminating_idx.shape[0]
+        self.batch_size = terminating_idx.shape[0]
 
     def __len__(self) -> int:
-        return self.n_trajectories
+        return self.batch_size
 
 
 def _subtb_build_model_and_data(

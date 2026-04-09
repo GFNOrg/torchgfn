@@ -4,6 +4,7 @@ from .bitSequence import BitSequence, BitSequencePlus
 from .bitSequenceNonAutoregressive import NonAutoregressiveBitSequence
 from .box import BoxPolar
 from .box_cartesian import BoxCartesian
+from .chip_design import ChipDesign
 from .discrete_ebm import DiscreteEBM
 from .graph_building import GraphBuilding, GraphBuildingOnEdges
 from .hypergrid import ConditionalHyperGrid, HyperGrid
@@ -18,6 +19,7 @@ __all__ = [
     "Box",
     "BoxCartesian",
     "BoxPolar",
+    "ChipDesign",
     "DiscreteEBM",
     "HyperGrid",
     "ConditionalHyperGrid",

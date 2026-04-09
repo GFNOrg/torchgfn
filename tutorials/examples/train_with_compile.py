@@ -1224,7 +1224,7 @@ def summarize_results(results: list[dict[str, Any]]) -> None:
     for res in results:
         grouped.setdefault((res["env_key"], res["gflownet_key"]), []).append(res)
 
-    for (env_key, flow_key), entries in grouped.items():
+    for (_env_key, _flow_key), entries in grouped.items():
         env_label = entries[0]["env_label"]
         flow_label = entries[0]["gflownet_label"]
         print(f"\n[{env_label}] {flow_label}")

@@ -514,6 +514,8 @@ def test_diverse_buffer_rejects_duplicates():
     # Buffer should still be at capacity (duplicates were filtered out).
     assert len(buffer) == capacity
     # Count how many [1,1] states are in the buffer — should not have grown.
+    assert buffer.training_container is not None
+    assert buffer.training_container.terminating_states is not None
     term_states = buffer.training_container.terminating_states.tensor
     n_duplicates = (term_states == duplicate_state).all(dim=-1).sum().item()
     assert n_duplicates <= 5, f"Expected <=5 copies of [1,1], got {n_duplicates}"
@@ -529,6 +531,8 @@ def test_diverse_buffer_rejects_duplicates():
     buffer.add(novel_data)
 
     # Buffer at capacity, but novel state should have displaced the lowest-reward entry.
+    assert buffer.training_container is not None
+    assert buffer.training_container.terminating_states is not None
     term_states = buffer.training_container.terminating_states.tensor
     has_novel = (term_states == torch.tensor([0, 0])).all(dim=-1).any().item()
     assert has_novel, "Novel state [0,0] should have been accepted into the buffer"
@@ -567,8 +571,11 @@ def test_diverse_buffer_conditional_same_state_different_conditions():
     buffer.add(novel_cond_data)
 
     # Should be accepted — the condition difference exceeds cutoff.
+    assert buffer.training_container is not None
     term_states = buffer.training_container.terminating_states
+    assert term_states is not None
     state_matches = (term_states.tensor == state_a).all(dim=-1)
+    assert term_states.conditions is not None
     matched_conditions = term_states.conditions[state_matches]
     has_0 = (matched_conditions).abs().lt(0.01).any().item()
     has_1 = (matched_conditions - 1.0).abs().lt(0.01).any().item()

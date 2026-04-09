@@ -162,7 +162,11 @@ class TBGAFN(TBGFlowNet):
         )
 
     def get_scores(
-        self, trajectories: Trajectories, recalculate_all_logprobs: bool = True
+        self,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool = True,
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes Trajectory Balance scores with intrinsic rewards for a batch of
         trajectories.
@@ -170,14 +174,17 @@ class TBGAFN(TBGFlowNet):
         Args:
             trajectories: The Trajectories object to evaluate.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            log_rewards: Optional override for the trajectories' log rewards. If None,
+                defaults to `trajectories.log_rewards`.
 
         Returns:
-            A tensor of shape (n_trajectories,) containing the scores for each trajectory.
+            A tensor of shape (batch_size,) containing the scores for each trajectory.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
         )
-        log_rewards = trajectories.log_rewards
+        if log_rewards is None:
+            log_rewards = trajectories.log_rewards
         assert log_rewards is not None
         if self.use_edge_ri:
             # Use the edge-based intrinsic rewards.
@@ -209,8 +216,8 @@ class TBGAFN(TBGFlowNet):
 
             terminal_ri = edge_ri[
                 trajectories.terminating_idx - 1,
-                torch.arange(trajectories.n_trajectories, device=edge_ri.device),
-            ]  # shape: (n_trajectories,)
+                torch.arange(trajectories.batch_size, device=edge_ri.device),
+            ]  # shape: (batch_size,)
             _terminal_part = torch.stack(
                 [log_rewards, terminal_ri.log()], dim=0
             ).logsumexp(dim=0)
@@ -226,7 +233,7 @@ class TBGAFN(TBGFlowNet):
             # being zero, i.e., r(s_t \to s_{t+1}) = 0 for all t.
             terminal_ri = self.rnd.compute_intrinsic_reward(
                 trajectories.terminating_states
-            )  # shape: (n_trajectories,)
+            )  # shape: (batch_size,)
             _terminal_part = torch.stack(
                 [log_rewards, terminal_ri.log()], dim=0
             ).logsumexp(dim=0)
@@ -241,8 +248,16 @@ class TBGAFN(TBGFlowNet):
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
         reduction: str = "mean",
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        loss = super().loss(env, trajectories, recalculate_all_logprobs, reduction)
+        loss = super().loss(
+            env,
+            trajectories,
+            log_rewards=log_rewards,
+            recalculate_all_logprobs=recalculate_all_logprobs,
+            reduction=reduction,
+        )
         rnd_loss = self.rnd.compute_rnd_loss(trajectories.states)
         return loss + rnd_loss
 

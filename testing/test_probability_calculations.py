@@ -72,7 +72,7 @@ def _legacy_get_trajectory_pfs(
 
     assert log_pf_trajectories.shape == (
         trajectories.max_length,
-        trajectories.n_trajectories,
+        trajectories.batch_size,
     )
     return log_pf_trajectories
 
@@ -123,7 +123,6 @@ def test_get_trajectory_pfs_matches_legacy_with_default_adapter(
     modern = get_trajectory_pfs(
         pf_estimator,
         trajectories,
-        fill_value=0.0,
         recalculate_all_logprobs=not use_cached_outputs,
     )
 
@@ -186,7 +185,7 @@ def _legacy_get_trajectory_pbs(
 
     assert log_pb_trajectories.shape == (
         trajectories.max_length,
-        trajectories.n_trajectories,
+        trajectories.batch_size,
     )
     return log_pb_trajectories
 
@@ -237,7 +236,6 @@ def test_get_trajectory_pbs_matches_legacy_with_default_adapter():
     modern = get_trajectory_pbs(
         pb_estimator,
         trajectories,
-        fill_value=0.0,
     )
 
     torch.testing.assert_close(modern, legacy)
@@ -430,7 +428,7 @@ def test_trajectory_states_sink_consistency():
     should correspond to dummy actions. This was previously an assertion in
     get_trajectory_pfs_and_pbs function.
     """
-    env, pf_estimator, _, pf_sampler = _build_env_pf_pb()
+    env, _pf_estimator, _, pf_sampler = _build_env_pf_pb()
     trajectories = pf_sampler.sample_trajectories(
         env,
         n=5,

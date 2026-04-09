@@ -84,8 +84,8 @@ def trajectories_containers(env):
     """Creates two Trajectories containers with valid DiscreteEBM(ndim=2) data.
 
     Each trajectory: 2 fill actions + 1 exit = 3 steps, terminating at index 2.
-    States shape: (max_length+1, n_trajectories, state_shape) = (4, 2, 2).
-    Actions shape: (max_length, n_trajectories, action_shape) = (3, 2, 1).
+    States shape: (max_length+1, batch_size, state_shape) = (4, 2, 2).
+    Actions shape: (max_length, batch_size, action_shape) = (3, 2, 1).
     """
     # Batch 1: two trajectories of length 3.
     # Traj A: [-1,-1] →(a=0)→ [0,-1] →(a=3)→ [0,1] →(a=4)→ sf

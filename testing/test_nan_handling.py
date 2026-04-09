@@ -57,7 +57,7 @@ def test_get_scores_raises_on_non_finite_log_rewards():
     trajectories = sampler.sample_trajectories(env, n=5)
 
     # Manually inject -inf into log_rewards (simulating zero reward).
-    trajectories._log_rewards = torch.full((trajectories.n_trajectories,), -float("inf"))
+    trajectories._log_rewards = torch.full((trajectories.batch_size,), -float("inf"))
 
     with pytest.raises(ValueError, match="Non-finite log_rewards"):
         gflownet.get_scores(trajectories)
@@ -77,7 +77,7 @@ def test_get_scores_raises_on_nan_log_rewards():
     trajectories = sampler.sample_trajectories(env, n=5)
 
     # Manually inject NaN into log_rewards (simulating negative reward).
-    trajectories._log_rewards = torch.full((trajectories.n_trajectories,), float("nan"))
+    trajectories._log_rewards = torch.full((trajectories.batch_size,), float("nan"))
 
     with pytest.raises(ValueError, match="Non-finite log_rewards"):
         gflownet.get_scores(trajectories)
@@ -93,7 +93,7 @@ def test_get_scores_ok_with_clipped_log_rewards():
     trajectories = sampler.sample_trajectories(env, n=5)
 
     # Inject -inf — clipping should save us.
-    trajectories._log_rewards = torch.full((trajectories.n_trajectories,), -float("inf"))
+    trajectories._log_rewards = torch.full((trajectories.batch_size,), -float("inf"))
 
     # Should not raise — clipping converts -inf to -100.
     scores = gflownet.get_scores(trajectories)

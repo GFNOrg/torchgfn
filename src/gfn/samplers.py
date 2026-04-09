@@ -139,7 +139,7 @@ class Sampler:
             n: Number of trajectories if ``states`` is None.
             states: Starting states (batch shape length 1) or ``None``.
             conditions: Optional condition tensor for conditional environments,
-                with shape (n_trajectories, condition_dim); each row is the
+                with shape (batch_size, condition_dim); each row is the
                 condition vector for each trajectory.
             save_estimator_outputs: If True, store per‑step estimator outputs. Useful
                 for off-policy training with tempered policies.
@@ -180,7 +180,7 @@ class Sampler:
             ), "Conditions must match states batch shape"
             states.conditions = conditions
 
-        n_trajectories = states.batch_shape[0]
+        batch_size = states.batch_shape[0]
         device = states.device
 
         if policy_estimator.is_backward:
@@ -191,23 +191,25 @@ class Sampler:
         # Define dummy actions to avoid errors when stacking empty lists.
         trajectories_states: List[States] = [states]
         trajectories_actions: List[Actions] = [
-            env.actions_from_batch_shape((n_trajectories,))
+            env.actions_from_batch_shape((batch_size,))
         ]
         # Placeholder kept for backward-compatibility of shapes; logprobs are
         # recorded and stacked by the estimator via the context.
         trajectories_terminating_idx = torch.zeros(
-            n_trajectories, dtype=torch.long, device=device
+            batch_size, dtype=torch.long, device=device
         )
 
         step = 0
-        ctx = policy_estimator.init_context(n_trajectories, device, states.conditions)
+        if not hasattr(policy_estimator, "init_context"):
+            raise TypeError("Estimator is not policy-capable (missing PolicyMixin)")
+        ctx = policy_estimator.init_context(batch_size, device, states.conditions)
 
         # Pre-allocate dummy actions tensor once. Each step clones it instead
         # of calling actions_from_batch_shape(), which internally does
         # dummy_action.repeat() (stride computation + copy) and
         # make_dummy_actions() (shape resolution + .to(device)) — all
         # redundant when shape and device are constant across steps.
-        _dummy_actions_tensor = env.actions_from_batch_shape((n_trajectories,)).tensor
+        _dummy_actions_tensor = env.actions_from_batch_shape((batch_size,)).tensor
 
         while not all(dones):
             actions = env.Actions(_dummy_actions_tensor.clone(), debug=env.debug)
@@ -525,7 +527,7 @@ class LocalSearchSampler(Sampler):
                 0.0,
             )
             is_updated = torch.rand(
-                new_trajectories.n_trajectories, device=log_accept_ratio.device
+                new_trajectories.batch_size, device=log_accept_ratio.device
             ) < torch.exp(log_accept_ratio)
         else:
             assert prev_trajectories.log_rewards is not None
@@ -603,7 +605,7 @@ class LocalSearchSampler(Sampler):
         )
 
         if n is None:
-            n = int(trajectories.n_trajectories)
+            n = int(trajectories.batch_size)
 
         search_indices = torch.arange(n, device=trajectories.states.device)
 
@@ -676,7 +678,7 @@ class LocalSearchSampler(Sampler):
         new_trajectories_log_pf = None
         new_trajectories_log_pb = None
 
-        bs = prev_trajectories.n_trajectories
+        bs = prev_trajectories.batch_size
         device = prev_trajectories.states.device
         env = prev_trajectories.env
 

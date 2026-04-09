@@ -66,7 +66,7 @@ class States(ABC):
 
     A `batch_shape` property keeps track of the batch dimension. A trajectory can be
     represented by a States object with `batch_shape = (n_states,)`. Multiple trajectories
-    can be represented by a States object with `batch_shape = (n_states, n_trajectories)`.
+    can be represented by a States object with `batch_shape = (n_states, batch_size)`.
 
     Because multiple trajectories can have different lengths, batching requires
     appending a dummy state ($sf$) to trajectories that are shorter than the longest
@@ -561,6 +561,10 @@ class States(ABC):
                     f"Expected shape {self.state_shape} or {full_shape}, got {other.shape}."
                 )
 
+        # Ensure other is on the same device as self.tensor. This is a no-op
+        # when devices already match, and torch.compile handles .to() fine.
+        other = other.to(self.tensor.device)
+
         # Broadcast single-state inputs instead of branching on shape at runtime.
         if other.shape == self.state_shape:
             other_expanded = other.view(
@@ -591,11 +595,7 @@ class States(ABC):
                 "is_initial_state is not implemented by default "
                 f"for {self.__class__.__name__}"
             )
-        # We do not cast devices here to avoid breaking the graph when using
-        # torch.compile. We use `ensure_same_device` to catch silent device drift
-        # during testing.
         if self.debug:
-            ensure_same_device(self.device, self.__class__.s0.device)
             if self.__class__.s0.shape != self.state_shape:
                 raise ValueError(
                     f"s0 must have shape {self.state_shape}; got {self.__class__.s0.shape}"
@@ -620,12 +620,7 @@ class States(ABC):
                 "is_sink_state is not implemented by default "
                 f"for {self.__class__.__name__}"
             )
-
-        # We do not cast devices here to avoid breaking the graph when using
-        # torch.compile. We use `ensure_same_device` to catch silent device drift
-        # during testing.
         if self.debug:
-            ensure_same_device(self.device, self.__class__.sf.device)
             if self.__class__.sf.shape != self.state_shape:
                 raise ValueError(
                     f"sf must have shape {self.state_shape}; got {self.__class__.sf.shape}"
@@ -1716,9 +1711,11 @@ class GraphStates(States):
             assert other.x is not None
             assert other.edge_index is not None
             assert other.edge_attr is not None
-        other_x = other.x  # Guaranteed non-None for valid graph states.
-        other_edge_index = other.edge_index
-        other_edge_attr_t = other.edge_attr
+        # Guaranteed non-None for valid graph states; use cast so
+        # torch.compile never sees a runtime assert.
+        other_x = cast(torch.Tensor, other.x)
+        other_edge_index = cast(torch.Tensor, other.edge_index)
+        other_edge_attr_t = cast(torch.Tensor, other.edge_attr)
 
         other_edges = sorted(other_edge_index.t().tolist())
         other_edge_attr = other_edge_attr_t[
@@ -1729,15 +1726,15 @@ class GraphStates(States):
             if graph.x is None or graph.edge_index is None or graph.edge_attr is None:
                 continue
 
-            if graph.x.size(0) != other.x.size(0):
+            if graph.x.size(0) != other_x.size(0):
                 continue
 
             # FIXME: What if the nodes are not sorted?
-            if not torch.all(graph.x == other.x):
+            if not torch.all(graph.x == other_x):
                 continue
 
             # Check if the number of edges is the same
-            if graph.edge_index.size(1) != other.edge_index.size(1):
+            if graph.edge_index.size(1) != other_edge_index.size(1):
                 continue
 
             # Check if edge indices are the same (this is more complex due to potential reordering)
@@ -1747,7 +1744,7 @@ class GraphStates(States):
                 continue
 
             # Check if the number of edge attributes is the same
-            if graph.edge_attr.size(0) != other.edge_attr.size(0):
+            if graph.edge_attr.size(0) != other_edge_attr_t.size(0):
                 continue
 
             # Check if edge attributes are the same (after sorting)

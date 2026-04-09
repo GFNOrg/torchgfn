@@ -30,6 +30,7 @@ from tutorials.examples.train_bitsequence_recurrent import (
     main as train_bitsequence_recurrent_main,
 )
 from tutorials.examples.train_box import main as train_box_main
+from tutorials.examples.train_chip_design import main as train_chip_design_main
 from tutorials.examples.train_conditional import main as train_conditional_main
 from tutorials.examples.train_diffusion_sampler import (
     main as train_diffusion_sampler_main,
@@ -309,6 +310,21 @@ class ConditionalArgs(CommonArgs):
     validation_samples: int = 200000
     n_eval_samples: int = 10000
     no_cuda: bool = True  # Disable CUDA for tests
+
+
+@dataclass
+class ChipDesignArgs(CommonArgs):
+    n_iterations: int = 10
+    embedding_dim: int = 32
+    hidden_dim: int = 32
+    n_hidden: int = 1
+    batch_size: int = 16
+    seed: int = 4444
+    lr: float = 1e-3
+    log_every: int = 10
+    no_cuda: bool = True  # Disable CUDA for tests
+    singularity_image: str | None = None
+    cd_finetune: bool = False  # Disable for faster tests
 
 
 @pytest.mark.parametrize("ndim", [2, 4])
@@ -799,6 +815,17 @@ def test_hypergrid_exploration_smoke():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_hypergrid_exploration_main(namespace_args)  # Runs without errors.
+
+
+def test_chip_design_smoke():
+    """Smoke test for the chip design training script."""
+    args = ChipDesignArgs()
+    args_dict = asdict(args)
+    namespace_args = Namespace(**args_dict)
+    try:
+        train_chip_design_main(namespace_args)  # Runs without errors.
+    except OSError:
+        pytest.skip("plc_wrapper_main not available (Linux x86-64 only)")
 
 
 def test_bitsequence_recurrent_smoke():

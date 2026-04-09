@@ -345,7 +345,6 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
     def get_pfs_and_pbs(
         self,
         trajectories: Trajectories,
-        fill_value: float = 0.0,
         recalculate_all_logprobs: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""Evaluates forward and backward logprobs for each trajectory in the batch.
@@ -365,46 +364,39 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
 
         Args:
             trajectories: The Trajectories object to evaluate.
-            fill_value: Value to use for invalid states (e.g., $s_f$ added to shorter
-                trajectories).
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
 
         Returns:
-            A tuple of tensors of shape (max_length, n_trajectories) containing
+            A tuple of tensors of shape (max_length, batch_size) containing
             the log_pf and log_pb for each action in each trajectory.
         """
         return get_trajectory_pfs_and_pbs(
             self.pf,
             self.pb,
             trajectories,
-            fill_value,
             recalculate_all_logprobs,
         )
 
     def trajectory_log_probs_forward(
         self,
         trajectories: Trajectories,
-        fill_value: float = 0.0,
         recalculate_all_logprobs: bool = True,
     ) -> torch.Tensor:
         """Evaluates forward logprobs only for each trajectory in the batch."""
         return get_trajectory_pfs(
             self.pf,
             trajectories,
-            fill_value=fill_value,
             recalculate_all_logprobs=recalculate_all_logprobs,
         )
 
     def trajectory_log_probs_backward(
         self,
         trajectories: Trajectories,
-        fill_value: float = 0.0,
     ) -> torch.Tensor:
         """Evaluates backward logprobs only for each trajectory in the batch."""
         return get_trajectory_pbs(
             self.pb,
             trajectories,
-            fill_value=fill_value,
         )
 
     def logz_named_parameters(self) -> dict[str, torch.Tensor]:
@@ -430,6 +422,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
         trajectories: Trajectories,
         recalculate_all_logprobs: bool = True,
         env: Env | None = None,
+        *,
+        log_rewards: torch.Tensor | None = None,
     ) -> torch.Tensor:
         r"""Calculates scores for a batch of trajectories.
 
@@ -441,9 +435,14 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             env: The environment (unused in base TB, but required by some
                 subclasses such as RTB and SubTB).
+            log_rewards: Optional custom log rewards tensor of shape
+                (n_trajectories,). When None, uses the environment rewards
+                from the trajectories. Useful for intrinsic rewards (see
+                "Towards Improving Exploration through Sibling Augmented
+                GFlowNets", Madan et al., ICLR 2025).
 
         Returns:
-            A tensor of shape (n_trajectories,) containing the scores for each trajectory.
+            A tensor of shape (batch_size,) containing the scores for each trajectory.
         """
         log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
             trajectories, recalculate_all_logprobs=recalculate_all_logprobs
@@ -456,11 +455,13 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
         total_log_pf_trajectories = log_pf_trajectories.sum(dim=0)  # [N]
         total_log_pb_trajectories = log_pb_trajectories.sum(dim=0)  # [N]
 
-        # cast: log_rewards is always set for terminating trajectories;
-        # assert is behind debug to avoid graph breaks in torch.compile.
-        log_rewards = cast(torch.Tensor, trajectories.log_rewards)
+        # Use custom log_rewards if provided, otherwise fall back to the
+        # trajectory's environment rewards.
+        if log_rewards is None:
+            log_rewards = cast(torch.Tensor, trajectories.log_rewards)
         if self.debug:
             assert log_rewards is not None
+            assert log_rewards.shape == (trajectories.batch_size,)
         # Fast path: skip clamp when log_reward_clip_min is disabled (default).
         if math.isfinite(self.log_reward_clip_min):
             log_rewards = log_rewards.clamp_min(self.log_reward_clip_min)
@@ -479,8 +480,8 @@ class TrajectoryBasedGFlowNet(PFBasedGFlowNet[Trajectories], ABC):
                     f"env.reward() returned zero or negative values. "
                     f"Consider using log_reward_clip_min to clamp extreme values."
                 )
-            assert total_log_pf_trajectories.shape == (trajectories.n_trajectories,)
-            assert total_log_pb_trajectories.shape == (trajectories.n_trajectories,)
+            assert total_log_pf_trajectories.shape == (trajectories.batch_size,)
+            assert total_log_pb_trajectories.shape == (trajectories.batch_size,)
 
         # Fused (pf - pb) then subtract rewards; keep it branch-free/out-of-place
         # to stay friendly to torch.compile graphs.
