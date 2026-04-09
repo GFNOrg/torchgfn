@@ -4,7 +4,7 @@ import datetime
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 import torch
 import torch.distributed as dist
@@ -634,8 +634,39 @@ def gather_distributed_data(
 
 default_backend = "mpi"
 
+# Group type that works for both torch ProcessGroup and MPI communicator.
+Group = Any
 
-def send(data, dst_rank, backend=default_backend):
+
+def send(
+    data: torch.Tensor,
+    dst_rank: int,
+    backend: str = default_backend,
+) -> None:
+    """Send a byte tensor to ``dst_rank``.
+
+    This is **byte-level transport** — the payload is always sent as raw uint8
+    bytes. Both backends guarantee that ``recv`` on the other end will return
+    an identical uint8 tensor.
+
+    Protocol differences between backends:
+
+    - **torch**: Uses a length-prefixed two-message protocol. First a 1-element
+      int64 tensor containing the payload length is sent (tag=0), then the
+      payload itself (tag=1). This lets the receiver allocate the right buffer
+      size before the data arrives.
+    - **mpi**: Sends a single message (tag=0). The receiver uses ``MPI.Probe``
+      to discover the incoming message size before calling ``Recv``, so no
+      separate length message is needed.
+
+    Because the wire protocols differ, sender and receiver **must** use the
+    same backend.
+
+    Args:
+        data: Tensor to send (will be cast to uint8).
+        dst_rank: Destination rank (global).
+        backend: ``"torch"`` or ``"mpi"``.
+    """
     if backend == "torch":
         data = data.to(dtype=torch.uint8).contiguous().cpu()
         length_tensor = torch.tensor([data.numel()], dtype=torch.int64, device="cpu")
@@ -645,13 +676,29 @@ def send(data, dst_rank, backend=default_backend):
         MPI = _get_MPI()
         comm = MPI.COMM_WORLD
         arr = data.detach().cpu().contiguous().numpy()
-        comm.Send(arr, dest=dst_rank)
+        comm.Send(arr, dest=dst_rank, tag=0)
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
 
-def recv(src_rank=None, backend=default_backend):
+def recv(
+    src_rank: int | None = None,
+    backend: str = default_backend,
+) -> tuple[int, torch.Tensor]:
+    """Receive a byte tensor from ``src_rank`` (or any rank if ``None``).
+
+    Returns ``(source_rank, data)`` where ``data`` is a uint8 tensor. See
+    :func:`send` for protocol details per backend.
+
+    Args:
+        src_rank: Source rank to receive from, or ``None`` for any source.
+        backend: ``"torch"`` or ``"mpi"``.
+
+    Returns:
+        Tuple of (source rank, received uint8 tensor).
+    """
     if backend == "torch":
+        # Step 1: receive the payload length (tag=0).
         length_tensor = torch.zeros(1, dtype=torch.int64, device="cpu")
         if src_rank is None:
             src_rank = dist.recv(tensor=length_tensor, tag=0)
@@ -660,7 +707,7 @@ def recv(src_rank=None, backend=default_backend):
 
         msg_len = int(length_tensor.item())
 
-        # allocate payload buffer
+        # Step 2: receive the payload (tag=1).
         data = torch.empty(msg_len, dtype=torch.uint8, device="cpu")
         dist.recv(tensor=data, src=src_rank, tag=1)
         return src_rank, data
@@ -670,29 +717,42 @@ def recv(src_rank=None, backend=default_backend):
         comm = MPI.COMM_WORLD
         status = MPI.Status()
         source = MPI.ANY_SOURCE if src_rank is None else src_rank
+        # Probe to discover message size before allocating the receive buffer.
         comm.Probe(source=source, tag=0, status=status)
         source = status.Get_source()
         count = status.Get_count(MPI.BYTE)
-        buf = torch.ByteTensor(count)
+        buf = torch.empty(count, dtype=torch.uint8)
         comm.Recv(buf.numpy(), source=source, tag=0, status=status)
         return source, buf
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
 
-def barrier(backend=default_backend, group=None):
+def barrier(backend: str = default_backend, group: Group | None = None) -> None:
+    """Backend-agnostic barrier synchronization.
+
+    Args:
+        backend: ``"torch"`` or ``"mpi"``.
+        group: Process group (torch ProcessGroup or MPI communicator).
+    """
     if backend == "torch":
         group = dist.group.WORLD if group is None else group
         dist.barrier(group=group)
     elif backend == "mpi":
         MPI = _get_MPI()
-        group = MPI.COMM_WORLD if group is None else group
-        group.Barrier()
+        comm = MPI.COMM_WORLD if group is None else group
+        comm.Barrier()
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
 
-def get_rank(backend=default_backend, group=None):
+def get_rank(backend: str = default_backend, group: Group | None = None) -> int:
+    """Backend-agnostic rank query.
+
+    Args:
+        backend: ``"torch"`` or ``"mpi"``.
+        group: Process group (torch ProcessGroup or MPI communicator).
+    """
     if backend == "torch":
         return dist.get_rank(group)
     elif backend == "mpi":
@@ -703,8 +763,13 @@ def get_rank(backend=default_backend, group=None):
         raise ValueError(f"Unknown backend: {backend}")
 
 
-def get_world_size(backend=default_backend, group=None):
-    """Backend-agnostic world size query."""
+def get_world_size(backend: str = default_backend, group: Group | None = None) -> int:
+    """Backend-agnostic world size query.
+
+    Args:
+        backend: ``"torch"`` or ``"mpi"``.
+        group: Process group (torch ProcessGroup or MPI communicator).
+    """
     if backend == "torch":
         return dist.get_world_size(group)
     elif backend == "mpi":
@@ -715,13 +780,21 @@ def get_world_size(backend=default_backend, group=None):
         raise ValueError(f"Unknown backend: {backend}")
 
 
-def all_reduce(tensor, op="SUM", backend=default_backend, group=None):
-    """Backend-agnostic all-reduce.
+def all_reduce(
+    tensor: torch.Tensor,
+    op: str = "SUM",
+    backend: str = default_backend,
+    group: Group | None = None,
+) -> None:
+    """Backend-agnostic in-place all-reduce.
+
+    The MPI backend round-trips through CPU/numpy and copies the result back
+    to the original tensor (preserving its device).
 
     Args:
         tensor: The tensor to reduce in-place.
-        op: Reduction operation. One of "SUM", "MAX", "MIN".
-        backend: Communication backend ("torch" or "mpi").
+        op: Reduction operation. One of ``"SUM"``, ``"MAX"``, ``"MIN"``.
+        backend: ``"torch"`` or ``"mpi"``.
         group: Process group (torch ProcessGroup or MPI communicator).
     """
     if backend == "torch":
@@ -737,19 +810,27 @@ def all_reduce(tensor, op="SUM", backend=default_backend, group=None):
         mpi_ops = {"SUM": MPI.SUM, "MAX": MPI.MAX, "MIN": MPI.MIN}
         arr = tensor.detach().cpu().numpy().copy()
         comm.Allreduce(MPI.IN_PLACE, arr, op=mpi_ops[op])
-        tensor.copy_(torch.from_numpy(arr))
+        tensor.copy_(torch.from_numpy(arr).to(tensor.device))
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
 
-def all_gather(output_list, tensor, backend=default_backend, group=None):
+def all_gather(
+    output_list: list[torch.Tensor],
+    tensor: torch.Tensor,
+    backend: str = default_backend,
+    group: Group | None = None,
+) -> None:
     """Backend-agnostic all-gather.
+
+    The MPI backend round-trips through CPU/numpy and copies results back
+    to the output tensors (preserving their devices).
 
     Args:
         output_list: List of pre-allocated tensors (one per rank) to receive
             gathered data into.
         tensor: The local tensor to send.
-        backend: Communication backend ("torch" or "mpi").
+        backend: ``"torch"`` or ``"mpi"``.
         group: Process group (torch ProcessGroup or MPI communicator).
     """
     if backend == "torch":
@@ -765,19 +846,27 @@ def all_gather(output_list, tensor, backend=default_backend, group=None):
         )
         comm.Allgather(send_arr, recv_arr)
         for i, out in enumerate(output_list):
-            out.copy_(torch.from_numpy(recv_arr[i]))
+            out.copy_(torch.from_numpy(recv_arr[i]).to(out.device))
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
 
-def broadcast(tensor, src, backend=default_backend, group=None):
+def broadcast(
+    tensor: torch.Tensor,
+    src: int,
+    backend: str = default_backend,
+    group: Group | None = None,
+) -> None:
     """Backend-agnostic broadcast.
+
+    The MPI backend round-trips through CPU/numpy and copies the result back
+    to the tensor (preserving its device).
 
     Args:
         tensor: The tensor to broadcast. On the source rank this is the data
             to send; on other ranks the buffer is overwritten with received data.
         src: Source rank.
-        backend: Communication backend ("torch" or "mpi").
+        backend: ``"torch"`` or ``"mpi"``.
         group: Process group (torch ProcessGroup or MPI communicator).
     """
     if backend == "torch":
@@ -787,6 +876,6 @@ def broadcast(tensor, src, backend=default_backend, group=None):
         comm = group if group is not None else MPI.COMM_WORLD
         arr = tensor.detach().cpu().numpy().copy()
         comm.Bcast(arr, root=src)
-        tensor.copy_(torch.from_numpy(arr))
+        tensor.copy_(torch.from_numpy(arr).to(tensor.device))
     else:
         raise ValueError(f"Unknown backend: {backend}")

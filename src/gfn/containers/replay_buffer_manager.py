@@ -109,14 +109,14 @@ class ReplayBufferManager:
         return sender_rank, msg, len(byte_tensor)
 
     @staticmethod
-    def send_termination_signal(manager_rank: int, backend):
+    def send_termination_signal(manager_rank: int, backend: str) -> None:
         """Sends a termination signal to the replay buffer manager."""
         msg = Message(message_type=MessageType.EXIT, message_data=None)
         msg_bytes = msg.serialize()
         send(msg_bytes, dst_rank=manager_rank, backend=backend)
 
     @staticmethod
-    def get_metadata(manager_rank: int, backend) -> dict:
+    def get_metadata(manager_rank: int, backend: str) -> dict:
         """Sends a get metadata signal to the replay buffer manager."""
         msg = Message(message_type=MessageType.GET_METADATA, message_data=None)
         msg_bytes = msg.serialize()
