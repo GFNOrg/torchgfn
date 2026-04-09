@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import Protocol, Union, cast, runtime_checkable
 
 import torch
-import torch.distributed as dist
 
 from gfn.containers.message import Message, MessageType
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
+from gfn.utils.common import Timer
+from gfn.utils.distributed import recv, send
 
 
 @runtime_checkable
@@ -31,18 +32,36 @@ ContainerUnion = Union[Trajectories, Transitions, StatesContainer]
 
 
 class ReplayBuffer:
-    """A replay buffer for storing containers.
+    """A replay buffer for storing training containers.
+
+    Supports local-only operation and distributed remote buffer communication.
+
+    Features:
+        - **Local buffering**: Stores Trajectories, Transitions, or
+          StatesContainers up to a fixed capacity.
+        - **Prioritized capacity**: Optionally keeps only the highest-reward
+          items when the buffer is full.
+        - **Prioritized sampling**: Optionally samples with probability
+          proportional to reward (softmax over log-rewards).
+        - **Remote buffer communication**: When ``remote_manager_rank`` is set,
+          periodically sends batched containers to a remote
+          ``ReplayBufferManager`` and receives score dictionaries back.
+        - **Communication backends**: The ``communication_backend`` parameter
+          selects between ``"torch"`` (PyTorch distributed / Gloo) and
+          ``"mpi"`` (MPI4PY, ~8-12 GB/s vs ~100 MB/s with Gloo).
+        - **Async scoring**: When ``async_score`` is enabled, trajectory sends
+          are fire-and-forget; scores are collected lazily on the next
+          ``add()`` call (1-iteration stale), decoupling training throughput
+          from buffer scoring latency.
+        - **Timing instrumentation**: When ``timing`` is enabled, serialization,
+          send, and receive durations are recorded for profiling.
 
     Attributes:
         env: The environment associated with the containers.
         capacity: The maximum number of items the buffer can hold.
         training_container: The buffer contents (Trajectories, Transitions,
-            or StatesContainer). This is dynamically set based on the type of the
+            or StatesContainer). Dynamically set based on the type of the
             first added object.
-        prioritized_capacity: Whether to use prioritized capacity
-            (keep highest-reward items).
-        prioritized_sampling: Whether to sample items with probability proportional
-            to their reward.
     """
 
     def __init__(
@@ -53,6 +72,8 @@ class ReplayBuffer:
         prioritized_sampling: bool = False,
         remote_manager_rank: int | None = None,
         remote_buffer_freq: int = 1,
+        communication_backend: str = "mpi",
+        timing: bool = False,
         async_score: bool = False,
     ):
         """Initializes a ReplayBuffer instance.
@@ -67,6 +88,11 @@ class ReplayBuffer:
                 None if no remote manager is assigned.
             remote_buffer_freq: Frequency (in number of add() calls) at which to contact
                 the remote buffer manager.
+            communication_backend: Communication backend for remote buffer operations.
+                ``"mpi"`` uses MPI4PY (higher bandwidth), ``"torch"`` uses PyTorch
+                distributed (Gloo/MPI).
+            timing: If True, record durations for serialize/send/recv operations
+                in ``timing_data`` for profiling.
             async_score: If True, trajectory sends are fire-and-forget; scores
                 are collected lazily on the next add() call (1-iteration stale).
                 Decouples training throughput from buffer scoring latency.
@@ -78,6 +104,9 @@ class ReplayBuffer:
         self.prioritized_capacity = prioritized_capacity
         self.prioritized_sampling = prioritized_sampling
         self.pending_container: ContainerUnion | None = None
+        self.communication_backend = communication_backend
+        self.timing = timing
+        self.timing_data: dict[str, list[float]] = {}
 
         # Remote buffer fields
         self.remote_manager_rank = remote_manager_rank
@@ -85,13 +114,6 @@ class ReplayBuffer:
         self._add_counter = 0
         self.async_score = async_score
         self._pending_score: bool = False  # True when a score recv is outstanding.
-        if self.remote_manager_rank is not None:
-            backend = dist.get_backend()
-            if backend != "gloo":
-                raise RuntimeError(
-                    f"Replay Buffer Manager is only supported with the 'gloo' backend, "
-                    f"but the current backend is '{backend}'."
-                )
 
     @property
     def device(self) -> torch.device:
@@ -141,11 +163,13 @@ class ReplayBuffer:
                     # Collect stale score from previous send (if any), then
                     # fire-and-forget the new batch.
                     stale_score = self._collect_pending_score()
-                    self._send_objs_async(self.pending_container)
+                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
+                        self._send_objs_async(self.pending_container)
                     self.pending_container = None
                     return stale_score
                 else:
-                    score = self._send_objs(self.pending_container)
+                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
+                        score = self._send_objs(self.pending_container)
                     self.pending_container = None
                     return score
 
@@ -215,19 +239,24 @@ class ReplayBuffer:
     def _send_data(self, training_container: ContainerUnion) -> None:
         """Send a training container to the remote manager."""
         msg = Message(MessageType.DATA, training_container)
-        msg_tensor = msg.serialize()
-        length_tensor = torch.IntTensor([len(msg_tensor)])
-        dist.send(length_tensor, dst=self.remote_manager_rank)
-        dist.send(msg_tensor, dst=self.remote_manager_rank)
+        with Timer(self.timing_data, "serialize_objs", enabled=self.timing):
+            msg_tensor = msg.serialize()
+        with Timer(self.timing_data, "send_data", enabled=self.timing):
+            send(
+                msg_tensor,
+                dst_rank=self.remote_manager_rank,
+                backend=self.communication_backend,
+            )
 
     def _recv_score(self) -> dict[str, float]:
         """Receive a score dictionary from the remote manager."""
-        length_tensor = torch.zeros(1, dtype=torch.int32)
-        dist.recv(length_tensor, src=self.remote_manager_rank)
-        length = length_tensor.item()
-        score_tensor = torch.ByteTensor(length)
-        dist.recv(score_tensor, src=self.remote_manager_rank)
-        return Message.deserialize(score_tensor).message_data
+        with Timer(self.timing_data, "recv_score", enabled=self.timing):
+            _src_rank, score_tensor = recv(
+                src_rank=self.remote_manager_rank,
+                backend=self.communication_backend,
+            )
+        with Timer(self.timing_data, "deserialize_score", enabled=self.timing):
+            return Message.deserialize(score_tensor).message_data
 
     def __repr__(self) -> str:
         """Returns a string representation of the ReplayBuffer.
@@ -362,6 +391,13 @@ class ReplayBuffer:
         if self.training_container is not None:
             self.training_container = type(self.training_container).load(self.env, path)
 
+    def timing_log(self) -> str:
+        """Returns a formatted string of the timing information for the replay buffer."""
+        log_str = "Replay Buffer Timing Information:\n"
+        for key, times in self.timing_data.items():
+            log_str += f"{key}: {sum(times):.4f} s\n"
+        return log_str
+
 
 class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
     """A replay buffer with diversity-based prioritization.
@@ -389,6 +425,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         p_norm_distance: float = 1.0,
         remote_manager_rank: int | None = None,
         remote_buffer_freq: int = 1,
+        communication_backend: str = "mpi",
+        timing: bool = False,
         async_score: bool = False,
     ):
         """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
@@ -403,6 +441,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
                 None if no remote manager is assigned.
             remote_buffer_freq: Frequency (in number of add() calls) at which to contact
                 the remote buffer manager.
+            communication_backend: Communication backend (``"mpi"`` or ``"torch"``).
+            timing: If True, record operation durations for profiling.
             async_score: If True, trajectory sends are fire-and-forget; scores
                 are collected lazily on the next add() call.
         """
@@ -412,6 +452,8 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             prioritized_capacity=True,
             remote_manager_rank=remote_manager_rank,
             remote_buffer_freq=remote_buffer_freq,
+            communication_backend=communication_backend,
+            timing=timing,
             async_score=async_score,
         )
         self.cutoff_distance = cutoff_distance
@@ -523,8 +565,8 @@ class TerminatingStateBuffer(ReplayBuffer):
         training_container: The buffer contents (StatesContainer).
     """
 
-    def __init__(self, env: Env, capacity: int = 1000, **kwargs):
-        super().__init__(env, capacity, **kwargs)
+    def __init__(self, env: Env, capacity: int = 1000, timing: bool = False, **kwargs):
+        super().__init__(env, capacity, timing=timing, **kwargs)
         self.training_container = StatesContainer(env)
 
     def _local_add(self, training_container: ContainerUnion):

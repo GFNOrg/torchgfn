@@ -20,13 +20,13 @@ class Message:
         self.message_type = message_type
         self.message_data = message_data
 
-    def serialize(self) -> torch.ByteTensor:
+    def serialize(self) -> torch.Tensor:
         """Convert message into a tensor of bytes."""
         obj_bytes = pickle.dumps(self)
         return torch.frombuffer(bytearray(obj_bytes), dtype=torch.uint8)  # type: ignore[return-value]
 
     @staticmethod
-    def deserialize(byte_tensor: torch.ByteTensor) -> Message:
+    def deserialize(byte_tensor: torch.Tensor) -> Message:
         """Reconstruct Message from a tensor of bytes."""
         obj_bytes = bytes(byte_tensor.numpy())
         return pickle.loads(obj_bytes)
