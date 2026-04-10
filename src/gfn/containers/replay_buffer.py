@@ -238,6 +238,7 @@ class ReplayBuffer:
 
     def _send_data(self, training_container: ContainerUnion) -> None:
         """Send a training container to the remote manager."""
+        assert self.remote_manager_rank is not None
         msg = Message(MessageType.DATA, training_container)
         with Timer(self.timing_data, "serialize_objs", enabled=self.timing):
             msg_tensor = msg.serialize()
@@ -395,7 +396,10 @@ class ReplayBuffer:
         """Returns a formatted string of the timing information for the replay buffer."""
         log_str = "Replay Buffer Timing Information:\n"
         for key, times in self.timing_data.items():
-            log_str += f"{key}: {sum(times):.4f} s\n"
+            total = sum(times)
+            count = len(times)
+            mean = total / count if count > 0 else 0.0
+            log_str += f"{key}: total={total:.4f}s, count={count}, mean={mean:.4f}s\n"
         return log_str
 
 
@@ -565,8 +569,21 @@ class TerminatingStateBuffer(ReplayBuffer):
         training_container: The buffer contents (StatesContainer).
     """
 
-    def __init__(self, env: Env, capacity: int = 1000, timing: bool = False, **kwargs):
-        super().__init__(env, capacity, timing=timing, **kwargs)
+    def __init__(
+        self,
+        env: Env,
+        capacity: int = 1000,
+        communication_backend: str = "mpi",
+        timing: bool = False,
+        **kwargs,
+    ):
+        super().__init__(
+            env,
+            capacity,
+            communication_backend=communication_backend,
+            timing=timing,
+            **kwargs,
+        )
         self.training_container = StatesContainer(env)
 
     def _local_add(self, training_container: ContainerUnion):
