@@ -440,9 +440,9 @@ class HyperGrid(DiscreteEnv):
             return set()
         indices = self.get_states_indices(states)
         # ``get_states_indices`` returns either a torch.Tensor (small grids
-        # whose indices fit in int64) or a numpy object array of Python ints
-        # (large grids where ndim*ceil(log2(height)) exceeds 62 bits).  Handle
-        # both so the mode tracker stays correct in either regime.
+        # whose indices fit in int64, i.e. height**ndim <= 2**63) or a numpy
+        # object array of Python ints (larger grids where height**ndim > 2**63).
+        # Handle both so the mode tracker stays correct in either regime.
         if isinstance(indices, np.ndarray):
             return set(indices[mask.cpu().numpy()].tolist())
         return set(indices[mask].tolist())
@@ -486,16 +486,15 @@ class HyperGrid(DiscreteEnv):
 
         Returns one canonical index per state computed from the base-``height``
         encoding ``sum(s[j] * height^(ndim-1-j))``.  The maximum index is
-        ``height^ndim - 1``, which requires ``ndim * ceil(log2(height))`` bits
-        to represent.
+        ``height^ndim - 1``.
 
-        - **Safe regime** (``ndim * ceil(log2(height)) <= 62``): the index fits
+        - **Safe regime** (``height ** ndim <= 2 ** 63``): the index fits
           in signed int64 and we return a ``torch.Tensor`` of shape
           ``batch_shape`` with dtype ``torch.int64`` (the historical behaviour).
-        - **Overflow regime** (``ndim * ceil(log2(height)) > 62``): the index
+        - **Overflow regime** (``height ** ndim > 2 ** 63``): the index
           would overflow int64 and silently wrap, producing collisions between
           distinct states (a real bug we hit at e.g. ndim=10, height=128 where
-          ``128**9 == 2**63``).  In this regime we fall back to per-row Python
+          ``128**10 == 2**70``).  In this regime we fall back to per-row Python
           ``int`` arithmetic and return a ``numpy.ndarray`` of dtype ``object``
           containing arbitrary-precision Python ints.  Each element is a
           unique, hashable canonical index.
@@ -521,13 +520,12 @@ class HyperGrid(DiscreteEnv):
         else:
             states_raw = states
 
-        # Bits required to represent the largest canonical index, height^ndim - 1.
-        # We leave one bit of headroom (62 instead of 63) to keep the Python
-        # exponentiation ``self.height ** torch.arange(...)`` clearly inside
-        # signed int64 — even ``128**9 == 2**63`` already overflows the signed
-        # range and wraps to INT64_MIN.
-        bits_needed = self.ndim * int(ceil(log2(self.height)))
-        if bits_needed > 62:
+        # Exact overflow guard using Python's arbitrary-precision integers.
+        # The int64 path is safe iff height**ndim <= 2**63, which guarantees
+        # that both the per-column products (height^k * s_k) and the running
+        # sum stay within signed int64.  This scalar check is negligible in
+        # cost regardless of batch size.
+        if self.height ** self.ndim > 2 ** 63:
             indices_obj = self._get_states_indices_bigint(states_raw)
             expected_shape = (
                 tuple(states.batch_shape)
@@ -558,8 +556,8 @@ class HyperGrid(DiscreteEnv):
     ) -> np.ndarray:
         """Compute canonical indices using arbitrary-precision Python ints.
 
-        Used by :meth:`get_states_indices` when ``ndim * ceil(log2(height))``
-        exceeds 62 bits and the int64 path would overflow.
+        Used by :meth:`get_states_indices` when ``height ** ndim > 2 ** 63``
+        and the int64 path would overflow.
 
         Vectorized over the (potentially large) batch dimension via numpy
         object-dtype broadcasting: the inner Python loop iterates only over

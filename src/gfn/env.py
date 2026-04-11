@@ -1013,7 +1013,7 @@ class DiscreteEnv(Env, ABC):
 
         Most implementations return a ``torch.Tensor`` of shape ``(*batch_shape,)``
         with dtype ``torch.int64``.  Implementations whose canonical index space
-        exceeds 63 bits (e.g. :class:`gfn.gym.HyperGrid` with ndim×ceil(log2(height)) > 62)
+        exceeds int64 (e.g. :class:`gfn.gym.HyperGrid` with ``height ** ndim > 2 ** 63``)
         may instead return a ``numpy.ndarray`` of dtype ``object`` containing
         arbitrary-precision Python ints — in that regime an int64 tensor would
         silently overflow and produce hash collisions between distinct states.

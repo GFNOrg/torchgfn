@@ -207,6 +207,23 @@ class TestHyperGridGetStatesIndices:
         assert indices.dtype == torch.long
         assert indices.shape == (50,)
 
+    def test_safe_path_boundary_height128_ndim9(self):
+        """Boundary case: height=128, ndim=9 → max index = 128**9 - 1 = 2**63 - 1,
+        which exactly fits in int64.  The exact overflow check must keep this
+        on the fast int64 tensor path (128**9 == 2**63, which is NOT > 2**63)."""
+        env = HyperGrid(ndim=9, height=128, validate_modes=False)
+        states = torch.zeros((4, 9), dtype=torch.long)
+        indices = env.get_states_indices(states)
+        assert isinstance(indices, torch.Tensor), (
+            "height=128, ndim=9 should stay on the int64 path (max index = 2**63-1)"
+        )
+        assert indices.dtype == torch.long
+
+        # The all-max state should map to exactly INT64_MAX = 2**63 - 1.
+        max_state = torch.full((1, 9), 127, dtype=torch.long)
+        max_idx = int(env.get_states_indices(max_state).item())
+        assert max_idx == 2**63 - 1
+
     def test_safe_path_canonical_encoding_matches_python(self):
         """Safe path encodes states as base-``height`` numbers."""
         ndim, height = 3, 8
