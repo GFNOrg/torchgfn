@@ -214,9 +214,9 @@ class TestHyperGridGetStatesIndices:
         env = HyperGrid(ndim=9, height=128, validate_modes=False)
         states = torch.zeros((4, 9), dtype=torch.long)
         indices = env.get_states_indices(states)
-        assert isinstance(indices, torch.Tensor), (
-            "height=128, ndim=9 should stay on the int64 path (max index = 2**63-1)"
-        )
+        assert isinstance(
+            indices, torch.Tensor
+        ), "height=128, ndim=9 should stay on the int64 path (max index = 2**63-1)"
         assert indices.dtype == torch.long
 
         # The all-max state should map to exactly INT64_MAX = 2**63 - 1.
@@ -234,11 +234,11 @@ class TestHyperGridGetStatesIndices:
         )
         indices = env.get_states_indices(states).tolist()
         expected = [
-            0,                                  # 0*64 + 0*8 + 0
-            1 * height ** 2,                    # 64
-            1 * height,                         # 8
-            1,                                  # 1
-            7 * height ** 2 + 7 * height + 7,   # 511 = n_states - 1
+            0,  # 0*64 + 0*8 + 0
+            1 * height**2,  # 64
+            1 * height,  # 8
+            1,  # 1
+            7 * height**2 + 7 * height + 7,  # 511 = n_states - 1
         ]
         assert indices == expected
 

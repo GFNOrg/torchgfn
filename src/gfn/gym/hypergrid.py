@@ -8,7 +8,7 @@ import warnings
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from functools import reduce
-from math import ceil, gcd, log, log2, pi, sqrt
+from math import gcd, log, pi, sqrt
 from time import time
 from typing import List, Literal, Tuple, Union
 
@@ -525,16 +525,16 @@ class HyperGrid(DiscreteEnv):
         # that both the per-column products (height^k * s_k) and the running
         # sum stay within signed int64.  This scalar check is negligible in
         # cost regardless of batch size.
-        if self.height ** self.ndim > 2 ** 63:
+        if self.height**self.ndim > 2**63:
             indices_obj = self._get_states_indices_bigint(states_raw)
             expected_shape = (
                 tuple(states.batch_shape)
                 if isinstance(states, DiscreteStates)
                 else tuple(states_raw.shape[:-1])
             )
-            assert indices_obj.shape == expected_shape, (
-                f"indices.shape is {indices_obj.shape} but expected {expected_shape}"
-            )
+            assert (
+                indices_obj.shape == expected_shape
+            ), f"indices.shape is {indices_obj.shape} but expected {expected_shape}"
             return indices_obj
 
         canonical_base = self.height ** torch.arange(
@@ -551,9 +551,7 @@ class HyperGrid(DiscreteEnv):
             ), f"indices.shape is {indices.shape} but expected {states.shape[:-1]}"
         return indices
 
-    def _get_states_indices_bigint(
-        self, states_raw: torch.Tensor
-    ) -> np.ndarray:
+    def _get_states_indices_bigint(self, states_raw: torch.Tensor) -> np.ndarray:
         """Compute canonical indices using arbitrary-precision Python ints.
 
         Used by :meth:`get_states_indices` when ``height ** ndim > 2 ** 63``
@@ -573,9 +571,7 @@ class HyperGrid(DiscreteEnv):
         batch_shape = tuple(states_raw.shape[:-1])
         # Convert the whole (n_rows, ndim) block to object dtype once so each
         # column slice we read below is already a Python-int array.
-        flat = (
-            states_raw.reshape(-1, self.ndim).cpu().numpy().astype(object)
-        )
+        flat = states_raw.reshape(-1, self.ndim).cpu().numpy().astype(object)
         h = int(self.height)
 
         # k starts as a Python-int 0 for every row (np.zeros with object
