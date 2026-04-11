@@ -1,5 +1,6 @@
 """Extended tests for gfn.gym environments: hypergrid, line, box, bitSequence."""
 
+import numpy as np
 import pytest
 import torch
 
@@ -186,6 +187,172 @@ class TestHyperGridGetStatesIndices:
         assert indices.shape == (4,)
         # s0 should have index 0
         assert indices[0].item() == 0
+
+    # -----------------------------------------------------------------
+    # Bigint fallback path: ndim * ceil(log2(height)) > 62
+    # -----------------------------------------------------------------
+    #
+    # When the canonical index space exceeds int64, the historical
+    # ``self.height ** torch.arange(...)`` path silently overflows and
+    # different states map to the same int64 value.  ``get_states_indices``
+    # detects this regime and falls back to a numpy object array of
+    # arbitrary-precision Python ints.  These tests pin down both paths.
+
+    def test_safe_path_returns_int64_tensor(self):
+        """Small grids: int64 tensor with the historical contract."""
+        env = HyperGrid(ndim=2, height=8, validate_modes=False)
+        states = env.make_random_states((50,))
+        indices = env.get_states_indices(states)
+        assert isinstance(indices, torch.Tensor)
+        assert indices.dtype == torch.long
+        assert indices.shape == (50,)
+
+    def test_safe_path_canonical_encoding_matches_python(self):
+        """Safe path encodes states as base-``height`` numbers."""
+        ndim, height = 3, 8
+        env = HyperGrid(ndim=ndim, height=height, validate_modes=False)
+        states = torch.tensor(
+            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [7, 7, 7]],
+            dtype=torch.long,
+        )
+        indices = env.get_states_indices(states).tolist()
+        expected = [
+            0,                                  # 0*64 + 0*8 + 0
+            1 * height ** 2,                    # 64
+            1 * height,                         # 8
+            1,                                  # 1
+            7 * height ** 2 + 7 * height + 7,   # 511 = n_states - 1
+        ]
+        assert indices == expected
+
+    def test_bigint_path_triggered_for_large_grids(self):
+        """ndim=10, height=128 needs 70 bits → numpy object array."""
+        env = HyperGrid(
+            ndim=10,
+            height=128,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs={"R0": 0.125},
+            validate_modes=False,
+        )
+        states = torch.zeros((4, 10), dtype=torch.long)
+        indices = env.get_states_indices(states)
+        assert isinstance(indices, np.ndarray)
+        assert indices.dtype == object
+        assert indices.shape == (4,)
+        # All-zero states all encode to Python int 0.
+        assert all(int(v) == 0 for v in indices)
+
+    def test_bigint_path_no_collisions_on_states_that_overflow_int64(self):
+        """The exact pairs that DO collide under the buggy int64 path
+        (states differing only in the high bits of dim 0) MUST produce
+        distinct indices in the bigint path."""
+        env = HyperGrid(
+            ndim=10,
+            height=128,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs={"R0": 0.125},
+            validate_modes=False,
+        )
+        # 128**9 == 2**63 overflows int64.  Under the OLD int64 path, only
+        # the LSB of s[0] survives, so s[0] in {0, 2, 4, 6, ...} all collide
+        # to the same canonical "0".  The bigint path must produce 4 distinct
+        # indices for these 4 distinct states.
+        states = torch.zeros((4, 10), dtype=torch.long)
+        states[:, 0] = torch.tensor([0, 2, 4, 6])
+        indices = env.get_states_indices(states)
+        unique = {int(v) for v in indices}
+        assert len(unique) == 4
+
+    def test_bigint_path_matches_python_reference(self):
+        """Cross-check the vectorized bigint path against a naive per-row
+        Python-int reference encoder over a randomized batch."""
+        ndim, height = 10, 128
+        env = HyperGrid(
+            ndim=ndim,
+            height=height,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs={"R0": 0.125},
+            validate_modes=False,
+        )
+        torch.manual_seed(0)
+        states = torch.randint(0, height, (256, ndim), dtype=torch.long)
+        indices = env.get_states_indices(states)
+
+        # Reference: O(batch * ndim) per-row Python loop using arbitrary-
+        # precision ints.  This is the unvectorized form of the same algorithm
+        # the bigint fallback runs internally.
+        flat = states.cpu().numpy()
+        expected = []
+        for row in flat:
+            k = 0
+            for v in row:
+                k = k * height + int(v)
+            expected.append(k)
+        assert [int(v) for v in indices] == expected
+
+    def test_int64_path_is_demonstrably_wrong_in_overflow_regime(self):
+        """Sanity check: simulate what the OLD int64-only encoder would have
+        produced and confirm it really does collapse distinct states.  This
+        documents *why* the bigint fallback is needed and locks in the
+        regression test."""
+        ndim, height = 10, 128
+        states = torch.zeros((4, ndim), dtype=torch.long)
+        states[:, 0] = torch.tensor([0, 2, 4, 6])
+
+        # Recreate the buggy old path verbatim.
+        canonical_base = height ** torch.arange(ndim - 1, -1, -1)
+        buggy_indices = (canonical_base * states).sum(-1).long().tolist()
+
+        # In the int64 regime, these 4 distinct states collapse to ≤2 unique
+        # values (parity of s[0]).  This guarantees the bug is real and that
+        # the new path is fixing it, not papering over an irrelevance.
+        assert len(set(buggy_indices)) < 4
+
+        # Meanwhile the bigint path keeps them distinct.
+        env = HyperGrid(
+            ndim=ndim,
+            height=height,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs={"R0": 0.125},
+            validate_modes=False,
+        )
+        good_indices = env.get_states_indices(states)
+        assert len({int(v) for v in good_indices}) == 4
+
+    def test_bigint_path_preserves_batch_shape(self):
+        """Multi-dimensional batch shapes round-trip through the bigint path."""
+        env = HyperGrid(
+            ndim=10,
+            height=128,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs={"R0": 0.125},
+            validate_modes=False,
+        )
+        states = torch.randint(0, 128, (3, 5, 10), dtype=torch.long)
+        indices = env.get_states_indices(states)
+        assert isinstance(indices, np.ndarray)
+        assert indices.shape == (3, 5)
+
+    def test_modes_found_works_in_bigint_regime(self):
+        """End-to-end: ``modes_found`` returns hashable Python ints in the
+        bigint regime so the downstream mode tracker stays correct."""
+        env = HyperGrid(
+            ndim=10,
+            height=128,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs={"R0": 0.125},
+            validate_modes=False,
+        )
+        torch.manual_seed(0)
+        # Sample enough states that some are likely to be modes; we don't
+        # need any specific count, just that the call succeeds and returns
+        # a set of ints.
+        states_tensor = torch.randint(0, 128, (1024, 10), dtype=torch.long)
+        states = env.States(states_tensor)
+        modes = env.modes_found(states)
+        assert isinstance(modes, set)
+        for m in modes:
+            assert isinstance(m, int)
 
 
 class TestHyperGridValidation:
