@@ -446,6 +446,177 @@ class TestHyperGridGetStatesIndices:
             assert isinstance(m, int)
 
 
+class TestBitwiseXORPresetFactory:
+    """Tests for the new difficulty-scaled bitwise XOR presets."""
+
+    def test_presets_work_at_height_16(self):
+        """All presets should produce valid envs at height=16."""
+        from gfn.gym.hypergrid import get_bitwise_xor_presets
+
+        presets = get_bitwise_xor_presets(ndim=10, height=16)
+        for name, kwargs in presets.items():
+            env = HyperGrid(
+                ndim=10,
+                height=16,
+                reward_fn_str="bitwise_xor",
+                reward_fn_kwargs=kwargs,
+                validate_modes=False,
+            )
+            states = env.make_random_states((32,))
+            rewards = env.reward(states)
+            assert rewards.shape == (32,), f"Preset {name} failed"
+            assert torch.isfinite(
+                rewards
+            ).all(), f"Preset {name} produced non-finite rewards"
+
+    def test_presets_cap_bits_to_available(self):
+        """Bit ranges should never exceed ceil(log2(height))-1."""
+        import math
+
+        from gfn.gym.hypergrid import get_bitwise_xor_presets
+
+        for height in [4, 8, 16, 32]:
+            B = max(1, int(math.ceil(math.log2(max(height, 2)))))
+            presets = get_bitwise_xor_presets(ndim=10, height=height)
+            for name, kwargs in presets.items():
+                env = HyperGrid(
+                    ndim=10,
+                    height=height,
+                    reward_fn_str="bitwise_xor",
+                    reward_fn_kwargs=kwargs,
+                    validate_modes=False,
+                )
+                for lo, hi in env.reward_fn.bits_per_tier:
+                    assert hi <= B - 1, (
+                        f"Preset {name} at height={height}: "
+                        f"hi_bit={hi} exceeds B-1={B - 1}"
+                    )
+
+    def test_mode_count_decreases_with_difficulty(self):
+        """Harder presets should have fewer modes (sample-based)."""
+        from gfn.gym.hypergrid import get_bitwise_xor_presets
+
+        presets = get_bitwise_xor_presets(ndim=10, height=16)
+        order = ["easy", "medium", "hard", "challenging"]
+        mode_fracs = []
+        for name in order:
+            kwargs = presets[name]
+            env = HyperGrid(
+                ndim=10,
+                height=16,
+                reward_fn_str="bitwise_xor",
+                reward_fn_kwargs=kwargs,
+                validate_modes=False,
+            )
+            torch.manual_seed(42)
+            states = env.make_random_states((10000,))
+            thr = env._mode_reward_threshold()
+            rewards = env.reward(states)
+            frac = float((rewards >= thr).float().mean())
+            mode_fracs.append(frac)
+
+        # Each successive preset should have fewer or equal modes.
+        for i in range(len(mode_fracs) - 1):
+            assert mode_fracs[i] >= mode_fracs[i + 1], (
+                f"{order[i]} ({mode_fracs[i]:.4f}) should have "
+                f">= modes than {order[i + 1]} "
+                f"({mode_fracs[i + 1]:.4f})"
+            )
+
+    def test_reward_computation_matches_original_for_default_parity(
+        self,
+    ):
+        """With no custom parity_checks, new __call__ matches old."""
+        # Build with default (no custom parity_checks)
+        env = HyperGrid(
+            ndim=4,
+            height=8,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs={
+                "R0": 0.1,
+                "tier_weights": [1.0, 10.0],
+                "bits_per_tier": [(0, 1), (0, 2)],
+            },
+            validate_modes=False,
+        )
+        rf = env.reward_fn
+
+        # Manually compute using the old even-parity logic.
+        torch.manual_seed(0)
+        states = torch.randint(0, 8, (100, 4), dtype=torch.long)
+
+        # New path
+        new_rewards = rf(states)
+
+        # Old path: manual even-parity check
+        x = states  # all dims constrained by default
+        R_old = torch.full((100,), 0.1, dtype=torch.get_default_dtype())
+        valid = torch.ones(100, dtype=torch.bool)
+
+        for t, (w, (lo, hi)) in enumerate(zip(rf.tier_weights, rf.bits_per_tier)):
+            all_ok = torch.ones(100, dtype=torch.bool)
+            for b in range(lo, hi + 1):
+                bits = ((x >> b) & 1).long()
+                parity_ok = (bits.sum(dim=-1) & 1) == 0
+                all_ok = all_ok & parity_ok
+            valid = valid & all_ok
+            R_old = R_old + valid.float() * w
+
+        assert torch.allclose(new_rewards, R_old, atol=1e-6), (
+            "New compile-friendly __call__ does not match " "old even-parity behavior"
+        )
+
+    def test_compile_friendly(self):
+        """The __call__ should trace under torch.compile."""
+        env = HyperGrid(
+            ndim=4,
+            height=8,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs={
+                "R0": 0.1,
+                "tier_weights": [1.0, 10.0],
+                "bits_per_tier": [(0, 1), (0, 2)],
+            },
+            validate_modes=False,
+        )
+        rf = env.reward_fn
+        states = torch.randint(0, 8, (16, 4), dtype=torch.long)
+
+        # Should not raise
+        compiled_fn = torch.compile(rf, fullgraph=True, backend="aot_eager")
+        result = compiled_fn(states)
+        expected = rf(states)
+        assert torch.allclose(result, expected, atol=1e-6)
+
+
+class TestGF2RandomFullrank:
+    """Tests for the _gf2_random_fullrank utility."""
+
+    def test_basic_generation(self):
+        from gfn.gym.hypergrid import _gf2_random_fullrank
+
+        A, c = _gf2_random_fullrank(3, 5, seed=42)
+        assert A.shape == (3, 5)
+        assert c.shape == (3,)
+        assert ((A == 0) | (A == 1)).all()
+        assert ((c == 0) | (c == 1)).all()
+
+    def test_full_rank(self):
+        from gfn.gym.hypergrid import _gf2_random_fullrank, _gf2_rank
+
+        for n_checks in range(1, 6):
+            A, _ = _gf2_random_fullrank(n_checks, 8, seed=123)
+            assert _gf2_rank(A) == n_checks
+
+    def test_deterministic(self):
+        from gfn.gym.hypergrid import _gf2_random_fullrank
+
+        A1, c1 = _gf2_random_fullrank(3, 5, seed=99)
+        A2, c2 = _gf2_random_fullrank(3, 5, seed=99)
+        assert torch.equal(A1, A2)
+        assert torch.equal(c1, c2)
+
+
 class TestHyperGridValidation:
     """Test the validate() method on HyperGrid."""
 

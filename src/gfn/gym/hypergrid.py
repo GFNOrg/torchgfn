@@ -1,7 +1,9 @@
 """Adapted from https://github.com/Tikquuss/GflowNets_Tutorial"""
 
+import hashlib
 import itertools
 import logging
+import math
 import multiprocessing
 import os
 import warnings
@@ -77,9 +79,7 @@ def _hypergrid_worker(task):
     """
     values, ndim, start_idx, end_idx = task
     return list(
-        itertools.islice(
-            itertools.product(values, repeat=ndim), start_idx, end_idx
-        )
+        itertools.islice(itertools.product(values, repeat=ndim), start_idx, end_idx)
     )
 
 
@@ -823,28 +823,25 @@ class HyperGrid(DiscreteEnv):
         """Feasibility and constructive check for ``BitwiseXORReward``.
 
         Steps:
-        - For each tier, verify the GF(2) parity system has at least one
-          solution using Gaussian elimination modulo 2. If any tier is
-          infeasible, no mode exists.
-        - The all-zero configuration satisfies even-parity constraints, so if
-          tiers are feasible we evaluate that point against the threshold with
-          tolerance.
+        - Verify the combined GF(2) system (full_A @ x = full_c) has at
+          least one solution using Gaussian elimination modulo 2.
+        - Try the all-zero configuration first (satisfies default even
+          parity). If that fails, try a small batch of random states.
         """
-        if self.reward_fn.parity_checks is not None:
-            for t in range(len(self.reward_fn.tier_weights)):
-                cfg = self.reward_fn.parity_checks[t]
-                if cfg is None:
-                    continue
-                A = cfg.get("A", None)
-                c = cfg.get("c", None)
-                if A is None or c is None:
-                    continue
-                if not self._solve_gf2_has_solution(A, c):
-                    return False
+        # Check that the combined system is feasible.
+        rf = self.reward_fn
+        if rf._full_A.shape[0] > 0:
+            if not self._solve_gf2_has_solution(rf._full_A, rf._full_c):
+                return False
 
+        # Try all-zero first.
         x = torch.zeros(self.ndim, dtype=torch.long)
-        r = float(self.reward_fn(x.unsqueeze(0))[0])
-        return r >= thr - EPS_REWARD_CMP
+        r = float(rf(x.unsqueeze(0))[0])
+        if r >= thr - EPS_REWARD_CMP:
+            return True
+
+        # Try a small random batch as fallback.
+        return self._exists_fallback_random(thr)
 
     def _exists_multiplicative_coprime(self, thr: float) -> bool:
         """Number-theoretic constructive check for ``MultiplicativeCoprimeReward``.
@@ -1416,18 +1413,88 @@ class BitwiseXORReward(GridReward):
         assert len(dims_constrained) > 0
         self.dims_constrained: list[int] = list(map(int, dims_constrained))
 
+        # Available bits for this height
+        B = max(1, int(math.ceil(math.log2(max(height, 2)))))
+
         bits_per_tier = kwargs.get("bits_per_tier", None)
         if bits_per_tier is None:
             # Default: widen the bit window gradually
             bits_per_tier = [(0, 5), (0, 7), (0, 9)]
         assert len(bits_per_tier) == len(self.tier_weights)
+        # Cap hi_bit to B - 1 to avoid vacuous checks
         self.bits_per_tier: list[tuple[int, int]] = [
-            (int(lo), int(hi)) for (lo, hi) in bits_per_tier
+            (int(lo), min(int(hi), B - 1)) for (lo, hi) in bits_per_tier
         ]
 
         self.parity_checks = kwargs.get("parity_checks", None)
         if self.parity_checks is not None:
             assert len(self.parity_checks) == len(self.tier_weights)
+
+        # --- Pre-compute tensors for compile-friendly __call__ ---
+        M = len(self.dims_constrained)
+        self._dim_idx = torch.tensor(self.dims_constrained, dtype=torch.long)
+        self._bit_positions = torch.arange(B, dtype=torch.long)
+
+        # Build the full combined A matrix and c vector.
+        # For each tier t and each bit b in its range, the tier's parity
+        # check matrix A_t (n_checks_t, M) is placed into the full matrix
+        # at columns corresponding to bit b of each constrained dim.
+        # Dim-major bit ordering: index = d * B + b.
+        full_A_rows: list[torch.Tensor] = []
+        full_c_parts: list[torch.Tensor] = []
+        tier_check_counts: list[int] = []
+
+        for t in range(len(self.tier_weights)):
+            lo_bit, hi_bit = self.bits_per_tier[t]
+            n_bits_tier = hi_bit - lo_bit + 1
+            if n_bits_tier <= 0:
+                tier_check_counts.append(0)
+                continue
+
+            # Get per-tier A_t and c_t
+            if self.parity_checks is not None and self.parity_checks[t] is not None:
+                cfg = self.parity_checks[t]
+                A_t = cfg.get("A", None)
+                c_t = cfg.get("c", None)
+                if A_t is None or c_t is None:
+                    # Fall back to even parity
+                    A_t = torch.ones(1, M, dtype=torch.long)
+                    c_t = torch.zeros(1, dtype=torch.long)
+                else:
+                    A_t = A_t.long()
+                    c_t = c_t.long()
+            else:
+                # Default even parity: sum(b) mod 2 == 0
+                A_t = torch.ones(1, M, dtype=torch.long)
+                c_t = torch.zeros(1, dtype=torch.long)
+
+            n_checks = A_t.shape[0]
+
+            # For each bit in this tier's range, place A_t into full
+            # matrix at the appropriate columns.
+            for b in range(lo_bit, hi_bit + 1):
+                # Row in full matrix for this (tier, bit): A_t placed
+                # at columns d * B + b for d in 0..M-1
+                row_block = torch.zeros(n_checks, M * B, dtype=torch.long)
+                for d in range(M):
+                    row_block[:, d * B + b] = A_t[:, d]
+                full_A_rows.append(row_block)
+                full_c_parts.append(c_t)
+
+            tier_check_counts.append(n_checks * n_bits_tier)
+
+        if full_A_rows:
+            self._full_A = torch.cat(full_A_rows, dim=0)
+            self._full_c = torch.cat(full_c_parts, dim=0)
+        else:
+            self._full_A = torch.zeros(0, M * B, dtype=torch.long)
+            self._full_c = torch.zeros(0, dtype=torch.long)
+
+        self._tier_check_counts = tier_check_counts
+        self._tier_weights_t = torch.tensor(
+            self.tier_weights, dtype=torch.get_default_dtype()
+        )
+        self._B = B
 
     def _even_parity_mask(self, bits: torch.Tensor) -> torch.Tensor:
         """bits: (..., m) int/bool -> returns (...,) bool for even parity."""
@@ -1465,35 +1532,38 @@ class BitwiseXORReward(GridReward):
         return ok.reshape(bits_plane.shape[:-1])
 
     def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
-        R = torch.zeros(
-            states_tensor.shape[:-1],
-            device=states_tensor.device,
+        dev = states_tensor.device
+        dim_idx = self._dim_idx.to(dev)
+        bit_positions = self._bit_positions.to(dev)
+        full_A = self._full_A.to(dev)
+        full_c = self._full_c.to(dev)
+
+        x = states_tensor.index_select(-1, dim_idx)
+
+        # Extract all bits at once: (..., M, B) -> (..., M*B)
+        all_bits = (x.unsqueeze(-1) >> bit_positions) & 1
+        flat_bits = all_bits.reshape(*x.shape[:-1], -1).long()
+
+        # Single matmul: all GF(2) checks
+        prod = (flat_bits @ full_A.t()) & 1
+
+        # Tiered reward accumulation
+        R = torch.full(
+            x.shape[:-1],
+            self.R0,
+            device=dev,
             dtype=torch.get_default_dtype(),
         )
-        if self.R0 != 0.0:
-            R += self.R0
-
-        # Select constrained dims
-        x = states_tensor.index_select(
-            dim=-1,
-            index=torch.tensor(self.dims_constrained, device=states_tensor.device),
-        )
-
-        # Cumulative tiers: a state gets tier-t reward only if it satisfies
-        # all constraints from tiers 0..t.
-        valid_up_to_t = torch.ones(x.shape[:-1], device=x.device, dtype=torch.bool)
-        for t, w in enumerate(self.tier_weights):
-            lo_bit, hi_bit = self.bits_per_tier[t]
-            # All bit-planes in this tier's window must pass parity checks.
-            all_planes_ok = torch.ones_like(valid_up_to_t)
-            for b in range(lo_bit, hi_bit + 1):
-                # Extract the b-th bit of each coordinate: 0 or 1.
-                bits = ((x >> b) & 1).long()
-                plane_ok = self._apply_parity_checks(bits, t)
-                all_planes_ok = all_planes_ok & plane_ok
-            valid_up_to_t = valid_up_to_t & all_planes_ok
-            R = R + (valid_up_to_t.to(R.dtype) * float(w))
-
+        tier_ok = torch.ones(x.shape[:-1], device=dev, dtype=torch.bool)
+        offset = 0
+        for n_chk, w in zip(self._tier_check_counts, self.tier_weights):
+            if n_chk > 0:
+                slice_ok = (
+                    prod[..., offset : offset + n_chk] == full_c[offset : offset + n_chk]
+                ).all(-1)
+                tier_ok = tier_ok & slice_ok
+            R = R + tier_ok.to(R.dtype) * w
+            offset += n_chk
         return R
 
 
@@ -1960,57 +2030,135 @@ def _first_k_dims(k: int, ndim: int) -> list[int]:
     return list(range(k))
 
 
+def _gf2_random_fullrank(
+    n_checks: int, n_vars: int, seed: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Generate a full-rank random binary matrix A and target vector c
+    over GF(2).
+
+    Uses a deterministic seed for reproducibility across runs.
+
+    Args:
+        n_checks: Number of independent GF(2) equations (rows of A).
+        n_vars: Number of binary variables (columns of A).
+        seed: Deterministic RNG seed.
+
+    Returns:
+        (A, c) where A is (n_checks, n_vars) int tensor and c is
+        (n_checks,) int tensor, both with values in {0, 1}. A is
+        guaranteed to have full row-rank over GF(2).
+    """
+    assert 0 < n_checks <= n_vars
+    gen = torch.Generator().manual_seed(seed)
+
+    for _ in range(1000):
+        A = torch.randint(0, 2, (n_checks, n_vars), generator=gen, dtype=torch.long)
+        # Verify full row-rank over GF(2) via row echelon reduction
+        if _gf2_rank(A) == n_checks:
+            c = torch.randint(0, 2, (n_checks,), generator=gen, dtype=torch.long)
+            return A, c
+
+    raise RuntimeError(
+        f"Failed to generate full-rank GF(2) matrix "
+        f"({n_checks}x{n_vars}) after 1000 attempts"
+    )
+
+
+def _gf2_rank(A: torch.Tensor) -> int:
+    """Compute the rank of a binary matrix over GF(2)."""
+    A = A.clone().to(dtype=torch.uint8) & 1
+    n_rows, n_cols = A.shape
+    pivot_row = 0
+    for col in range(n_cols):
+        found = None
+        for r in range(pivot_row, n_rows):
+            if A[r, col]:
+                found = r
+                break
+        if found is None:
+            continue
+        if found != pivot_row:
+            A[[pivot_row, found]] = A[[found, pivot_row]]
+        for r in range(pivot_row + 1, n_rows):
+            if A[r, col]:
+                A[r] ^= A[pivot_row]
+        pivot_row += 1
+        if pivot_row == n_rows:
+            break
+    return pivot_row
+
+
+def _preset_seed(name: str) -> int:
+    """Deterministic seed from a preset name."""
+    return int(hashlib.sha256(name.encode()).hexdigest(), 16) % (2**31)
+
+
 def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
     """Return five difficulty presets for BitwiseXORReward.
 
-    The presets target approximate L1 distance bands by selecting the highest
-    constrained bit and number of constrained dimensions. Typical distance scales
-    like m · 2^b, where m is the number of constrained dims and b the highest bit.
+    Difficulty is controlled by the number of constrained dimensions M.
+    More constrained dims means more independent GF(2) checks per bit
+    position, leading to fewer modes.
 
-    Bands (steps from s0):
-      - easy:        ~50-100
-      - medium:      ~250-500
-      - hard:        ~1k-2.5k
-      - challenging: ~2.5k-5k
-      - impossible:  5k+
+    Each preset uses 3 tiers with increasing numbers of GF(2) checks:
+      - Tier 0 (curriculum): few checks, many states pass
+      - Tier 1 (intermediate): moderate checks
+      - Tier 2 (mode): strictest checks, defines the modes
+
+    Target mode counts for ndim=10, height=16:
+      - easy (M=3):        ~69B modes
+      - medium (M=5):      ~4.3B modes
+      - hard (M=8):        ~268M modes
+      - challenging (M=10): ~17M modes
 
     Notes
-    - You may tweak m (dims) and bit windows to fine-tune distances for your D,H.
-    - Tier weights are geometric to encourage reaching higher tiers.
-    - Parity checks default to even parity across constrained dims per bit-plane.
+    - Uses fixed seeds per preset name for reproducibility.
+    - Parity checks are random full-rank GF(2) matrices.
+    - Bit ranges are capped to ceil(log2(height)) - 1.
     """
+    B = max(1, int(math.ceil(math.log2(max(height, 2)))))
+    max_bit = B - 1
+
+    def _make_preset(
+        name: str,
+        M_target: int,
+        checks_per_tier: list[int],
+    ) -> dict:
+        M = min(M_target, ndim)
+        dims = _first_k_dims(M, ndim)
+        seed = _preset_seed(name)
+
+        n_tiers = len(checks_per_tier)
+        # Geometric tier weights
+        tier_weights = [10.0**i for i in range(n_tiers)]
+        # All tiers use the full bit range
+        bits_per_tier = [(0, max_bit)] * n_tiers
+
+        parity_checks: list[dict | None] = []
+        for t in range(n_tiers):
+            n_chk = min(checks_per_tier[t], M - 1)
+            if n_chk <= 0:
+                # Fall back to default even parity
+                parity_checks.append(None)
+            else:
+                tier_seed = seed + t * 1000
+                A, c = _gf2_random_fullrank(n_chk, M, tier_seed)
+                parity_checks.append({"A": A, "c": c})
+
+        return dict(
+            R0=0.0,
+            tier_weights=tier_weights,
+            dims_constrained=dims,
+            bits_per_tier=bits_per_tier,
+            parity_checks=parity_checks,
+        )
 
     presets = {
-        "easy": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0],
-            dims_constrained=_first_k_dims(3, ndim),
-            bits_per_tier=[(0, 4), (0, 5), (0, 5)],
-        ),
-        "medium": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0, 1000.0],
-            dims_constrained=_first_k_dims(4, ndim),
-            bits_per_tier=[(0, 6), (0, 7), (0, 7), (0, 7)],
-        ),
-        "hard": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0, 1000.0],
-            dims_constrained=_first_k_dims(8, ndim),
-            bits_per_tier=[(0, 8), (0, 8), (0, 8), (0, 8)],
-        ),
-        "challenging": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0, 1000.0],
-            dims_constrained=_first_k_dims(6, ndim),
-            bits_per_tier=[(0, 9), (0, 9), (0, 9), (0, 9)],
-        ),
-        "impossible": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0, 1000.0, 10000.0],
-            dims_constrained=_first_k_dims(12, ndim),
-            bits_per_tier=[(0, 9), (0, 10), (0, 10), (0, 10), (0, 10)],
-        ),
+        "easy": _make_preset("easy", 3, [1, 1, 1]),
+        "medium": _make_preset("medium", 5, [1, 2, 2]),
+        "hard": _make_preset("hard", 8, [1, 2, 3]),
+        "challenging": _make_preset("challenging", 10, [1, 2, 4]),
+        "impossible": _make_preset("impossible", 12, [2, 4, 6]),
     }
     return presets
 
