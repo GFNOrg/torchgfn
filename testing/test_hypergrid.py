@@ -94,8 +94,11 @@ def test_multiplicative_coprime_reward_values_small():
         R0=0.0, tier_weights=[1.0], primes=[2, 3], exponent_caps=[1], active_dims=[0, 1]
     )
     env = _make_env("multiplicative_coprime", kwargs, ndim=2, height=16)
-    xs_ok = torch.tensor([[2, 3]], dtype=torch.long)
-    xs_bad = torch.tensor([[4, 3]], dtype=torch.long)  # 4 exceeds cap for prime 2
+    # Note: coordinates are +1 shifted internally, so state [1,2] -> values [2,3].
+    # 2=2^1 (ok, cap=1), 3=3^1 (ok, cap=1) -> passes tier 0.
+    xs_ok = torch.tensor([[1, 2]], dtype=torch.long)
+    # State [3,2] -> values [4,3]. 4=2^2 exceeds cap=1 -> fails tier 0.
+    xs_bad = torch.tensor([[3, 2]], dtype=torch.long)
     r_ok = env.reward(env.States(xs_ok))[0].item()
     r_bad = env.reward(env.States(xs_bad))[0].item()
     assert abs(r_ok - 1.0) < 1e-6

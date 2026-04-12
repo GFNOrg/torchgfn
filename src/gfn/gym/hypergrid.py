@@ -1355,6 +1355,21 @@ class ConditionalHyperGrid(HyperGrid):
 class BitwiseXORReward(GridReward):
     """Tiered, compositional reward based on bitwise XOR/parity constraints.
 
+    Curriculum motivation — rule reuse:
+        This reward tests whether a GFlowNet can learn a global algebraic rule
+        (GF(2) parity) and reuse it across tiers of increasing strictness. Unlike
+        the other compositional rewards, modes are NOT spatially concentrated near
+        the origin — they are distributed non-locally across the grid according to
+        algebraic structure. This is intentional: it probes the model's ability to
+        learn abstract, non-spatial compositionality.
+
+        The curriculum operates through constraint accumulation: tier 0 applies few
+        parity checks (many modes, easy to discover), tier 1 adds more checks
+        (fewer modes, same rule type), etc. A model that learns the parity
+        computation at tier 0 can reuse that same computation to satisfy tier 1+
+        constraints, providing a form of compositional transfer for long-horizon
+        credit assignment.
+
     This class implements the "Bitwise/XOR fractal" environment family: where tiers
     progressively constrain bit-planes across a subset of dimensions via linear parity
     checks over GF(2). It supports easy sharding by high-bit prefixes, and difficulty
@@ -1390,14 +1405,14 @@ class BitwiseXORReward(GridReward):
 
     Comparison with other compositional rewards:
         - MultiplicativeCoprimeReward: number-theoretic (prime factorization);
-          same constraint type per tier (tighter exponent caps), no cross-scale
-          dependency.
+          knowledge composition — learning prime structure enables coprimality
+          and LCM constraints at higher tiers.
         - ConditionalMultiScaleReward: base-B digit decomposition with conditional
-          constraints across scales; each tier's rule is a function of prior tiers,
-          introducing qualitatively different structure at each level.
-        - This class: GF(2) linear algebra on bit-planes; same parity check type
-          per tier, but applied to progressively wider bit windows. Constraints at
-          each bit-plane are independent of other planes.
+          constraints across scales; conditional hierarchy — coarse-scale structure
+          predicts fine-scale constraints.
+        - This class: GF(2) linear algebra on bit-planes; rule reuse — the same
+          parity check type is applied with increasing strictness per tier.
+          Modes are non-local (algebraic, not spatial).
     """
 
     def __init__(self, height: int, ndim: int, **kwargs):
@@ -1496,6 +1511,44 @@ class BitwiseXORReward(GridReward):
         )
         self._B = B
 
+        # --- Degeneracy detection ---
+        if M < 2:
+            logger.warning(
+                "BitwiseXORReward: only %d constrained dim(s). GF(2) parity "
+                "checks require M >= 2 for meaningful tier structure.",
+                M,
+            )
+
+        # Check if all bit ranges collapse to the same range.
+        unique_ranges = set(self.bits_per_tier)
+        if len(unique_ranges) == 1 and len(self.tier_weights) > 1:
+            lo, hi = next(iter(unique_ranges))
+            if hi - lo < 1:
+                logger.warning(
+                    "BitwiseXORReward: all tiers use the same 1-bit range "
+                    "[%d, %d]. Tier structure may be degenerate for height=%d.",
+                    lo,
+                    hi,
+                    height,
+                )
+
+        # Check if cumulative checks saturate (>= M), killing all modes.
+        cumulative = 0
+        for t, n_chk in enumerate(tier_check_counts):
+            cumulative += n_chk
+            if cumulative >= M * (
+                self.bits_per_tier[t][1] - self.bits_per_tier[t][0] + 1
+            ):
+                logger.warning(
+                    "BitwiseXORReward: cumulative checks (%d) at tier %d "
+                    "may saturate M=%d constrained dims, leaving very few "
+                    "or no valid modes.",
+                    cumulative,
+                    t,
+                    M,
+                )
+                break
+
     def _even_parity_mask(self, bits: torch.Tensor) -> torch.Tensor:
         """bits: (..., m) int/bool -> returns (...,) bool for even parity."""
         if bits.dtype != torch.long:
@@ -1570,11 +1623,28 @@ class BitwiseXORReward(GridReward):
 class MultiplicativeCoprimeReward(GridReward):
     """Tiered reward based on prime-support and coprimality/lcm composition.
 
-    Each tier enforces that per-dimension values use only a small shared prime set
-    with bounded exponents, plus optional cross-dimension constraints (pairwise
-    coprime pairs and/or target lcm). Higher tiers tighten exponent caps or add
-    additional global targets. This encourages information sharing to learn the
-    latent prime/exponent structure.
+    Curriculum motivation — knowledge composition:
+        This reward tests whether a GFlowNet can learn number-theoretic structure
+        progressively: first discovering which coordinates factor over allowed
+        primes (tier 0), then learning exponent bounds (tier 1), then cross-
+        dimensional coprimality (tier 2), and finally global LCM targets (tier 3).
+
+        Each tier builds on knowledge from prior tiers: learning prime
+        factorization at tier 0 is prerequisite for reasoning about exponent caps
+        at tier 1, which in turn enables the coprimality reasoning needed at
+        tier 2. This tests compositional transfer where each level requires a
+        qualitatively different type of constraint, not just more of the same.
+
+        Coordinates are shifted by +1 internally (state 0 -> value 1) so that
+        the origin is valid and short trajectories immediately encounter small
+        prime-factorable numbers (2, 3, 4, 5, 6, ...), providing early training
+        signal for long-horizon credit assignment.
+
+    Each tier progressively adds new constraint types:
+        - Tier 0: Prime support — coordinates must factor over allowed primes.
+        - Tier 1+: Exponent caps — prime exponents bounded per tier.
+        - coprime_start_tier+: Coprime pairs — cross-dimensional coupling.
+        - target_lcms: LCM targets — global compositional constraint.
 
     Reward form:
         R(s) = R0 + Σ_t tier_weights[t] · 1[ constraints_0..t all satisfied ]
@@ -1582,28 +1652,35 @@ class MultiplicativeCoprimeReward(GridReward):
     Key kwargs:
         - R0: float, base reward (default 0.0)
         - tier_weights: list[float]
-        - primes: list[int], e.g., [2,3,5,7,11]
+        - primes: list[int], e.g., [2,3,5,7,11]. Primes exceeding height are
+          auto-filtered with a warning.
         - exponent_caps: list[int], same length as tier_weights. Cap for every prime
-          at tier t (uniform cap across primes for simplicity).
+          at tier t (uniform cap across primes for simplicity). Auto-capped to
+          floor(log_p(height)) for each prime p.
         - active_dims: Optional[list[int]]; constraints only apply to these dims
           (default: all dims). Other dims are ignored in constraints.
-        - coprime_pairs: Optional[list[tuple[int,int]]]; indices relative to active_dims.
-        - target_lcms: Optional[list[int | None]]; per-tier target lcm across active dims.
+        - coprime_pairs: Optional[list[tuple[int,int]]]; indices relative to
+          active_dims.
+        - coprime_start_tier: int, first tier at which coprime constraints apply
+          (default: 0, preserving backward compatibility).
+        - target_lcms: Optional[list[int | None | str]]; per-tier target lcm
+          across active dims. Use "auto" to derive from primes and exponent_caps.
 
     Notes:
-    - Values 0 are treated as invalid for prime-support constraints (cannot factorize);
-      value 1 is valid with all-zero exponents.
+    - Coordinates are shifted by +1 internally: state value 0 maps to reward
+      value 1, making the origin (0,...,0) trivially valid.
     - Implementation removes primes up to the current tier cap and checks residue == 1.
       Exponent counts are accumulated to evaluate LCM targets.
 
     Comparison with other compositional rewards:
-        - BitwiseXORReward: GF(2) parity checks on bit-planes; same constraint
-          type per tier (wider bit window), no cross-scale dependency.
+        - BitwiseXORReward: GF(2) parity checks on bit-planes; rule reuse —
+          same parity check type with increasing strictness. Non-local modes.
         - ConditionalMultiScaleReward: base-B digit decomposition with conditional
-          constraints across scales; each tier's rule depends on prior tiers.
-        - This class: prime factorization with bounded exponents and optional
-          coprimality/LCM targets. Same constraint type per tier (tighter caps),
-          but cross-dimension coupling via coprime pairs and LCM targets.
+          constraints across scales; conditional hierarchy — coarse-scale structure
+          predicts fine-scale constraints.
+        - This class: prime factorization with progressive constraint types
+          (support -> caps -> coprimality -> LCM). Knowledge composition —
+          each tier requires understanding the prior tier's structure.
     """
 
     def __init__(self, height: int, ndim: int, **kwargs):
@@ -1613,13 +1690,44 @@ class MultiplicativeCoprimeReward(GridReward):
         assert isinstance(tier_weights, (list, tuple)) and len(tier_weights) > 0
         self.tier_weights: list[float] = [float(w) for w in tier_weights]
 
+        # Max coordinate value after +1 shift is height (state value height-1 + 1).
+        max_val = height
+
         primes = kwargs.get("primes", [2, 3, 5])
         assert isinstance(primes, (list, tuple)) and len(primes) > 0
-        self.primes: list[int] = [int(p) for p in primes]
+        raw_primes = [int(p) for p in primes]
+        # Auto-filter primes that exceed the representable range.
+        self.primes: list[int] = [p for p in raw_primes if p <= max_val]
+        if len(self.primes) < len(raw_primes):
+            dropped = [p for p in raw_primes if p > max_val]
+            logger.warning(
+                "MultiplicativeCoprimeReward: primes %s exceed height=%d "
+                "(max coord value after +1 shift = %d). Dropped.",
+                dropped,
+                height,
+                max_val,
+            )
+        if len(self.primes) == 0:
+            logger.warning(
+                "MultiplicativeCoprimeReward: no usable primes for height=%d. "
+                "All states will pass prime-support checks trivially.",
+                height,
+            )
 
         exponent_caps = kwargs.get("exponent_caps", [2] * len(self.tier_weights))
         assert len(exponent_caps) == len(self.tier_weights)
-        self.exponent_caps: list[int] = [int(c) for c in exponent_caps]
+        # Auto-cap exponents to what's representable: floor(log_p(max_val)).
+        self.exponent_caps: list[int] = []
+        for c in exponent_caps:
+            c_int = int(c)
+            if self.primes:
+                # The tightest limit is the smallest prime's max exponent.
+                max_achievable = min(
+                    int(math.floor(math.log(max_val) / math.log(p))) for p in self.primes
+                )
+                if c_int > max_achievable:
+                    c_int = max_achievable
+            self.exponent_caps.append(c_int)
 
         active_dims = kwargs.get("active_dims", None)
         if active_dims is None:
@@ -1627,10 +1735,27 @@ class MultiplicativeCoprimeReward(GridReward):
         self.active_dims: list[int] = list(map(int, active_dims))
 
         self.coprime_pairs = kwargs.get("coprime_pairs", None)
-        self.target_lcms = kwargs.get("target_lcms", [None] * len(self.tier_weights))
-        assert isinstance(self.target_lcms, (list, tuple)) and len(
-            self.target_lcms
-        ) == len(self.tier_weights)
+        self.coprime_start_tier: int = int(kwargs.get("coprime_start_tier", 0))
+
+        # Resolve target_lcms: support "auto" to derive from primes and caps.
+        raw_lcms = kwargs.get("target_lcms", [None] * len(self.tier_weights))
+        assert isinstance(raw_lcms, (list, tuple)) and len(raw_lcms) == len(
+            self.tier_weights
+        )
+        self.target_lcms: list[int | None] = []
+        for t, lcm_val in enumerate(raw_lcms):
+            if lcm_val == "auto":
+                if self.primes:
+                    auto_lcm = 1
+                    for p in self.primes:
+                        auto_lcm *= p ** self.exponent_caps[t]
+                    self.target_lcms.append(auto_lcm)
+                else:
+                    self.target_lcms.append(None)
+            elif lcm_val is not None:
+                self.target_lcms.append(int(lcm_val))
+            else:
+                self.target_lcms.append(None)
 
     def _factor_exponents_up_to_cap(self, v: torch.Tensor, cap: int):
         """Trial-divide each element by allowed primes, returning residue and exponents.
@@ -1724,13 +1849,17 @@ class MultiplicativeCoprimeReward(GridReward):
         if self.R0 != 0.0:
             R += self.R0
 
-        x = states_tensor.index_select(
-            dim=-1, index=torch.tensor(self.active_dims, device=states_tensor.device)
+        x = (
+            states_tensor.index_select(
+                dim=-1,
+                index=torch.tensor(self.active_dims, device=states_tensor.device),
+            )
+            + 1
         )
-        # Zero values cannot be factored over primes — exclude them upfront.
-        base_valid = (x != 0).all(dim=-1)
+        # After +1 shift, min value is 1 (origin maps to all-ones).
+        # All values are >= 1 and always valid for prime factorization.
 
-        valid_up_to_t = base_valid
+        valid_up_to_t = torch.ones(x.shape[:-1], device=x.device, dtype=torch.bool)
         for t, w in enumerate(self.tier_weights):
             cap = self.exponent_caps[t]
             # Flatten all active-dim values for batch factorization, then reshape.
@@ -1739,14 +1868,18 @@ class MultiplicativeCoprimeReward(GridReward):
             exps = exps.reshape((len(self.primes),) + x.shape)
 
             # residue==1 means the value is fully explained by allowed primes.
-            # x==1 trivially satisfies (zero exponents for all primes).
-            support_ok = ((residue == 1) | (x == 1)).all(dim=-1)
+            support_ok = (residue == 1).all(dim=-1)
 
-            # Coprime check is tier-independent but placed here for uniformity.
-            pairs_ok = self._pairwise_coprime_ok(x)
+            # Coprime pairs only apply at tier >= coprime_start_tier.
+            if t >= self.coprime_start_tier:
+                pairs_ok = self._pairwise_coprime_ok(x)
+            else:
+                pairs_ok = torch.ones(x.shape[:-1], device=x.device, dtype=torch.bool)
+
             lcm_ok = torch.ones_like(pairs_ok)
-            if self.target_lcms[t] is not None:
-                lcm_ok = self._lcm_ok(exps, int(self.target_lcms[t]))
+            lcm_target = self.target_lcms[t]
+            if lcm_target is not None:
+                lcm_ok = self._lcm_ok(exps, lcm_target)
 
             tier_ok = support_ok & pairs_ok & lcm_ok
             valid_up_to_t = valid_up_to_t & tier_ok
@@ -1758,22 +1891,39 @@ class MultiplicativeCoprimeReward(GridReward):
 class ConditionalMultiScaleReward(GridReward):
     """Tiered reward via conditional digit constraints across spatial scales.
 
+    Curriculum motivation — conditional hierarchy:
+        This reward tests whether a GFlowNet can learn hierarchical, conditional
+        structure: each tier's constraint depends on what was learned at prior
+        tiers, creating the strongest form of compositional transfer among the
+        three reward types.
+
+        Digit ordering is coarse-to-fine: tier 0 constrains the most significant
+        digit (coarsest spatial scale), tier 1 constrains the next digit
+        conditioned on the coarse digit, and so on. This creates natural
+        distance-correlated difficulty: states near the origin have small
+        coordinates (high digits are 0, trivially passing coarse filters), while
+        states far from the origin have nonzero high digits that must satisfy the
+        filter. Learning coarse-scale structure first provides early training
+        signal and directly informs which fine-scale configurations are valid,
+        enabling compositional transfer for long-horizon credit assignment.
+
     Each coordinate is decomposed in base B into L = log_B(H) digits. Tier t
-    constrains digit t-1 via a shifted filter that depends on all finer-scale
-    digits, creating a hierarchy where learning lower-scale structure is
-    prerequisite for predicting higher-scale constraints.
+    constrains digit (L-1-t) — the (t+1)-th most significant digit — via a
+    shifted filter that depends on all coarser-scale digits already constrained,
+    creating a hierarchy where learning coarse-scale structure is prerequisite
+    for predicting fine-scale constraints.
 
-    Per-dimension constraint at tier t:
-        (d_{t-1}(i) + sigma_t(i)) mod B < f_t
+    Per-dimension constraint at tier t (0-indexed):
+        (d_{L-1-t}(i) + sigma_t(i)) mod B < f
 
-    where sigma_t(i) = sum_{k=0}^{t-2} a_{t,k} * d_k(i)  mod B  is a linear
-    function of finer-scale digits with seed-derived coefficients a_{t,k}.
+    where sigma_t(i) = sum_{k=0}^{t-1} a_{t,k} * d_{L-1-k}(i) mod B is a
+    linear function of coarser-scale digits with seed-derived coefficients.
 
     Optional cross-dimensional constraint at tier t:
-        sum_i d_{t-1}(i) ≡ 0  (mod m_t)
+        sum_i d_{L-1-t}(i) ≡ 0  (mod m_t)
 
-    Reward form (cumulative — tier t requires all tiers 1..t):
-        R(s) = R0 + sum_t tier_weights[t] * 1[s satisfies tiers 1..t]
+    Reward form (cumulative — tier t requires all tiers 0..t):
+        R(s) = R0 + sum_t tier_weights[t] * 1[s satisfies tiers 0..t]
 
     Mode count (exact closed form):
         Without cross-dim:  modes_T = (prod_{t=1}^T f_t)^d * B^{(L-T)*d}
@@ -1796,13 +1946,14 @@ class ConditionalMultiScaleReward(GridReward):
           (default: all dims).
 
     Comparison with other compositional rewards:
-        - BitwiseXORReward: GF(2) parity checks on bit-planes; each tier widens
-          the bit window but uses the same rule type. No cross-scale dependency.
-        - MultiplicativeCoprimeReward: prime factorization with tightening exponent
-          caps. Same constraint type at every tier.
-        - This class: each tier introduces a qualitatively different constraint
-          whose form depends on what was learned at prior tiers (conditional
-          structure across scales).
+        - BitwiseXORReward: GF(2) parity checks on bit-planes; rule reuse —
+          same parity check type with increasing strictness. Non-local modes.
+        - MultiplicativeCoprimeReward: prime factorization with progressive
+          constraint types; knowledge composition — each tier requires
+          understanding the prior tier's structure.
+        - This class: conditional hierarchy — each tier introduces a constraint
+          whose form depends on what was learned at prior tiers. Coarse-to-fine
+          ordering creates distance-correlated difficulty.
     """
 
     def __init__(self, height: int, ndim: int, **kwargs):
@@ -1839,13 +1990,16 @@ class ConditionalMultiScaleReward(GridReward):
 
         self.seed: int = int(kwargs.get("seed", 42))
 
-        # Generate shift coefficients from seed
-        # a_{t,k} for t=1..T, k=0..t-2; each in {0, ..., B-1}
+        # Generate shift coefficients from seed.
+        # Coarse-to-fine ordering: tier t constrains digit (L-1-t).
+        # shift_coeffs[t] has t entries: a_{t,k} for k=0..t-1, where each
+        # coefficient references digit (L-1-k) — a coarser digit already
+        # constrained by a prior tier.
         rng = torch.Generator().manual_seed(self.seed)
         self.shift_coeffs: list[list[int]] = []
         for t in range(len(self.tier_weights)):
             if t == 0:
-                self.shift_coeffs.append([])  # tier 1 has no prior digits
+                self.shift_coeffs.append([])  # tier 0 has no prior digits
             else:
                 coeffs = torch.randint(0, self.base, (t,), generator=rng).tolist()
                 self.shift_coeffs.append(coeffs)
@@ -1904,31 +2058,35 @@ class ConditionalMultiScaleReward(GridReward):
             index=torch.tensor(self.active_dims, device=states_tensor.device),
         ).long()
 
-        # Extract all needed digits upfront
-        num_tiers = len(self.tier_weights)
-        digits = self._extract_digits(x, num_tiers)
+        # Extract ALL digit levels (coarse-to-fine ordering needs the full set).
+        L = self.num_levels
+        digits = self._extract_digits(x, L)
 
         valid_up_to_t = torch.ones(x.shape[:-1], device=x.device, dtype=torch.bool)
         for t, w in enumerate(self.tier_weights):
-            # Compute shift: sigma_t(i) = sum_{k<t} a_{t,k} * d_k(i)  mod B
+            # Coarse-to-fine: tier t constrains digit (L-1-t).
+            target_digit = digits[L - 1 - t]
+
+            # Shift uses coarser digits already constrained: digits[L-1-k]
+            # for k=0..t-1.
             if t == 0:
                 shift = torch.zeros_like(x)
             else:
                 shift = torch.zeros_like(x)
                 for k, a_tk in enumerate(self.shift_coeffs[t]):
                     if a_tk != 0:
-                        shift = shift + int(a_tk) * digits[k]
+                        shift = shift + int(a_tk) * digits[L - 1 - k]
                 shift = shift % self.base
 
             # Filter: shifted digit must be in [0, filter_width).
-            shifted = (digits[t] + shift) % self.base
+            shifted = (target_digit + shift) % self.base
             per_dim_ok = (shifted < self.filter_width).all(dim=-1)
 
             # Optional cross-dim modular constraint on the digit sum.
             cross_ok = torch.ones_like(per_dim_ok)
             cross_mod = self.cross_dim_mods[t]
             if cross_mod is not None:
-                digit_sum = digits[t].sum(dim=-1)
+                digit_sum = target_digit.sum(dim=-1)
                 cross_ok = (digit_sum % int(cross_mod)) == 0
 
             tier_ok = per_dim_ok & cross_ok
@@ -2125,6 +2283,13 @@ def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
         checks_per_tier: list[int],
     ) -> dict:
         M = min(M_target, ndim)
+        if M < M_target:
+            logger.info(
+                "BitwiseXOR preset '%s': M_target=%d capped to ndim=%d.",
+                name,
+                M_target,
+                ndim,
+            )
         dims = _first_k_dims(M, ndim)
         seed = _preset_seed(name)
 
@@ -2183,18 +2348,24 @@ def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
 def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
     """Return five difficulty presets for MultiplicativeCoprimeReward.
 
-    Bands (steps from s0):
-      - easy:        ~50-100 (small primes, small exponents, few active dims)
-      - medium:      ~250-500 (adds one prime, caps=2, more dims, light coupling)
-      - hard:        ~1k-2.5k (primes up to 11, caps=3, more dims, LCM target)
-      - challenging: ~2.5k-5k (primes up to 13, caps=3-4, 10-12 dims, tighter)
-      - impossible:  5k+ (primes up to 29, caps=4, 12-16 dims, multiple targets)
+    Each preset uses progressive tier structure where each tier adds a new
+    constraint type:
+      - Tier 0: Prime support only (coords must factor over allowed primes)
+      - Tier 1: + Exponent caps (tighten factorization)
+      - coprime_start_tier+: + Coprime pairs (cross-dim coupling)
+      - Final tier: + LCM target (global compositional constraint)
+
+    Coordinates are shifted +1 internally (origin -> all-ones), so short
+    trajectories immediately encounter small prime-factorable numbers.
+
+    Primes exceeding height and exponent caps exceeding log_p(height) are
+    auto-filtered/capped in the reward constructor.
 
     Notes
-    - Distances are approximate; increase primes and exponent caps to push further.
-    - `active_dims` indexes are relative to state dims; we pick first k for simplicity.
+    - `active_dims` indexes are relative to state dims; we pick first k.
     - `coprime_pairs` are pairs within `active_dims` index space.
     - Tier weights are geometric.
+    - Use target_lcms="auto" to derive from primes and exponent_caps.
     """
 
     def chain_pairs(k: int) -> list[tuple[int, int]]:
@@ -2202,6 +2373,7 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
         return [(i, i + 1) for i in range(max(0, k - 1))]
 
     presets = {
+        # 3 tiers: support -> caps -> caps (coprime at tier 2)
         "easy": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0],
@@ -2209,8 +2381,10 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             exponent_caps=[2, 2, 2],
             active_dims=_first_k_dims(3, ndim),
             coprime_pairs=chain_pairs(3),
+            coprime_start_tier=2,
             target_lcms=[None, None, None],
         ),
+        # 4 tiers: support -> caps -> coprime -> LCM(auto)
         "medium": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
@@ -2218,8 +2392,10 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             exponent_caps=[2, 2, 2, 2],
             active_dims=_first_k_dims(5, ndim),
             coprime_pairs=chain_pairs(5),
-            target_lcms=[None, None, None, None],
+            coprime_start_tier=2,
+            target_lcms=[None, None, None, "auto"],
         ),
+        # 4 tiers: support -> caps -> coprime -> LCM(auto)
         "hard": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
@@ -2227,13 +2403,10 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             exponent_caps=[3, 3, 3, 3],
             active_dims=_first_k_dims(8, ndim),
             coprime_pairs=chain_pairs(8),
-            target_lcms=[
-                None,
-                None,
-                2**3 * 3**2 * 5 * 7 * 11,
-                2**3 * 3**2 * 5 * 7 * 11,
-            ],  # = 9240
+            coprime_start_tier=2,
+            target_lcms=[None, None, None, "auto"],
         ),
+        # 4 tiers: support -> caps -> coprime -> LCM(auto)
         "challenging": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0],
@@ -2241,8 +2414,10 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             exponent_caps=[3, 3, 4, 4],
             active_dims=_first_k_dims(10, ndim),
             coprime_pairs=chain_pairs(10),
-            target_lcms=[None, None, None, 2**3 * 3**2 * 5**2 * 13],  # = 5850
+            coprime_start_tier=2,
+            target_lcms=[None, None, None, "auto"],
         ),
+        # 5 tiers: support -> caps -> coprime -> LCM(auto) -> LCM(auto)
         "impossible": dict(
             R0=0.0,
             tier_weights=[1.0, 10.0, 100.0, 1000.0, 10000.0],
@@ -2250,7 +2425,8 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             exponent_caps=[4, 4, 4, 4, 4],
             active_dims=_first_k_dims(12, ndim),
             coprime_pairs=chain_pairs(12),
-            target_lcms=[None, None, None, None, 2**4 * 3**3 * 5**2 * 7 * 11],
+            coprime_start_tier=2,
+            target_lcms=[None, None, None, None, "auto"],
         ),
     }
     return presets
@@ -2270,57 +2446,102 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
 
     with f = filter_width = 2 (i.e. B//2), so each tier halves modes per coord.
 
+    Digit ordering is coarse-to-fine: tier 0 constrains the most significant
+    digit. Near the origin (small coordinates), high digits are 0 and trivially
+    pass the filter. Deeper tiers constrain progressively finer digits,
+    creating distance-correlated difficulty.
+
     Presets (assuming H=256, i.e. L=4 digit levels):
       - easy:        2 tiers, 3 active dims -> ~2M modes at tier 2
       - medium:      3 tiers, 4 active dims -> ~1M modes at tier 3
       - hard:        3 tiers, 6 active dims, cross-dim -> ~260K modes at tier 3
       - challenging: 4 tiers, 8 active dims, cross-dim -> ~65K modes at tier 4
       - impossible:  4 tiers, 12 active dims, cross-dim -> ~4K modes at tier 4
+
+    If height provides fewer digit levels than a preset requires, the preset's
+    tier_weights and cross_dim_mods are auto-truncated with a warning.
     """
+    base = 4
+    # Compute available digit levels for this height.
+    num_levels = 0
+    h = height
+    while h > 1 and h % base == 0:
+        h //= base
+        num_levels += 1
+
+    def _cap_tiers(preset: dict) -> dict:
+        """Truncate tier_weights and cross_dim_mods if they exceed num_levels."""
+        tw = preset["tier_weights"]
+        if len(tw) > num_levels:
+            logger.warning(
+                "ConditionalMultiScale preset has %d tiers but height=%d "
+                "(base=%d) only provides %d digit levels. "
+                "Truncating to %d tiers.",
+                len(tw),
+                height,
+                base,
+                num_levels,
+                num_levels,
+            )
+            preset["tier_weights"] = tw[:num_levels]
+            cdm = preset.get("cross_dim_mods")
+            if cdm is not None:
+                preset["cross_dim_mods"] = cdm[:num_levels]
+        return preset
 
     presets = {
-        "easy": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0],
-            base=4,
-            filter_width=2,
-            seed=42,
-            active_dims=_first_k_dims(3, ndim),
+        "easy": _cap_tiers(
+            dict(
+                R0=0.0,
+                tier_weights=[1.0, 10.0],
+                base=base,
+                filter_width=2,
+                seed=42,
+                active_dims=_first_k_dims(3, ndim),
+            )
         ),
-        "medium": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0],
-            base=4,
-            filter_width=2,
-            seed=42,
-            active_dims=_first_k_dims(4, ndim),
+        "medium": _cap_tiers(
+            dict(
+                R0=0.0,
+                tier_weights=[1.0, 10.0, 100.0],
+                base=base,
+                filter_width=2,
+                seed=42,
+                active_dims=_first_k_dims(4, ndim),
+            )
         ),
-        "hard": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0],
-            base=4,
-            filter_width=2,
-            seed=42,
-            active_dims=_first_k_dims(6, ndim),
-            cross_dim_mods=[None, 2, 2],
+        "hard": _cap_tiers(
+            dict(
+                R0=0.0,
+                tier_weights=[1.0, 10.0, 100.0],
+                base=base,
+                filter_width=2,
+                seed=42,
+                active_dims=_first_k_dims(6, ndim),
+                cross_dim_mods=[None, 2, 2],
+            )
         ),
-        "challenging": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0, 1000.0],
-            base=4,
-            filter_width=2,
-            seed=42,
-            active_dims=_first_k_dims(8, ndim),
-            cross_dim_mods=[None, None, 2, 2],
+        "challenging": _cap_tiers(
+            dict(
+                R0=0.0,
+                tier_weights=[1.0, 10.0, 100.0, 1000.0],
+                base=base,
+                filter_width=2,
+                seed=42,
+                active_dims=_first_k_dims(8, ndim),
+                cross_dim_mods=[None, None, 2, 2],
+            )
         ),
-        "impossible": dict(
-            R0=0.0,
-            tier_weights=[1.0, 10.0, 100.0, 1000.0],
-            base=4,
-            filter_width=2,
-            seed=42,
-            active_dims=_first_k_dims(12, ndim),
-            cross_dim_mods=[None, 2, 2, 2],
+        "impossible": _cap_tiers(
+            dict(
+                R0=0.0,
+                tier_weights=[1.0, 10.0, 100.0, 1000.0],
+                base=base,
+                filter_width=2,
+                seed=42,
+                active_dims=_first_k_dims(12, ndim),
+                cross_dim_mods=[None, 2, 2, 2],
+            )
         ),
     }
     return presets

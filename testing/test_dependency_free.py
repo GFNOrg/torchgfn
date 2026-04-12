@@ -149,8 +149,8 @@ class TestMultiplicativeCoprimeReward:
         # Should get full reward since 1 trivially satisfies coprime constraints
         assert r.item() > 0
 
-    def test_zero_state_gets_base(self):
-        """State with 0 should fail prime-support (can't factorize 0)."""
+    def test_zero_state_is_valid_after_shift(self):
+        """State [0,0] maps to values [1,1] after +1 shift, trivially valid."""
         env = HyperGrid(
             ndim=2,
             height=64,
@@ -159,8 +159,8 @@ class TestMultiplicativeCoprimeReward:
         )
         zero = torch.tensor([[0, 0]], dtype=torch.long)
         r = env.reward_fn(zero)
-        # 0 is invalid for prime-support, so only base R0
-        assert r.item() < 1.0
+        # After +1 shift, [0,0] -> [1,1]; 1 trivially satisfies all tiers.
+        assert r.item() > 0
 
     def test_batch(self):
         env = HyperGrid(
