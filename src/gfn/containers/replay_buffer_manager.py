@@ -137,6 +137,8 @@ class ReplayBufferManager:
         # listens on tag=0 for all incoming messages).  The *response* comes
         # back on METADATA_TAG so it cannot collide with async score replies.
         send(msg_bytes, dst_rank=manager_rank, backend=backend)
-        _src_rank, metadata_tensor = recv(manager_rank, backend=backend, tag=METADATA_TAG)
+        _src_rank, metadata_tensor = recv(
+            manager_rank, backend=backend, tag=METADATA_TAG
+        )
         metadata = Message.deserialize(metadata_tensor)
         return metadata.message_data
