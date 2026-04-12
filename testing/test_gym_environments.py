@@ -486,7 +486,7 @@ class TestBitwiseXORPresetFactory:
                     reward_fn_kwargs=kwargs,
                     validate_modes=False,
                 )
-                for lo, hi in env.reward_fn.bits_per_tier:
+                for _lo, hi in env.reward_fn.bits_per_tier:
                     assert hi <= B - 1, (
                         f"Preset {name} at height={height}: "
                         f"hi_bit={hi} exceeds B-1={B - 1}"
@@ -553,7 +553,7 @@ class TestBitwiseXORPresetFactory:
         R_old = torch.full((100,), 0.1, dtype=torch.get_default_dtype())
         valid = torch.ones(100, dtype=torch.bool)
 
-        for t, (w, (lo, hi)) in enumerate(zip(rf.tier_weights, rf.bits_per_tier)):
+        for _t, (w, (lo, hi)) in enumerate(zip(rf.tier_weights, rf.bits_per_tier)):
             all_ok = torch.ones(100, dtype=torch.bool)
             for b in range(lo, hi + 1):
                 bits = ((x >> b) & 1).long()
