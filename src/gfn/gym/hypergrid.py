@@ -2135,15 +2135,32 @@ def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
         bits_per_tier = [(0, max_bit)] * n_tiers
 
         parity_checks: list[dict | None] = []
+        # All tiers' checks apply at the same bit positions, so the combined
+        # GF(2) system must be consistent.  A None entry defaults to 1 even-
+        # parity check inside BitwiseXORReward, so we must count it.  We cap
+        # the cumulative checks (including defaults) to M - 1 so that at
+        # least 2 solutions survive per bit position.
+        cumulative_checks = 0
         for t in range(n_tiers):
+            budget = max(0, M - 1 - cumulative_checks)
             n_chk = min(checks_per_tier[t], M - 1)
-            if n_chk <= 0:
-                # Fall back to default even parity
+            if budget <= 0:
+                # No room left — skip this tier entirely (no constraint).
+                # Use an explicit zero-row parity check so we don't fall
+                # back to the default even-parity (which costs 1 check).
+                A_empty = torch.zeros(0, M, dtype=torch.long)
+                c_empty = torch.zeros(0, dtype=torch.long)
+                parity_checks.append({"A": A_empty, "c": c_empty})
+            elif n_chk <= 0:
+                # Fall back to default even parity (1 check).
                 parity_checks.append(None)
+                cumulative_checks += 1
             else:
+                n_chk = min(n_chk, budget)
                 tier_seed = seed + t * 1000
                 A, c = _gf2_random_fullrank(n_chk, M, tier_seed)
                 parity_checks.append({"A": A, "c": c})
+                cumulative_checks += n_chk
 
         return dict(
             R0=0.0,
