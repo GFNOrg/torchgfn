@@ -3,7 +3,7 @@
 import itertools
 import logging
 import multiprocessing
-import platform
+import os
 import warnings
 from abc import ABC, abstractmethod
 from decimal import Decimal
@@ -21,15 +21,65 @@ from gfn.states import DiscreteStates
 
 logger = logging.getLogger(__name__)
 
-# Only set the multiprocessing start method when not already configured
-# (e.g. by Jupyter or another framework). force=True can crash notebook kernels.
+# Use ``spawn`` everywhere.  Historically this module set the start method to
+# ``fork`` on POSIX so that ``HyperGrid._worker`` (a bound method) could be
+# sent to a multiprocessing.Pool without pickling — fork inherits the parent
+# via memory copy, sidestepping the fact that ``HyperGridStates`` is a local
+# class and therefore unpicklable.
+#
+# Fork has three serious problems in modern usage:
+#   1. **MPI:** OpenMPI and Intel MPI both forbid ``fork()`` after MPI_Init.
+#      Fork inside an MPI rank duplicates libfabric/UCX provider state and
+#      causes silent corruption, hangs, or crashes.
+#   2. **CUDA:** CUDA contexts cannot be forked.  Any fork inside a process
+#      that has touched CUDA poisons the child.
+#   3. **Threads:** POSIX only allows async-signal-safe operations between
+#      ``fork()`` and ``exec()`` in a multi-threaded program.  Fork while
+#      another thread holds an allocator lock can deadlock the child.
+#
+# We now require all multiprocessing entry points in this module to be
+# picklable (``_hypergrid_worker`` is a module-level function, not a bound
+# method) and we use spawn unconditionally.
 try:
-    if platform.system() == "Windows":
-        multiprocessing.set_start_method("spawn")
-    else:
-        multiprocessing.set_start_method("fork")
+    multiprocessing.set_start_method("spawn")
 except RuntimeError:
-    pass  # Already set — don't override.
+    pass  # Already set — don't override (e.g. Jupyter, pytest-xdist).
+
+# Cap on the multiprocessing.Pool size used by ``_generate_combinations_in_batches``.
+# Without a cap, ``Pool()`` defaults to ``os.cpu_count()`` workers — on a 64-core
+# node hosting many co-located MPI ranks, that becomes ``ranks * 64`` worker
+# processes spawned simultaneously, which can wedge the kernel scheduler.
+_MAX_POOL_WORKERS = 8
+
+
+def _hypergrid_worker(task):
+    """Module-level worker for ``HyperGrid._generate_combinations_in_batches``.
+
+    Returns the requested slice of the Cartesian product as a concrete
+    ``list``.  Lives at module level (rather than as a bound method) so it
+    can be pickled to a spawned ``multiprocessing.Pool`` worker — bound
+    methods of ``HyperGrid`` are not picklable because the env's States
+    subclass is created locally inside ``make_states_class``.
+
+    Args:
+        task: ``(values, ndim, start_idx, end_idx)`` where ``values`` is the
+            list of coordinate values, ``ndim`` is the number of dimensions,
+            and ``[start_idx, end_idx)`` is the index range within the full
+            Cartesian product.
+
+    Returns:
+        A list of length ``end_idx - start_idx`` containing tuples of length
+        ``ndim``.  Returning a concrete list (rather than an
+        ``itertools.islice``) keeps the result picklable across workers and
+        future-proofs against the Python 3.14 removal of itertools pickle
+        support.
+    """
+    values, ndim, start_idx, end_idx = task
+    return list(
+        itertools.islice(
+            itertools.product(values, repeat=ndim), start_idx, end_idx
+        )
+    )
 
 
 def lcm(a, b):
@@ -926,19 +976,6 @@ class HyperGrid(DiscreteEnv):
         """Returns all terminating states of the environment."""
         return self.all_states
 
-    def _worker(self, task: tuple) -> itertools.islice:
-        """Return a slice of the Cartesian product for one batch.
-
-        Args:
-            task: (values, ndim, start_idx, end_idx) where values is the list
-                  of coordinate values, ndim is the number of dimensions, and
-                  [start_idx, end_idx) is the range within the full product.
-        """
-        values, ndim, start_idx, end_idx = task
-        return itertools.islice(
-            itertools.product(values, repeat=ndim), start_idx, end_idx
-        )
-
     def _generate_combinations_in_batches(
         self, ndim: int, max_val: int, batch_size: int
     ):
@@ -947,13 +984,22 @@ class HyperGrid(DiscreteEnv):
         Uses multiprocessing to avoid materializing the full product
         (size ``(max_val+1)^ndim``) in memory.
 
+        Workers are created via the spawn start method and execute the
+        module-level :func:`_hypergrid_worker` function so the call is safe
+        inside MPI ranks and CUDA contexts (see the start-method comment near
+        the top of this file).  Pool size is capped at ``MAX_POOL_WORKERS``
+        because larger pools just multiply per-rank fork/spawn overhead
+        without shrinking the per-task work — and a 64-core node hosting many
+        co-located MPI ranks can otherwise blow up to thousands of worker
+        processes simultaneously.
+
         Args:
             ndim: Number of dimensions (tuple length).
             max_val: Maximum coordinate value (inclusive).
             batch_size: Number of tuples per batch.
 
         Yields:
-            An iterator of tuples for each batch.
+            A list of tuples for each batch.
         """
         values = list(range(max_val + 1))
         total_combinations = (max_val + 1) ** ndim
@@ -962,8 +1008,9 @@ class HyperGrid(DiscreteEnv):
             for i in range(0, total_combinations, batch_size)
         ]
 
-        with multiprocessing.Pool() as pool:
-            for result in pool.imap(self._worker, tasks):
+        n_workers = min(_MAX_POOL_WORKERS, max(1, (os.cpu_count() or 1)))
+        with multiprocessing.Pool(processes=n_workers) as pool:
+            for result in pool.imap(_hypergrid_worker, tasks):
                 yield result
 
 

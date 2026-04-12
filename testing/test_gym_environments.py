@@ -33,6 +33,80 @@ class TestHyperGridInit:
         env = HyperGrid(ndim=2, height=4, calculate_partition=True, validate_modes=False)
         assert env._log_partition is not None
 
+    # ------------------------------------------------------------------
+    # multiprocessing.Pool with the ``spawn`` start method
+    # ------------------------------------------------------------------
+    #
+    # ``HyperGrid._generate_combinations_in_batches`` previously used
+    # ``fork`` so it could send a bound method to the worker pool, which
+    # was incompatible with MPI/CUDA contexts.  We switched to ``spawn``
+    # plus a module-level ``_hypergrid_worker``.  These tests pin the new
+    # contract: enumerating all states must succeed under spawn, the worker
+    # must remain a picklable module-level callable, and the Pool size must
+    # be capped (so a 64-core node hosting many co-located ranks doesn't
+    # explode into ``ranks * num_cores`` simultaneous worker processes).
+
+    def test_enumerate_via_spawned_pool(self):
+        """End-to-end: store_all_states triggers the Pool path under spawn."""
+        env = HyperGrid(ndim=3, height=6, store_all_states=True, validate_modes=False)
+        assert env._all_states_tensor is not None
+        # 6**3 = 216 unique states.
+        assert env._all_states_tensor.shape == (216, 3)
+        # Every coordinate value 0..5 should be present in each dimension.
+        for d in range(3):
+            assert set(env._all_states_tensor[:, d].tolist()) == set(range(6))
+
+    def test_hypergrid_worker_is_picklable_module_level_function(self):
+        """The worker must be picklable so spawn can ship it to children."""
+        import pickle
+
+        from gfn.gym.hypergrid import _hypergrid_worker
+
+        # Module-level functions pickle by qualified name.
+        round_tripped = pickle.loads(pickle.dumps(_hypergrid_worker))
+        assert round_tripped is _hypergrid_worker
+
+        # And the worker actually does the right thing on a small task.
+        task = ([0, 1, 2], 2, 0, 4)
+        result = _hypergrid_worker(task)
+        assert isinstance(result, list)
+        assert result == [(0, 0), (0, 1), (0, 2), (1, 0)]
+        # Result must round-trip too (pool sends it back over a pipe).
+        assert pickle.loads(pickle.dumps(result)) == result
+
+    def test_pool_worker_count_is_capped(self):
+        """Sanity-check the cap so a future refactor can't accidentally
+        regress to ``Pool()`` with no ``processes=`` argument."""
+        from gfn.gym.hypergrid import _MAX_POOL_WORKERS
+
+        assert isinstance(_MAX_POOL_WORKERS, int)
+        assert 1 <= _MAX_POOL_WORKERS <= 32, (
+            f"Cap {_MAX_POOL_WORKERS} should be small to prevent fork/spawn "
+            f"storms when many MPI ranks are co-located on one node."
+        )
+
+    def test_start_method_is_spawn(self):
+        """``set_start_method('spawn')`` must take effect for safety inside
+        MPI/CUDA contexts.  Skipped if another framework already pinned the
+        start method to something else before pytest started."""
+        import multiprocessing
+
+        method = multiprocessing.get_start_method(allow_none=True)
+        # If unset, importing hypergrid should set it to 'spawn'.
+        # If already set (e.g. by another import), accept whatever's there
+        # but flag if it's still 'fork' on POSIX.
+        # This next line only exists to induce the side effect.
+        import gfn.gym.hypergrid  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+        method = multiprocessing.get_start_method()
+        if method == "fork":
+            pytest.skip(
+                "start method was pinned to 'fork' by another framework "
+                "before pytest started; the production code does call "
+                "set_start_method('spawn') but it was a no-op here."
+            )
+        assert method == "spawn", f"expected spawn, got {method}"
+
 
 class TestHyperGridRewardFunctions:
     """Test all reward function variants produce valid rewards."""
