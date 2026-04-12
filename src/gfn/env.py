@@ -783,7 +783,9 @@ class DiscreteEnv(Env, ABC):
         Raises:
             NotImplementedError: If the environment lacks
                 ``get_terminating_states_indices`` or ``n_terminating_states``.
-            ValueError: If *states* is empty.
+            ValueError: If *states* is empty, or if the environment's state
+                space is too large to histogram (``get_terminating_states_indices``
+                returned something other than a ``torch.Tensor``).
         """
         indices = self.get_terminating_states_indices(states)
         n_bins = self.n_terminating_states
@@ -791,16 +793,19 @@ class DiscreteEnv(Env, ABC):
         # Histogram on CPU to avoid allocating a potentially large (n_bins)
         # tensor on GPU just to immediately .cpu() the result.
         if not isinstance(indices, torch.Tensor):
-            # Bigint fallback path (numpy object array of Python ints).
-            # ``get_terminating_state_dist`` builds a length-``n_bins`` histogram,
-            # which is fundamentally infeasible for grids whose canonical index
-            # space exceeds int64.  Fail loudly with a useful message.
-            raise NotImplementedError(
-                f"get_terminating_state_dist requires int64 indices, but "
-                f"{type(self).__name__}.get_terminating_states_indices returned "
-                f"a {type(indices).__name__} (the canonical index space exceeds "
-                f"int64).  Histogram-based distributions are not supported for "
-                f"this configuration; use sample-based estimators instead."
+            # The environment signalled that its canonical index space is too
+            # large to represent as a dense int64 tensor (e.g. HyperGrid's
+            # numpy-object bigint fallback).  A length-``n_bins`` histogram is
+            # fundamentally infeasible in that regime — ``n_bins`` itself does
+            # not fit in machine integers — so we cannot build an empirical
+            # distribution.  Raise ``ValueError`` (not ``NotImplementedError``)
+            # so callers like ``Env.validate()`` do not silently swallow this
+            # and replace it with a generic "environment doesn't implement
+            # get_terminating_states_indices" message.
+            raise ValueError(
+                "Cannot compute an empirical terminating-state distribution: "
+                "this environment's state space is too large to histogram. "
+                "Use sample-based estimators instead."
             )
         flat_indices = indices.reshape(-1).long().cpu()
         n_samples = flat_indices.shape[0]
