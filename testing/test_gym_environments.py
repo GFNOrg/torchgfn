@@ -48,9 +48,7 @@ class TestHyperGridInit:
 
     def test_enumerate_via_spawned_pool(self):
         """End-to-end: store_all_states triggers the Pool path under spawn."""
-        env = HyperGrid(
-            ndim=3, height=6, store_all_states=True, validate_modes=False
-        )
+        env = HyperGrid(ndim=3, height=6, store_all_states=True, validate_modes=False)
         assert env._all_states_tensor is not None
         # 6**3 = 216 unique states.
         assert env._all_states_tensor.shape == (216, 3)
@@ -97,7 +95,9 @@ class TestHyperGridInit:
         # If unset, importing hypergrid should set it to 'spawn'.
         # If already set (e.g. by another import), accept whatever's there
         # but flag if it's still 'fork' on POSIX.
-        import gfn.gym.hypergrid  # noqa: F401  (force the side-effect)
+        # This next line only exists to induce the side effect.
+        import gfn.gym.hypergrid  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
         method = multiprocessing.get_start_method()
         if method == "fork":
             pytest.skip(
