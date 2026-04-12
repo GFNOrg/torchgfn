@@ -1,10 +1,11 @@
 import warnings
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 if TYPE_CHECKING:
     from gfn.gflownet import GFlowNet
 
+import numpy as np
 import torch
 from torch_geometric.data import Data as GeometricData
 
@@ -782,13 +783,30 @@ class DiscreteEnv(Env, ABC):
         Raises:
             NotImplementedError: If the environment lacks
                 ``get_terminating_states_indices`` or ``n_terminating_states``.
-            ValueError: If *states* is empty.
+            ValueError: If *states* is empty, or if the environment's state
+                space is too large to histogram (``get_terminating_states_indices``
+                returned something other than a ``torch.Tensor``).
         """
         indices = self.get_terminating_states_indices(states)
         n_bins = self.n_terminating_states
 
         # Histogram on CPU to avoid allocating a potentially large (n_bins)
         # tensor on GPU just to immediately .cpu() the result.
+        if not isinstance(indices, torch.Tensor):
+            # The environment signalled that its canonical index space is too
+            # large to represent as a dense int64 tensor (e.g. HyperGrid's
+            # numpy-object bigint fallback).  A length-``n_bins`` histogram is
+            # fundamentally infeasible in that regime — ``n_bins`` itself does
+            # not fit in machine integers — so we cannot build an empirical
+            # distribution.  Raise ``ValueError`` (not ``NotImplementedError``)
+            # so callers like ``Env.validate()`` do not silently swallow this
+            # and replace it with a generic "environment doesn't implement
+            # get_terminating_states_indices" message.
+            raise ValueError(
+                "Cannot compute an empirical terminating-state distribution: "
+                "this environment's state space is too large to histogram. "
+                "Use sample-based estimators instead."
+            )
         flat_indices = indices.reshape(-1).long().cpu()
         n_samples = flat_indices.shape[0]
 
@@ -993,29 +1011,43 @@ class DiscreteEnv(Env, ABC):
         if learned_logZ is not None and true_logZ is not None:
             validation_info["logZ_diff"] = abs(learned_logZ - true_logZ)
 
-    def get_states_indices(self, states: DiscreteStates) -> torch.Tensor:
+    def get_states_indices(
+        self, states: DiscreteStates
+    ) -> Union[torch.Tensor, np.ndarray]:
         """Optional method to return the indices of the states in the environment.
+
+        Most implementations return a ``torch.Tensor`` of shape ``(*batch_shape,)``
+        with dtype ``torch.int64``.  Implementations whose canonical index space
+        exceeds int64 (e.g. :class:`gfn.gym.HyperGrid` with ``height ** ndim > 2 ** 63``)
+        may instead return a ``numpy.ndarray`` of dtype ``object`` containing
+        arbitrary-precision Python ints — in that regime an int64 tensor would
+        silently overflow and produce hash collisions between distinct states.
 
         Args:
             states: The batch of states.
 
         Returns:
-            Tensor of shape (*batch_shape) containing the indices of the states.
+            Tensor or numpy object array of shape ``(*batch_shape,)`` containing
+            the canonical indices of the states.
         """
         raise NotImplementedError(
             "The environment does not support enumeration of states"
         )
 
-    def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
+    def get_terminating_states_indices(
+        self, states: DiscreteStates
+    ) -> Union[torch.Tensor, np.ndarray]:
         """Optional method to return the indices of the terminating states in the
             environment.
+
+        See :meth:`get_states_indices` for the return-type contract.
 
         Args:
             states: The batch of states.
 
         Returns:
-            Tensor of shape (*batch_shape) containing the indices of the terminating
-            states.
+            Tensor or numpy object array of shape ``(*batch_shape,)`` containing
+            the canonical indices of the terminating states.
         """
         raise NotImplementedError(
             "The environment does not support enumeration of states"

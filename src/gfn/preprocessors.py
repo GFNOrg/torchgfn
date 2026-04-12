@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Callable, Union
 
+import numpy as np
 import torch
 from einops import rearrange
 from torch.nn.functional import one_hot
@@ -8,6 +9,16 @@ from torch.nn.functional import one_hot
 from gfn.states import DiscreteStates, GraphStates, States
 from gfn.utils.common import is_int_dtype
 from gfn.utils.graphs import GeometricBatch
+
+# ``Env.get_states_indices`` is declared as returning ``torch.Tensor | np.ndarray``
+# because :class:`gfn.gym.HyperGrid` falls back to a numpy object array of
+# arbitrary-precision Python ints when the canonical index space exceeds 62
+# bits.  The preprocessors here only support the tensor path — a grid big
+# enough to trigger the bigint fallback is too large to one-hot encode or feed
+# through ``EnumPreprocessor`` anyway — but we accept the wider callable type
+# so :class:`gfn.env.Env` methods remain assignable without casts at the call
+# site, and we assert the tensor path at runtime inside ``preprocess``.
+GetStatesIndicesFn = Callable[[DiscreteStates], Union[torch.Tensor, np.ndarray]]
 
 
 class Preprocessor(ABC):
@@ -115,7 +126,7 @@ class EnumPreprocessor(Preprocessor):
 
     def __init__(
         self,
-        get_states_indices: Callable[[DiscreteStates], torch.Tensor],
+        get_states_indices: GetStatesIndicesFn,
     ) -> None:
         """Initializes an EnumPreprocessor.
 
@@ -136,7 +147,13 @@ class EnumPreprocessor(Preprocessor):
             A tensor of shape (*batch_shape, 1) containing the unique indices of the
             states.
         """
-        return self.get_states_indices(states).long().unsqueeze(-1)
+        indices = self.get_states_indices(states)
+        assert isinstance(indices, torch.Tensor), (
+            "EnumPreprocessor requires get_states_indices to return a torch.Tensor; "
+            "got a numpy object array (the HyperGrid bigint fallback). Grids that "
+            "trigger that fallback are too large to enumerate with an int64 index."
+        )
+        return indices.long().unsqueeze(-1)
 
 
 class OneHotPreprocessor(Preprocessor):
@@ -154,7 +171,7 @@ class OneHotPreprocessor(Preprocessor):
     def __init__(
         self,
         n_states: int,
-        get_states_indices: Callable[[DiscreteStates], torch.Tensor],
+        get_states_indices: GetStatesIndicesFn,
     ) -> None:
         """Initializes a OneHotPreprocessor.
 
@@ -177,6 +194,12 @@ class OneHotPreprocessor(Preprocessor):
             A tensor of shape (*batch_shape, n_states) containing one-hot encoded states.
         """
         state_indices = self.get_states_indices(states)
+        assert isinstance(state_indices, torch.Tensor), (
+            "OneHotPreprocessor requires get_states_indices to return a "
+            "torch.Tensor; got a numpy object array (the HyperGrid bigint "
+            "fallback). Grids that trigger that fallback are too large to "
+            "one-hot encode."
+        )
 
         return one_hot(state_indices, self.output_dim).to(torch.get_default_dtype())
 

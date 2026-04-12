@@ -10,8 +10,9 @@ from decimal import Decimal
 from functools import reduce
 from math import gcd, log, pi, sqrt
 from time import time
-from typing import List, Literal, Tuple
+from typing import List, Literal, Tuple, Union
 
+import numpy as np
 import torch
 
 from gfn.actions import Actions
@@ -488,6 +489,12 @@ class HyperGrid(DiscreteEnv):
         if not mask.any():
             return set()
         indices = self.get_states_indices(states)
+        # ``get_states_indices`` returns either a torch.Tensor (small grids
+        # whose indices fit in int64, i.e. height**ndim <= 2**63) or a numpy
+        # object array of Python ints (larger grids where height**ndim > 2**63).
+        # Handle both so the mode tracker stays correct in either regime.
+        if isinstance(indices, np.ndarray):
+            return set(indices[mask.cpu().numpy()].tolist())
         return set(indices[mask].tolist())
 
     @property
@@ -522,19 +529,63 @@ class HyperGrid(DiscreteEnv):
         """
         return self.n_mode_states
 
-    def get_states_indices(self, states: DiscreteStates | torch.Tensor) -> torch.Tensor:
-        """Get the indices of the states in the canonical ordering.
+    def get_states_indices(
+        self, states: Union[DiscreteStates, torch.Tensor]
+    ) -> Union[torch.Tensor, np.ndarray]:
+        """Get the canonical ordering indices for a batch of states.
+
+        Returns one canonical index per state computed from the base-``height``
+        encoding ``sum(s[j] * height^(ndim-1-j))``.  The maximum index is
+        ``height^ndim - 1``.
+
+        - **Safe regime** (``height ** ndim <= 2 ** 63``): the index fits
+          in signed int64 and we return a ``torch.Tensor`` of shape
+          ``batch_shape`` with dtype ``torch.int64`` (the historical behaviour).
+        - **Overflow regime** (``height ** ndim > 2 ** 63``): the index
+          would overflow int64 and silently wrap, producing collisions between
+          distinct states (a real bug we hit at e.g. ndim=10, height=128 where
+          ``128**10 == 2**70``).  In this regime we fall back to per-row Python
+          ``int`` arithmetic and return a ``numpy.ndarray`` of dtype ``object``
+          containing arbitrary-precision Python ints.  Each element is a
+          unique, hashable canonical index.
+
+        The two return types support the same downstream usages we care about
+        (``set(...tolist())`` for mode tracking, boolean masking with
+        ``[mask]`` after converting the mask to numpy if needed).  Code paths
+        that need an ``int64`` tensor for tensor indexing (e.g.
+        ``EnumPreprocessor``) implicitly require the safe regime — they'll see
+        the numpy fallback and fail loudly, which is the correct behavior
+        because such grids are too large to enumerate anyway.
 
         Args:
             states: The states to get the indices of.
 
         Returns:
-            The indices of the states in the canonical ordering.
+            Indices in canonical ordering. ``torch.Tensor[int64]`` of shape
+            ``batch_shape`` in the safe regime; ``np.ndarray[object]`` of shape
+            ``batch_shape`` containing Python ints in the overflow regime.
         """
         if isinstance(states, DiscreteStates):
             states_raw = states.tensor
         else:
             states_raw = states
+
+        # Exact overflow guard using Python's arbitrary-precision integers.
+        # The int64 path is safe iff height**ndim <= 2**63, which guarantees
+        # that both the per-column products (height^k * s_k) and the running
+        # sum stay within signed int64.  This scalar check is negligible in
+        # cost regardless of batch size.
+        if self.height**self.ndim > 2**63:
+            indices_obj = self._get_states_indices_bigint(states_raw)
+            expected_shape = (
+                tuple(states.batch_shape)
+                if isinstance(states, DiscreteStates)
+                else tuple(states_raw.shape[:-1])
+            )
+            assert (
+                indices_obj.shape == expected_shape
+            ), f"indices.shape is {indices_obj.shape} but expected {expected_shape}"
+            return indices_obj
 
         canonical_base = self.height ** torch.arange(
             self.ndim - 1, -1, -1, device=states_raw.device
@@ -550,8 +601,45 @@ class HyperGrid(DiscreteEnv):
             ), f"indices.shape is {indices.shape} but expected {states.shape[:-1]}"
         return indices
 
-    def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
+    def _get_states_indices_bigint(self, states_raw: torch.Tensor) -> np.ndarray:
+        """Compute canonical indices using arbitrary-precision Python ints.
+
+        Used by :meth:`get_states_indices` when ``height ** ndim > 2 ** 63``
+        and the int64 path would overflow.
+
+        Vectorized over the (potentially large) batch dimension via numpy
+        object-dtype broadcasting: the inner Python loop iterates only over
+        the small feature dimension ``ndim``, and each ``k * h + col``
+        operation dispatches a single C-level loop over all rows that calls
+        Python ``int.__mul__`` / ``int.__add__`` per element.  This is a few
+        times faster than a nested Python loop while still preserving
+        arbitrary-precision correctness.
+
+        Returns a numpy ``object`` array of shape ``states_raw.shape[:-1]``
+        containing one Python ``int`` per state.
+        """
+        batch_shape = tuple(states_raw.shape[:-1])
+        # Convert the whole (n_rows, ndim) block to object dtype once so each
+        # column slice we read below is already a Python-int array.
+        flat = states_raw.reshape(-1, self.ndim).cpu().numpy().astype(object)
+        h = int(self.height)
+
+        # k starts as a Python-int 0 for every row (np.zeros with object
+        # dtype fills with int(0)).
+        k = np.zeros(flat.shape[0], dtype=object)
+        for j in range(self.ndim):
+            k = k * h + flat[:, j]
+        return k.reshape(batch_shape)
+
+    def get_terminating_states_indices(
+        self, states: DiscreteStates
+    ) -> Union[torch.Tensor, np.ndarray]:
         """Get the indices of the terminating states in the canonical ordering.
+
+        See :meth:`get_states_indices` for the return-type contract: a
+        ``torch.Tensor[int64]`` for grids small enough to fit in 62 bits, or a
+        ``numpy.ndarray[object]`` of Python ints for larger grids that would
+        otherwise overflow.
 
         Args:
             states: The states to get the indices of.
