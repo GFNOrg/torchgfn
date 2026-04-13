@@ -942,21 +942,40 @@ class HyperGrid(DiscreteEnv):
     def _exists_random_or_corrupted(self, thr: float) -> bool:
         """Check for UniformRandomReward or CorruptedReward.
 
-        Uses increased probe count proportional to 1/mode_probability to
-        ensure high probability of finding at least one mode even for sparse
-        random mode assignments.
+        For UniformRandomReward the probe budget is sized so that
+        P(miss all modes | at least one mode exists) < 1e-9, using
+        n = ceil(log(1e-9) / log(1 - mode_prob)).  For CorruptedReward a
+        fixed budget of 10 000 is used (mode density is approximately
+        preserved by the promotion/demotion calibration).
+
+        A seeded generator derived from the reward seed and grid shape makes
+        the result reproducible across calls with the same configuration.
         """
+        # Cap at total states to avoid over-probing small grids.
+        total_states = int(min(float(self.height) ** self.ndim, 2**53))
+
+        # Derive a deterministic seed from reward config and grid shape.
+        reward_seed = getattr(self.reward_fn, "seed", 42)
+        gen_seed = (reward_seed * 1_000_003 + self.height * 31 + self.ndim) & (
+            2**63 - 1
+        )
+
         if isinstance(self.reward_fn, UniformRandomReward):
-            effective_p = self.reward_fn.mode_prob
+            effective_p = max(1e-15, self.reward_fn.mode_prob)
+            # n so that (1 - p)^n < 1e-9  <=>  n > log(1e-9) / log(1-p)
+            n_needed = math.ceil(math.log(1e-9) / math.log1p(-effective_p))
+            n_probes = int(min(total_states, max(2048, n_needed)))
         elif isinstance(self.reward_fn, CorruptedReward):
-            # Use a rough lower bound on mode density.
-            effective_p = max(0.001, self.reward_fn.corruption_rate * 0.01)
+            # Mode density is roughly preserved by demotion/promotion calibration.
+            n_probes = int(min(total_states, max(10_000, 8 * self.ndim)))
         else:
-            effective_p = 0.01
-        n_probes = min(100_000, max(2048, int(10.0 / effective_p)))
+            n_probes = int(min(total_states, 2048))
+
+        gen = torch.Generator().manual_seed(gen_seed)
         with torch.no_grad():
             xs = torch.randint(
-                0, self.height, (n_probes, self.ndim), device=torch.device("cpu")
+                0, self.height, (n_probes, self.ndim),
+                generator=gen, device=torch.device("cpu")
             )
             rr = self.reward_fn(xs)
             return bool((rr >= thr - EPS_REWARD_CMP).any().item())
