@@ -642,6 +642,7 @@ def send(
     data: torch.Tensor,
     dst_rank: int,
     backend: str = default_backend,
+    tag: int = 0,
 ) -> None:
     """Send a byte tensor to ``dst_rank``.
 
@@ -652,12 +653,12 @@ def send(
     Protocol differences between backends:
 
     - **torch**: Uses a length-prefixed two-message protocol. First a 1-element
-      int64 tensor containing the payload length is sent (tag=0), then the
-      payload itself (tag=1). This lets the receiver allocate the right buffer
-      size before the data arrives.
-    - **mpi**: Sends a single message (tag=0). The receiver uses ``MPI.Probe``
-      to discover the incoming message size before calling ``Recv``, so no
-      separate length message is needed.
+      int64 tensor containing the payload length is sent (tag=2*tag), then the
+      payload itself (tag=2*tag+1). This lets the receiver allocate the right
+      buffer size before the data arrives.
+    - **mpi**: Sends a single message with the given ``tag``. The receiver uses
+      ``MPI.Probe`` to discover the incoming message size before calling
+      ``Recv``, so no separate length message is needed.
 
     Because the wire protocols differ, sender and receiver **must** use the
     same backend.
@@ -666,17 +667,19 @@ def send(
         data: Tensor to send (will be cast to uint8).
         dst_rank: Destination rank (global).
         backend: ``"torch"`` or ``"mpi"``.
+        tag: MPI/torch tag for message matching. Use distinct tags to
+            multiplex independent message channels on the same rank pair.
     """
     if backend == "torch":
         data = data.to(dtype=torch.uint8).contiguous().cpu()
         length_tensor = torch.tensor([data.numel()], dtype=torch.int64, device="cpu")
-        dist.send(tensor=length_tensor, dst=dst_rank, tag=0)
-        dist.send(tensor=data, dst=dst_rank, tag=1)
+        dist.send(tensor=length_tensor, dst=dst_rank, tag=2 * tag)
+        dist.send(tensor=data, dst=dst_rank, tag=2 * tag + 1)
     elif backend == "mpi":
         MPI = _get_MPI()
         comm = MPI.COMM_WORLD
         arr = data.detach().cpu().contiguous().numpy()
-        comm.Send(arr, dest=dst_rank, tag=0)
+        comm.Send(arr, dest=dst_rank, tag=tag)
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
@@ -684,6 +687,7 @@ def send(
 def recv(
     src_rank: int | None = None,
     backend: str = default_backend,
+    tag: int = 0,
 ) -> tuple[int, torch.Tensor]:
     """Receive a byte tensor from ``src_rank`` (or any rank if ``None``).
 
@@ -693,23 +697,25 @@ def recv(
     Args:
         src_rank: Source rank to receive from, or ``None`` for any source.
         backend: ``"torch"`` or ``"mpi"``.
+        tag: MPI/torch tag for message matching. Must match the tag used
+            by the corresponding :func:`send` call.
 
     Returns:
         Tuple of (source rank, received uint8 tensor).
     """
     if backend == "torch":
-        # Step 1: receive the payload length (tag=0).
+        # Step 1: receive the payload length (tag=2*tag).
         length_tensor = torch.zeros(1, dtype=torch.int64, device="cpu")
         if src_rank is None:
-            src_rank = dist.recv(tensor=length_tensor, tag=0)
+            src_rank = dist.recv(tensor=length_tensor, tag=2 * tag)
         else:
-            dist.recv(tensor=length_tensor, src=src_rank, tag=0)
+            dist.recv(tensor=length_tensor, src=src_rank, tag=2 * tag)
 
         msg_len = int(length_tensor.item())
 
-        # Step 2: receive the payload (tag=1).
+        # Step 2: receive the payload (tag=2*tag+1).
         data = torch.empty(msg_len, dtype=torch.uint8, device="cpu")
-        dist.recv(tensor=data, src=src_rank, tag=1)
+        dist.recv(tensor=data, src=src_rank, tag=2 * tag + 1)
         return src_rank, data
 
     elif backend == "mpi":
@@ -718,11 +724,11 @@ def recv(
         status = MPI.Status()
         source = MPI.ANY_SOURCE if src_rank is None else src_rank
         # Probe to discover message size before allocating the receive buffer.
-        comm.Probe(source=source, tag=0, status=status)
+        comm.Probe(source=source, tag=tag, status=status)
         source = status.Get_source()
         count = status.Get_count(MPI.BYTE)
         buf = torch.empty(count, dtype=torch.uint8)
-        comm.Recv(buf.numpy(), source=source, tag=0, status=status)
+        comm.Recv(buf.numpy(), source=source, tag=tag, status=status)
         return source, buf
     else:
         raise ValueError(f"Unknown backend: {backend}")

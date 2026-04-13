@@ -9,6 +9,13 @@ from gfn.containers.replay_buffer import (
 from gfn.env import Env
 from gfn.utils.distributed import recv, send
 
+# MPI tag constants for multiplexing independent message channels.
+# Data messages (trajectory submissions + score responses) use tag 0.
+# Metadata queries/responses use tag 1 so they never collide with
+# pending async score responses on the same rank pair.
+DATA_TAG = 0
+METADATA_TAG = 1
+
 
 class ReplayBufferManager:
 
@@ -87,6 +94,7 @@ class ReplayBufferManager:
                     metadata_tensor,
                     dst_rank=sender_rank,
                     backend=self.communication_backend,
+                    tag=METADATA_TAG,
                 )
 
             elif msg.message_type == MessageType.EXIT:
@@ -117,11 +125,20 @@ class ReplayBufferManager:
 
     @staticmethod
     def get_metadata(manager_rank: int, backend: str) -> dict:
-        """Sends a get metadata signal to the replay buffer manager."""
+        """Sends a get metadata signal to the replay buffer manager.
+
+        Uses ``METADATA_TAG`` so the response is never confused with
+        pending data/score messages on the default tag.
+        """
         msg = Message(message_type=MessageType.GET_METADATA, message_data=None)
         msg_bytes = msg.serialize()
 
+        # The request goes on the default DATA_TAG (the buffer's recv loop
+        # listens on tag=0 for all incoming messages).  The *response* comes
+        # back on METADATA_TAG so it cannot collide with async score replies.
         send(msg_bytes, dst_rank=manager_rank, backend=backend)
-        _src_rank, metadata_tensor = recv(manager_rank, backend=backend)
+        _src_rank, metadata_tensor = recv(
+            manager_rank, backend=backend, tag=METADATA_TAG
+        )
         metadata = Message.deserialize(metadata_tensor)
         return metadata.message_data
