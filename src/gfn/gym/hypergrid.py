@@ -956,9 +956,7 @@ class HyperGrid(DiscreteEnv):
 
         # Derive a deterministic seed from reward config and grid shape.
         reward_seed = getattr(self.reward_fn, "seed", 42)
-        gen_seed = (reward_seed * 1_000_003 + self.height * 31 + self.ndim) & (
-            2**63 - 1
-        )
+        gen_seed = (reward_seed * 1_000_003 + self.height * 31 + self.ndim) & (2**63 - 1)
 
         if isinstance(self.reward_fn, UniformRandomReward):
             effective_p = max(1e-15, self.reward_fn.mode_prob)
@@ -974,8 +972,11 @@ class HyperGrid(DiscreteEnv):
         gen = torch.Generator().manual_seed(gen_seed)
         with torch.no_grad():
             xs = torch.randint(
-                0, self.height, (n_probes, self.ndim),
-                generator=gen, device=torch.device("cpu")
+                0,
+                self.height,
+                (n_probes, self.ndim),
+                generator=gen,
+                device=torch.device("cpu"),
             )
             rr = self.reward_fn(xs)
             return bool((rr >= thr - EPS_REWARD_CMP).any().item())
