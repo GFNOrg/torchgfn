@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _first_env(*names: str, default: str | None = None) -> str | None:
+    """Return the first non-empty environment variable from a list of names."""
+    for name in names:
+        value = os.environ.get(name)
+        if value not in (None, ""):
+            return value
+    return default
+
+
 def _get_MPI():
     """Lazily import and return the mpi4py MPI module."""
     from mpi4py import MPI
@@ -352,8 +361,19 @@ def initialize_distributed_compute(
         "gloo",
     ], f"Invalid backend requested: {dist_backend}"
 
-    pmi_size = int(os.environ.get("PMI_SIZE", "0"))  # 0 or 1 default value?
-    logger.info("Initializing distributed compute, PMI_SIZE=%d", pmi_size)
+    pmi_size = int(
+        cast(
+            str,
+            _first_env(
+                "PMI_SIZE",
+                "OMPI_COMM_WORLD_SIZE",
+                "MV2_COMM_WORLD_SIZE",
+                "WORLD_SIZE",
+                default="0",
+            ),
+        )
+    )
+    logger.info("Initializing distributed compute, detected world_size=%d", pmi_size)
 
     if pmi_size <= 1:
         logger.info("PMI_SIZE <= 1, running in single process mode.")
@@ -384,8 +404,26 @@ def initialize_distributed_compute(
     else:
         raise Exception(f"Invalid backend requested: {dist_backend}")
 
-    os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
-    os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
+    os.environ["RANK"] = cast(
+        str,
+        _first_env(
+            "PMI_RANK",
+            "OMPI_COMM_WORLD_RANK",
+            "MV2_COMM_WORLD_RANK",
+            "RANK",
+            default="0",
+        ),
+    )
+    os.environ["WORLD_SIZE"] = cast(
+        str,
+        _first_env(
+            "PMI_SIZE",
+            "OMPI_COMM_WORLD_SIZE",
+            "MV2_COMM_WORLD_SIZE",
+            "WORLD_SIZE",
+            default="1",
+        ),
+    )
 
     logger.info("OMP_NUM_THREADS = %s", os.getenv("OMP_NUM_THREADS"))
 
