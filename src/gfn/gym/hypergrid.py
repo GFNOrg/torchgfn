@@ -861,35 +861,35 @@ class HyperGrid(DiscreteEnv):
         return (self.height >= 2 and self.ndim >= 1) and (r >= thr or r + 1.0 >= thr)
 
     def _exists_bitwise_xor(self, thr: float) -> bool:
-        """Feasibility and constructive check for ``BitwiseXORReward``.
+        """Deterministic feasibility check for ``BitwiseXORReward``.
 
-        Steps:
-        - Verify the combined GF(2) system (full_A @ x = full_c) has at
-          least one solution using Gaussian elimination modulo 2.
-        - Try the all-zero configuration first (satisfies default even
-          parity). If that fails, try a small batch of random states.
+        The top-tier threshold ``R0 + sum(tier_weights)`` is reached iff a
+        state's constrained bits satisfy the full cumulative GF(2) system
+        ``full_A @ bits = full_c``. Feasibility of this system is therefore
+        necessary and sufficient for a mode to exist; no random sampling
+        is required. An empty system (no tiers active) means every state
+        is a mode, which ``_solve_gf2_has_solution`` returns True for.
+
+        Note: for non-power-of-two heights the bit-space is a superset of
+        the valid coord range; a feasible bit-assignment may decode to an
+        out-of-grid coord. Presets here use power-of-two heights, so every
+        feasible bit-assignment is a valid state.
         """
-        # Check that the combined system is feasible.
         rf = self.reward_fn
-        if rf._full_A.shape[0] > 0:
-            if not self._solve_gf2_has_solution(rf._full_A, rf._full_c):
-                return False
-
-        # Try all-zero first.
-        x = torch.zeros(self.ndim, dtype=torch.long)
-        r = float(rf(x.unsqueeze(0))[0])
-        if r >= thr - EPS_REWARD_CMP:
-            return True
-
-        # Try a small random batch as fallback.
-        return self._exists_fallback_random(thr)
+        return self._solve_gf2_has_solution(rf._full_A, rf._full_c)
 
     def _exists_multiplicative_coprime(self, thr: float) -> bool:
         """Number-theoretic constructive check for ``MultiplicativeCoprimeReward``.
 
-        Constructs a candidate state by factoring the target LCM (if any) over
-        the allowed primes, assigning each prime power to a separate active
-        dimension, and verifying coprimality and grid-bound constraints.
+        The reward shifts raw coords by +1 internally (raw 0 → internal 1),
+        so the mode-satisfying assignment must be built in *internal* space
+        (prime powers the reward expects to see) and then converted to raw
+        state via ``raw = internal - 1``. The internal value ``p**exp`` fits
+        in the grid iff ``p**exp <= height`` (raw ≤ height-1).
+
+        Constructs a candidate by factoring the target LCM over the allowed
+        primes, assigning each prime power to a separate active dim, and
+        verifying coprimality and grid bounds — all in internal space.
         """
         primes: list[int] = [int(p) for p in self.reward_fn.primes]
         caps: list[int] = [int(c) for c in self.reward_fn.exponent_caps]
@@ -899,8 +899,9 @@ class HyperGrid(DiscreteEnv):
         target_lcms = self.reward_fn.target_lcms
         target = None if target_lcms is None else target_lcms[-1]
 
-        # Start with all-ones (valid for prime-support: 1 has zero exponents).
-        x = torch.ones(self.ndim, dtype=torch.long)
+        # Internal (post +1-shift) values. Origin raw=0 → internal=1, which
+        # factors trivially over any prime set.
+        internal = [1] * self.ndim
 
         if target is not None:
             target = int(target)
@@ -914,7 +915,8 @@ class HyperGrid(DiscreteEnv):
                     unfactored_remainder //= p
                     exp += 1
                 if exp > 0:
-                    if exp > max_exponent or (p**exp) > (self.height - 1):
+                    # Internal value p**exp must fit in [1, height].
+                    if exp > max_exponent or (p**exp) > self.height:
                         return False
                     required_prime_powers.append((p, exp))
 
@@ -925,16 +927,18 @@ class HyperGrid(DiscreteEnv):
             if len(required_prime_powers) > len(active):
                 return False
 
-            # Assign each prime power to a separate active dimension.
+            # Assign each prime power (as internal value) to a separate active dim.
             for (p, exp), dim in zip(required_prime_powers, active):
-                x[dim] = p**exp
+                internal[dim] = p**exp
 
-            # Verify that dimension pairs designated as coprime have gcd == 1.
+            # Verify coprime pair constraints on internal values.
             for i, j in coprime_pairs:
-                if torch.gcd(x[active[i]], x[active[j]]).item() != 1:
+                if math.gcd(internal[active[i]], internal[active[j]]) != 1:
                     return False
 
-        if int(x.max()) >= self.height:
+        # Convert internal -> raw for the reward call. Raw values must fit [0, height).
+        x = torch.tensor([v - 1 for v in internal], dtype=torch.long)
+        if int(x.max()) >= self.height or int(x.min()) < 0:
             return False
         r = float(self.reward_fn(x.unsqueeze(0))[0])
         return r >= thr - EPS_REWARD_CMP
@@ -2592,11 +2596,14 @@ def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
       - Tier 1 (intermediate): moderate checks
       - Tier 2 (mode): strictest checks, defines the modes
 
-    Target mode counts for ndim=10, height=16:
-      - easy (M=3):        ~69B modes
-      - medium (M=5):      ~4.3B modes
-      - hard (M=8):        ~268M modes
-      - challenging (M=10): ~17M modes
+    Mode counts for ndim=10, height=16 (B=4 bit-planes). Per-bit-position
+    solutions = 2^(M − cum_top_checks); raised to the B-th power, then
+    multiplied by 16^(ndim − M) free-dim configurations:
+      - easy (M=3, cum=2):        ~4.3B modes   (16 × 16^7)
+      - medium (M=5, cum=4):      ~16.8M modes  (16 × 16^5)
+      - hard (M=8, cum=6):        ~65K modes    (256 × 16^2)
+      - challenging (M=10, cum=7): ~4K modes    (4096 × 1)
+      - impossible (M=12→10, cum=9): 16 modes   (16 × 1; M capped to ndim)
 
     Notes
     - Uses fixed seeds per preset name for reproducibility.
