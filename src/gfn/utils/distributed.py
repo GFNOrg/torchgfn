@@ -362,12 +362,15 @@ def initialize_distributed_compute(
     ], f"Invalid backend requested: {dist_backend}"
 
     pmi_size = int(
-        _first_env(
-            "PMI_SIZE",
-            "OMPI_COMM_WORLD_SIZE",
-            "MV2_COMM_WORLD_SIZE",
-            "WORLD_SIZE",
-            default="0",
+        cast(
+            str,
+            _first_env(
+                "PMI_SIZE",
+                "OMPI_COMM_WORLD_SIZE",
+                "MV2_COMM_WORLD_SIZE",
+                "WORLD_SIZE",
+                default="0",
+            ),
         )
     )
     logger.info("Initializing distributed compute, detected world_size=%d", pmi_size)
