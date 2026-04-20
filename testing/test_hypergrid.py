@@ -3,7 +3,15 @@ import math
 import pytest
 import torch
 
-from gfn.gym.hypergrid import HyperGrid, get_reward_presets
+from gfn.gym.hypergrid import (
+    BitwiseXORReward,
+    ConditionalMultiScaleReward,
+    CorruptedReward,
+    HyperGrid,
+    MultiplicativeCoprimeReward,
+    _state_hash_uniform,
+    get_reward_presets,
+)
 
 
 def _make_env(reward_fn_str: str, kwargs: dict, **extra):
@@ -369,3 +377,446 @@ def test_mode_counts_match_enumeration(reward_name, kwargs_fn, ndim, height):
     # Verify modes_found returns the correct canonical indices.
     found = env.modes_found(all_states)
     assert len(found) == expected
+
+
+# =========================================================================
+# UniformRandomReward and CorruptedReward tests
+# =========================================================================
+
+
+# -------------------------
+# Hash utility tests
+# -------------------------
+
+
+def test_state_hash_determinism():
+    xs = torch.randint(0, 16, (100, 3), dtype=torch.long)
+    h1 = _state_hash_uniform(xs, seed=42)
+    h2 = _state_hash_uniform(xs, seed=42)
+    assert torch.equal(h1, h2), "Same seed must produce same hash"
+
+    h3 = _state_hash_uniform(xs, seed=99)
+    assert not torch.equal(h1, h3), "Different seeds must produce different hashes"
+
+    # Values should be in [0, 1)
+    assert (h1 >= 0).all() and (h1 < 1).all()
+
+
+# -------------------------
+# UniformRandom reward value tests
+# -------------------------
+
+
+def test_uniform_random_reward_values_small():
+    kwargs = dict(R0=0.1, R_mode=2.0, mode_prob=0.5, seed=42)
+    env = _make_env("uniform_random", kwargs, ndim=2, height=8)
+    xs = torch.randint(0, 8, (50, 2), dtype=torch.long)
+    r = env.reward(env.States(xs))
+    # All rewards should be either R0 or R0+R_mode.
+    for val in r.tolist():
+        assert abs(val - 0.1) < 1e-6 or abs(val - 2.1) < 1e-6
+
+    # Determinism: same states should give same rewards.
+    r2 = env.reward(env.States(xs))
+    assert torch.allclose(r, r2)
+
+
+def test_uniform_random_raises_on_bad_mode_prob():
+    with pytest.raises(AssertionError):
+        _make_env("uniform_random", dict(mode_prob=0.0), ndim=2, height=8)
+    with pytest.raises(AssertionError):
+        _make_env("uniform_random", dict(mode_prob=1.0), ndim=2, height=8)
+
+
+def test_validate_modes_succeeds_uniform_random():
+    env = _make_env(
+        "uniform_random",
+        dict(R0=0.1, R_mode=2.0, mode_prob=0.01, seed=42),
+        ndim=2,
+        height=16,
+        validate_modes=True,
+    )
+    assert env.n_actions == env.ndim + 1
+
+
+# -------------------------
+# CorruptedReward value tests
+# -------------------------
+
+
+def test_corrupted_reward_values_small():
+    """Basic smoke test: corrupted reward produces finite positive values."""
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    kwargs = dict(
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=0.3,
+        seed=137,
+    )
+    env = _make_env("corrupted", kwargs, ndim=3, height=16)
+    xs = torch.randint(0, 16, (100, 3), dtype=torch.long)
+    r = env.reward(env.States(xs))
+    assert r.shape == (100,)
+    assert (r >= 0).all()
+    assert torch.isfinite(r).all()
+
+
+def test_corrupted_rate_zero_matches_base():
+    """With corruption_rate=0, corrupted reward should equal the base reward."""
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    kwargs = dict(
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=0.0,
+        seed=137,
+    )
+    env_corrupted = _make_env("corrupted", kwargs, ndim=3, height=16)
+    env_base = _make_env("bitwise_xor", base_kwargs, ndim=3, height=16)
+
+    xs = torch.randint(0, 16, (200, 3), dtype=torch.long)
+    r_corrupted = env_corrupted.reward(env_corrupted.States(xs))
+    r_base = env_base.reward(env_base.States(xs))
+    assert torch.allclose(r_corrupted, r_base, atol=1e-6)
+
+
+def test_corrupted_different_seeds_differ():
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    kwargs1 = dict(
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=0.3,
+        seed=137,
+    )
+    kwargs2 = dict(
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=0.3,
+        seed=999,
+    )
+    env1 = _make_env("corrupted", kwargs1, ndim=3, height=16)
+    env2 = _make_env("corrupted", kwargs2, ndim=3, height=16)
+
+    xs = torch.randint(0, 16, (200, 3), dtype=torch.long)
+    r1 = env1.reward(env1.States(xs))
+    r2 = env2.reward(env2.States(xs))
+    # With different seeds and corruption_rate > 0, rewards should differ
+    # on at least some states.
+    assert not torch.allclose(
+        r1, r2
+    ), "Different seeds should produce different corruption"
+
+
+def test_validate_modes_succeeds_corrupted():
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    kwargs = dict(
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=0.3,
+        seed=137,
+    )
+    env = _make_env("corrupted", kwargs, ndim=3, height=16, validate_modes=True)
+    assert env.n_actions == env.ndim + 1
+
+
+# -------------------------
+# tier_indicators consistency tests
+# -------------------------
+
+
+@pytest.mark.parametrize(
+    "reward_cls,reward_kwargs",
+    [
+        (
+            BitwiseXORReward,
+            get_reward_presets("bitwise_xor", 3, 16)["easy"],
+        ),
+        (
+            MultiplicativeCoprimeReward,
+            dict(
+                R0=0.0,
+                tier_weights=[1.0, 10.0],
+                primes=[2, 3],
+                exponent_caps=[2, 2],
+                active_dims=[0, 1],
+            ),
+        ),
+        (
+            ConditionalMultiScaleReward,
+            get_reward_presets("conditional_multiscale", 3, 16)["easy"],
+        ),
+    ],
+)
+def test_tier_indicators_match_reward(reward_cls, reward_kwargs):
+    """Verify tier_indicators output is consistent with reward values."""
+    height, ndim = 16, 3
+    fn = reward_cls(height, ndim, **reward_kwargs)
+    xs = torch.randint(0, height, (100, ndim), dtype=torch.long)
+
+    indicators = fn.tier_indicators(xs)
+    rewards = fn(xs)
+
+    # A state passing all tiers cumulatively should get the full reward.
+    all_pass = torch.ones(100, dtype=torch.bool)
+    for ind in indicators:
+        all_pass = all_pass & ind
+
+    r0 = float(fn.R0)
+    full_reward = r0 + sum(fn.tier_weights)
+    for i in range(100):
+        if all_pass[i]:
+            assert abs(rewards[i].item() - full_reward) < 1e-5
+        if not any(ind[i] for ind in indicators):
+            assert abs(rewards[i].item() - r0) < 1e-5
+
+
+# -------------------------
+# Corruption mechanism unit tests
+# -------------------------
+
+
+def test_corrupted_demotion_rate():
+    """On a small grid, verify demotion fraction is close to corruption_rate."""
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    fn_base = BitwiseXORReward(16, 3, **base_kwargs)
+
+    # Enumerate all states.
+    axes = [torch.arange(16, dtype=torch.long) for _ in range(3)]
+    all_states = torch.cartesian_prod(*axes)
+    base_indicators = fn_base.tier_indicators(all_states)
+
+    corruption_rate = 0.3
+    fn_corrupted = CorruptedReward(
+        16,
+        3,
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=corruption_rate,
+        seed=137,
+    )
+
+    # For each tier, check that demotion fraction is close to corruption_rate.
+    for t, base_ind in enumerate(base_indicators):
+        n_pass = int(base_ind.sum().item())
+        if n_pass == 0:
+            continue
+        h = _state_hash_uniform(all_states, fn_corrupted.seed + 2 * t)
+        demoted = base_ind & (h < corruption_rate)
+        actual_rate = float(demoted.sum().item()) / n_pass
+        assert (
+            abs(actual_rate - corruption_rate) < 0.1
+        ), f"Tier {t}: expected demotion rate ~{corruption_rate}, got {actual_rate}"
+
+
+def test_corrupted_promotion_rate():
+    """Verify promotions roughly match demotions (mode count stable)."""
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    fn_base = BitwiseXORReward(16, 3, **base_kwargs)
+
+    axes = [torch.arange(16, dtype=torch.long) for _ in range(3)]
+    all_states = torch.cartesian_prod(*axes)
+    base_indicators = fn_base.tier_indicators(all_states)
+
+    corruption_rate = 0.3
+    fn_corrupted = CorruptedReward(
+        16,
+        3,
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=corruption_rate,
+        seed=137,
+    )
+
+    for t, base_ind in enumerate(base_indicators):
+        n_pass = int(base_ind.sum().item())
+        n_fail = int((~base_ind).sum().item())
+        if n_pass == 0 or n_fail == 0:
+            continue
+
+        h_demote = _state_hash_uniform(all_states, fn_corrupted.seed + 2 * t)
+        n_demoted = int((base_ind & (h_demote < corruption_rate)).sum().item())
+
+        repl_rate = fn_corrupted._replacement_rates[t]
+        h_promote = _state_hash_uniform(all_states, fn_corrupted.seed + 2 * t + 1)
+        n_promoted = int(((~base_ind) & (h_promote < repl_rate)).sum().item())
+
+        # Allow 50% tolerance for small grids.
+        if n_demoted > 0:
+            ratio = n_promoted / n_demoted
+            assert (
+                0.3 < ratio < 3.0
+            ), f"Tier {t}: promoted/demoted ratio {ratio:.2f} out of range"
+
+
+def test_corrupted_per_tier_independence():
+    """Corruption at one tier shouldn't affect another tier's indicators."""
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    fn_corrupted = CorruptedReward(
+        16,
+        3,
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=0.5,
+        seed=137,
+    )
+
+    xs = torch.randint(0, 16, (200, 3), dtype=torch.long)
+
+    # Different tiers use different hash seeds, so corruption patterns
+    # should be independent.
+    h0 = _state_hash_uniform(xs, fn_corrupted.seed)
+    h1 = _state_hash_uniform(xs, fn_corrupted.seed + 2)
+    # The two hashes should not be identical.
+    assert not torch.equal(h0, h1)
+
+
+# -------------------------
+# Integration tests
+# -------------------------
+
+
+def test_corrupted_mode_count_stable():
+    """Mode count after corruption should be in a reasonable range."""
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    env_base = _make_env(
+        "bitwise_xor",
+        base_kwargs,
+        ndim=3,
+        height=16,
+        store_all_states=True,
+        validate_modes=True,
+        mode_stats="exact",
+    )
+    n_base = env_base.n_modes
+    assert n_base is not None and n_base > 0
+
+    kwargs = dict(
+        base_reward="bitwise_xor",
+        base_kwargs=base_kwargs,
+        corruption_rate=0.3,
+        seed=137,
+    )
+    env_corrupted = _make_env(
+        "corrupted",
+        kwargs,
+        ndim=3,
+        height=16,
+        store_all_states=True,
+        validate_modes=True,
+        mode_stats="exact",
+    )
+    n_corrupted = env_corrupted.n_modes
+    assert n_corrupted is not None and n_corrupted > 0
+
+    # Mode count should not be zero or wildly different.
+    ratio = n_corrupted / n_base
+    assert 0.1 < ratio < 10.0, f"Mode count ratio {ratio:.2f} is outside expected range"
+
+
+@pytest.mark.parametrize(
+    "base_str,base_kwargs_fn",
+    [
+        (
+            "bitwise_xor",
+            lambda: get_reward_presets("bitwise_xor", 3, 16)["easy"],
+        ),
+        (
+            "multiplicative_coprime",
+            lambda: dict(
+                R0=0.0,
+                tier_weights=[1.0, 10.0],
+                primes=[2, 3],
+                exponent_caps=[2, 2],
+                active_dims=[0, 1],
+            ),
+        ),
+        (
+            "conditional_multiscale",
+            lambda: get_reward_presets("conditional_multiscale", 3, 16)["easy"],
+        ),
+    ],
+)
+def test_corrupted_with_all_base_rewards(base_str, base_kwargs_fn):
+    """CorruptedReward should work with all tiered base rewards."""
+    base_kwargs = base_kwargs_fn()
+    kwargs = dict(
+        base_reward=base_str,
+        base_kwargs=base_kwargs,
+        corruption_rate=0.3,
+        seed=137,
+    )
+    env = _make_env("corrupted", kwargs, ndim=3, height=16, validate_modes=True)
+    xs = torch.randint(0, 16, (50, 3), dtype=torch.long)
+    r = env.reward(env.States(xs))
+    assert torch.isfinite(r).all()
+    assert (r >= 0).all()
+
+
+def test_corrupted_preset_environments_trainable():
+    """Each corrupted preset should produce a valid, usable environment."""
+    presets = get_reward_presets("corrupted", 3, 16)
+    for name, kwargs in presets.items():
+        env = _make_env(
+            "corrupted",
+            kwargs,
+            ndim=3,
+            height=16,
+            store_all_states=True,
+            validate_modes=True,
+        )
+        assert env.all_states is not None
+        found = env.modes_found(env.all_states)
+        assert len(found) > 0, f"Preset '{name}' has no modes"
+
+
+# -------------------------
+# Mode count tests for new rewards
+# -------------------------
+
+
+def test_mode_counts_uniform_random_exact():
+    env = _make_env(
+        "uniform_random",
+        dict(R0=0.1, R_mode=2.0, mode_prob=0.1, seed=42),
+        ndim=2,
+        height=16,
+        store_all_states=True,
+        validate_modes=True,
+        mode_stats="exact",
+    )
+    assert env.n_mode_states is not None
+    assert env.n_mode_states > 0
+
+
+def test_mode_counts_corrupted_exact():
+    base_kwargs = get_reward_presets("bitwise_xor", 3, 16)["easy"]
+    env = _make_env(
+        "corrupted",
+        dict(
+            base_reward="bitwise_xor",
+            base_kwargs=base_kwargs,
+            corruption_rate=0.3,
+            seed=137,
+        ),
+        ndim=3,
+        height=16,
+        store_all_states=True,
+        validate_modes=True,
+        mode_stats="exact",
+    )
+    assert env.n_mode_states is not None
+    assert env.n_mode_states > 0
+
+
+# -------------------------
+# Preset smoke tests
+# -------------------------
+
+
+def test_get_reward_presets_uniform_random():
+    presets = get_reward_presets("uniform_random", 3, 16)
+    assert set(presets.keys()) == {"easy", "medium", "hard", "challenging", "impossible"}
+
+
+def test_get_reward_presets_corrupted():
+    presets = get_reward_presets("corrupted", 3, 16)
+    assert set(presets.keys()) == {"easy", "medium", "hard", "challenging", "impossible"}

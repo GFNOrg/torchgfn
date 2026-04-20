@@ -107,6 +107,34 @@ def smallest_multiplier_to_integers(float_vector, precision=3):
     return smallest_multiplier
 
 
+def _state_hash_uniform(states_tensor: torch.Tensor, seed: int) -> torch.Tensor:
+    """Deterministic hash mapping each grid state to a float in [0, 1).
+
+    Uses a polynomial rolling hash over coordinate values computed in int64
+    arithmetic. Suitable for pseudo-random but reproducible per-state decisions
+    (e.g., mode assignment, corruption masks).
+
+    Args:
+        states_tensor: (..., ndim) integer tensor of coordinates.
+        seed: Integer seed for determinism.
+
+    Returns:
+        Tensor of shape states_tensor.shape[:-1] with values in [0.0, 1.0).
+    """
+    PRIME_A = 6364136223846793005  # Knuth LCG multiplier
+    PRIME_B = 1442695040888963407  # Knuth LCG increment
+    LARGE_PRIME = 2147483647  # 2^31 - 1 (Mersenne prime)
+    h = torch.full(
+        states_tensor.shape[:-1],
+        seed,
+        dtype=torch.int64,
+        device=states_tensor.device,
+    )
+    for d in range(states_tensor.shape[-1]):
+        h = h * PRIME_A + states_tensor[..., d].long() * PRIME_B
+    return (h.abs() % LARGE_PRIME).float() / LARGE_PRIME
+
+
 class HyperGrid(DiscreteEnv):
     """HyperGrid environment from the GFlowNets paper.
 
@@ -173,10 +201,13 @@ class HyperGrid(DiscreteEnv):
             "cosine": CosineReward,
             "sparse": SparseReward,
             "deceptive": DeceptiveReward,
-            # New compositional environments (see classes below)
+            # Compositional environments (see classes below)
             "bitwise_xor": BitwiseXORReward,
             "multiplicative_coprime": MultiplicativeCoprimeReward,
             "conditional_multiscale": ConditionalMultiScaleReward,
+            # Random / corrupted environments
+            "uniform_random": UniformRandomReward,
+            "corrupted": CorruptedReward,
         }
 
         self.ndim = ndim
@@ -463,6 +494,14 @@ class HyperGrid(DiscreteEnv):
                 )
             return r0 + float(sum(tw))
 
+        # UniformRandomReward: mode threshold is R0 + R_mode.
+        if isinstance(self.reward_fn, UniformRandomReward):
+            return self.reward_fn.R0 + self.reward_fn.R_mode
+
+        # CorruptedReward: delegate to base reward's threshold.
+        if isinstance(self.reward_fn, CorruptedReward):
+            return self.reward_fn.mode_threshold()
+
         # Other reward schemas are not supported for mode counting via threshold.
         raise NotImplementedError(
             "Mode threshold is only defined for known reward schemas."
@@ -704,6 +743,8 @@ class HyperGrid(DiscreteEnv):
             return self._exists_bitwise_xor(thr)
         if isinstance(self.reward_fn, MultiplicativeCoprimeReward):
             return self._exists_multiplicative_coprime(thr)
+        if isinstance(self.reward_fn, (UniformRandomReward, CorruptedReward)):
+            return self._exists_random_or_corrupted(thr)
         return self._exists_fallback_random(thr)
 
     def _modes_exist_quick_check_info(self) -> tuple[bool, str]:
@@ -897,6 +938,48 @@ class HyperGrid(DiscreteEnv):
             return False
         r = float(self.reward_fn(x.unsqueeze(0))[0])
         return r >= thr - EPS_REWARD_CMP
+
+    def _exists_random_or_corrupted(self, thr: float) -> bool:
+        """Check for UniformRandomReward or CorruptedReward.
+
+        For UniformRandomReward the probe budget is sized so that
+        P(miss all modes | at least one mode exists) < 1e-9, using
+        n = ceil(log(1e-9) / log(1 - mode_prob)).  For CorruptedReward a
+        fixed budget of 10 000 is used (mode density is approximately
+        preserved by the promotion/demotion calibration).
+
+        A seeded generator derived from the reward seed and grid shape makes
+        the result reproducible across calls with the same configuration.
+        """
+        # Cap at total states to avoid over-probing small grids.
+        total_states = int(min(float(self.height) ** self.ndim, 2**53))
+
+        # Derive a deterministic seed from reward config and grid shape.
+        reward_seed = getattr(self.reward_fn, "seed", 42)
+        gen_seed = (reward_seed * 1_000_003 + self.height * 31 + self.ndim) & (2**63 - 1)
+
+        if isinstance(self.reward_fn, UniformRandomReward):
+            effective_p = max(1e-15, self.reward_fn.mode_prob)
+            # n so that (1 - p)^n < 1e-9  <=>  n > log(1e-9) / log(1-p)
+            n_needed = math.ceil(math.log(1e-9) / math.log1p(-effective_p))
+            n_probes = int(min(total_states, max(2048, n_needed)))
+        elif isinstance(self.reward_fn, CorruptedReward):
+            # Mode density is roughly preserved by demotion/promotion calibration.
+            n_probes = int(min(total_states, max(10_000, 8 * self.ndim)))
+        else:
+            n_probes = int(min(total_states, 2048))
+
+        gen = torch.Generator().manual_seed(gen_seed)
+        with torch.no_grad():
+            xs = torch.randint(
+                0,
+                self.height,
+                (n_probes, self.ndim),
+                generator=gen,
+                device=torch.device("cpu"),
+            )
+            rr = self.reward_fn(xs)
+            return bool((rr >= thr - EPS_REWARD_CMP).any().item())
 
     def _exists_fallback_random(self, thr: float) -> bool:
         """Random sampling fallback.
@@ -1584,7 +1667,14 @@ class BitwiseXORReward(GridReward):
         ok = (prod == target).all(dim=-1)
         return ok.reshape(bits_plane.shape[:-1])
 
-    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+    def tier_indicators(self, states_tensor: torch.Tensor) -> list[torch.Tensor]:
+        """Per-tier independent pass/fail indicators.
+
+        Returns a list of boolean tensors (one per tier), each of shape
+        ``states_tensor.shape[:-1]``. ``indicators[t]`` is True for states
+        that satisfy tier t's GF(2) parity constraints *independently*
+        (not cumulatively).
+        """
         dev = states_tensor.device
         dim_idx = self._dim_idx.to(dev)
         bit_positions = self._bit_positions.to(dev)
@@ -1592,31 +1682,32 @@ class BitwiseXORReward(GridReward):
         full_c = self._full_c.to(dev)
 
         x = states_tensor.index_select(-1, dim_idx)
-
-        # Extract all bits at once: (..., M, B) -> (..., M*B)
         all_bits = (x.unsqueeze(-1) >> bit_positions) & 1
         flat_bits = all_bits.reshape(*x.shape[:-1], -1).long()
-
-        # Single matmul: all GF(2) checks
         prod = (flat_bits @ full_A.t()) & 1
 
-        # Tiered reward accumulation
-        R = torch.full(
-            x.shape[:-1],
-            self.R0,
-            device=dev,
-            dtype=torch.get_default_dtype(),
-        )
-        tier_ok = torch.ones(x.shape[:-1], device=dev, dtype=torch.bool)
+        indicators: list[torch.Tensor] = []
         offset = 0
-        for n_chk, w in zip(self._tier_check_counts, self.tier_weights):
+        for n_chk in self._tier_check_counts:
             if n_chk > 0:
                 slice_ok = (
                     prod[..., offset : offset + n_chk] == full_c[offset : offset + n_chk]
                 ).all(-1)
-                tier_ok = tier_ok & slice_ok
-            R = R + tier_ok.to(R.dtype) * w
+                indicators.append(slice_ok)
+            else:
+                indicators.append(torch.ones(x.shape[:-1], device=dev, dtype=torch.bool))
             offset += n_chk
+        return indicators
+
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        indicators = self.tier_indicators(states_tensor)
+        dev = states_tensor.device
+        batch_shape = states_tensor.shape[:-1]
+        R = torch.full(batch_shape, self.R0, device=dev, dtype=torch.get_default_dtype())
+        tier_ok = torch.ones(batch_shape, device=dev, dtype=torch.bool)
+        for ind, w in zip(indicators, self.tier_weights):
+            tier_ok = tier_ok & ind
+            R = R + tier_ok.to(R.dtype) * w
         return R
 
 
@@ -1840,15 +1931,13 @@ class MultiplicativeCoprimeReward(GridReward):
             target_vec = target_vec.unsqueeze(-1)
         return (max_exp == target_vec).all(dim=0)
 
-    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
-        R = torch.zeros(
-            states_tensor.shape[:-1],
-            device=states_tensor.device,
-            dtype=torch.get_default_dtype(),
-        )
-        if self.R0 != 0.0:
-            R += self.R0
+    def tier_indicators(self, states_tensor: torch.Tensor) -> list[torch.Tensor]:
+        """Per-tier independent pass/fail indicators.
 
+        Returns a list of boolean tensors (one per tier), each of shape
+        ``states_tensor.shape[:-1]``. ``indicators[t]`` is True for states
+        that satisfy tier t's constraints *independently* (not cumulatively).
+        """
         x = (
             states_tensor.index_select(
                 dim=-1,
@@ -1856,21 +1945,15 @@ class MultiplicativeCoprimeReward(GridReward):
             )
             + 1
         )
-        # After +1 shift, min value is 1 (origin maps to all-ones).
-        # All values are >= 1 and always valid for prime factorization.
-
-        valid_up_to_t = torch.ones(x.shape[:-1], device=x.device, dtype=torch.bool)
-        for t, w in enumerate(self.tier_weights):
+        indicators: list[torch.Tensor] = []
+        for t in range(len(self.tier_weights)):
             cap = self.exponent_caps[t]
-            # Flatten all active-dim values for batch factorization, then reshape.
             residue, exps = self._factor_exponents_up_to_cap(x.reshape(-1), cap)
             residue = residue.reshape(x.shape)
             exps = exps.reshape((len(self.primes),) + x.shape)
 
-            # residue==1 means the value is fully explained by allowed primes.
             support_ok = (residue == 1).all(dim=-1)
 
-            # Coprime pairs only apply at tier >= coprime_start_tier.
             if t >= self.coprime_start_tier:
                 pairs_ok = self._pairwise_coprime_ok(x)
             else:
@@ -1881,10 +1964,23 @@ class MultiplicativeCoprimeReward(GridReward):
             if lcm_target is not None:
                 lcm_ok = self._lcm_ok(exps, lcm_target)
 
-            tier_ok = support_ok & pairs_ok & lcm_ok
-            valid_up_to_t = valid_up_to_t & tier_ok
-            R = R + (valid_up_to_t.to(R.dtype) * float(w))
+            indicators.append(support_ok & pairs_ok & lcm_ok)
+        return indicators
 
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        indicators = self.tier_indicators(states_tensor)
+        dev = states_tensor.device
+        batch_shape = states_tensor.shape[:-1]
+        R = torch.full(
+            batch_shape,
+            self.R0,
+            device=dev,
+            dtype=torch.get_default_dtype(),
+        )
+        tier_ok = torch.ones(batch_shape, device=dev, dtype=torch.bool)
+        for ind, w in zip(indicators, self.tier_weights):
+            tier_ok = tier_ok & ind
+            R = R + tier_ok.to(R.dtype) * float(w)
         return R
 
 
@@ -2043,32 +2139,28 @@ class ConditionalMultiScaleReward(GridReward):
             remaining = remaining // self.base
         return digits
 
-    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
-        R = torch.zeros(
-            states_tensor.shape[:-1],
-            device=states_tensor.device,
-            dtype=torch.get_default_dtype(),
-        )
-        if self.R0 != 0.0:
-            R += self.R0
+    def tier_indicators(self, states_tensor: torch.Tensor) -> list[torch.Tensor]:
+        """Per-tier independent pass/fail indicators.
 
-        # Select active dims
+        Returns a list of boolean tensors (one per tier), each of shape
+        ``states_tensor.shape[:-1]``. ``indicators[t]`` is True for states
+        that satisfy tier t's digit constraint *independently*
+        (not cumulatively). Note: the shift at tier t still depends on
+        coarser digits, so the constraint is state-dependent but evaluated
+        per-tier.
+        """
         x = states_tensor.index_select(
             dim=-1,
             index=torch.tensor(self.active_dims, device=states_tensor.device),
         ).long()
 
-        # Extract ALL digit levels (coarse-to-fine ordering needs the full set).
         L = self.num_levels
         digits = self._extract_digits(x, L)
 
-        valid_up_to_t = torch.ones(x.shape[:-1], device=x.device, dtype=torch.bool)
-        for t, w in enumerate(self.tier_weights):
-            # Coarse-to-fine: tier t constrains digit (L-1-t).
+        indicators: list[torch.Tensor] = []
+        for t in range(len(self.tier_weights)):
             target_digit = digits[L - 1 - t]
 
-            # Shift uses coarser digits already constrained: digits[L-1-k]
-            # for k=0..t-1.
             if t == 0:
                 shift = torch.zeros_like(x)
             else:
@@ -2078,21 +2170,32 @@ class ConditionalMultiScaleReward(GridReward):
                         shift = shift + int(a_tk) * digits[L - 1 - k]
                 shift = shift % self.base
 
-            # Filter: shifted digit must be in [0, filter_width).
             shifted = (target_digit + shift) % self.base
             per_dim_ok = (shifted < self.filter_width).all(dim=-1)
 
-            # Optional cross-dim modular constraint on the digit sum.
             cross_ok = torch.ones_like(per_dim_ok)
             cross_mod = self.cross_dim_mods[t]
             if cross_mod is not None:
                 digit_sum = target_digit.sum(dim=-1)
                 cross_ok = (digit_sum % int(cross_mod)) == 0
 
-            tier_ok = per_dim_ok & cross_ok
-            valid_up_to_t = valid_up_to_t & tier_ok
-            R = R + (valid_up_to_t.to(R.dtype) * float(w))
+            indicators.append(per_dim_ok & cross_ok)
+        return indicators
 
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        indicators = self.tier_indicators(states_tensor)
+        dev = states_tensor.device
+        batch_shape = states_tensor.shape[:-1]
+        R = torch.full(
+            batch_shape,
+            self.R0,
+            device=dev,
+            dtype=torch.get_default_dtype(),
+        )
+        tier_ok = torch.ones(batch_shape, device=dev, dtype=torch.bool)
+        for ind, w in zip(indicators, self.tier_weights):
+            tier_ok = tier_ok & ind
+            R = R + tier_ok.to(R.dtype) * float(w)
         return R
 
     def mode_tier(self, target_sparsity: float = 0.10) -> int:
@@ -2175,6 +2278,232 @@ class ConditionalMultiScaleReward(GridReward):
         for t in range(len(self.tier_weights)):
             Z += self.tier_weights[t] * self.analytic_mode_count(tier=t + 1)
         return log(Z) if Z > 0 else float("-inf")
+
+
+# ----------------------------------
+# Random / corrupted reward classes
+# ----------------------------------
+
+
+class UniformRandomReward(GridReward):
+    """Each state is independently a mode with probability ``mode_prob``.
+
+    Uses a deterministic hash on state coordinates so mode membership is
+    reproducible without storing or enumerating all states. There is no
+    exploitable spatial or algebraic structure.
+
+    Reward form::
+
+        R(s) = R0 + R_mode   if hash(s, seed) < mode_prob
+        R(s) = R0             otherwise
+
+    Key kwargs:
+        - R0: float, base reward for non-mode states (default 0.1).
+        - R_mode: float, additional reward for mode states (default 2.0).
+        - mode_prob: float in (0, 1), probability each state is a mode
+          (default 0.01).
+        - seed: int, hash seed for reproducibility (default 42).
+    """
+
+    def __init__(self, height: int, ndim: int, **kwargs):
+        super().__init__(height, ndim, **kwargs)
+        self.R0: float = float(kwargs.get("R0", 0.1))
+        self.R_mode: float = float(kwargs.get("R_mode", 2.0))
+        self.mode_prob: float = float(kwargs.get("mode_prob", 0.01))
+        self.seed: int = int(kwargs.get("seed", 42))
+        assert (
+            0 < self.mode_prob < 1
+        ), f"mode_prob must be in (0, 1), got {self.mode_prob}"
+        assert self.R_mode > 0, f"R_mode must be positive, got {self.R_mode}"
+
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        h = _state_hash_uniform(states_tensor, self.seed)
+        is_mode = h < self.mode_prob
+        base = torch.full(
+            states_tensor.shape[:-1],
+            self.R0,
+            device=states_tensor.device,
+            dtype=torch.get_default_dtype(),
+        )
+        return base + is_mode.to(base.dtype) * self.R_mode
+
+
+class CorruptedReward(GridReward):
+    """Wraps a tiered structured reward and applies per-tier corruption.
+
+    Conceptually, at each tier, a fraction ``corruption_rate`` of states that
+    earned that tier's bonus have it "moved" to a random location. This
+    degrades the compositional structure at every level proportionally.
+
+    Per-tier corruption logic:
+        For each tier *t* and each state *s*:
+
+        1. Compute the base reward's per-tier indicator ``pass_t(s)``.
+        2. **Demote**: if ``pass_t(s)`` and ``hash(s, seed + 2*t) < corruption_rate``,
+           remove tier *t*'s contribution.
+        3. **Promote**: if not ``pass_t(s)`` and
+           ``hash(s, seed + 2*t + 1) < replacement_rate_t``, add tier *t*'s
+           contribution. ``replacement_rate_t`` is calibrated at init so that
+           the expected number of promotions matches demotions.
+
+    Final reward::
+
+        R(s) = R0 + sum_t w_t * corrupted_pass_t(s)
+
+    For non-tiered base rewards, falls back to a single-level binary
+    corruption at the mode threshold.
+
+    Key kwargs:
+        - base_reward: str, name of the base reward (default
+          "conditional_multiscale").
+        - base_kwargs: dict, kwargs for the base reward constructor.
+        - corruption_rate: float in [0, 1), fraction of tier-passing states
+          to demote per tier (default 0.2).
+        - seed: int, hash seed (default 137).
+    """
+
+    # Mapping from string names to reward classes. Kept in sync with
+    # the HyperGrid.reward_functions dict but excludes self-referential
+    # entries to prevent recursive wrapping.
+    _REWARD_CLASSES: dict[str, type[GridReward]] = {}
+
+    def __init__(self, height: int, ndim: int, **kwargs):
+        super().__init__(height, ndim, **kwargs)
+        base_reward_str: str = str(kwargs.get("base_reward", "conditional_multiscale"))
+        base_kwargs: dict = dict(kwargs.get("base_kwargs", {}))
+        self.corruption_rate: float = float(kwargs.get("corruption_rate", 0.2))
+        self.seed: int = int(kwargs.get("seed", 137))
+
+        assert (
+            0 <= self.corruption_rate < 1
+        ), f"corruption_rate must be in [0, 1), got {self.corruption_rate}"
+
+        # Lazily populate the class-level mapping on first use.
+        if not CorruptedReward._REWARD_CLASSES:
+            CorruptedReward._REWARD_CLASSES = {
+                "original": OriginalReward,
+                "cosine": CosineReward,
+                "sparse": SparseReward,
+                "deceptive": DeceptiveReward,
+                "bitwise_xor": BitwiseXORReward,
+                "multiplicative_coprime": MultiplicativeCoprimeReward,
+                "conditional_multiscale": ConditionalMultiScaleReward,
+                "uniform_random": UniformRandomReward,
+            }
+
+        assert base_reward_str in self._REWARD_CLASSES, (
+            f"Unknown base_reward: {base_reward_str}. "
+            f"Must be one of {list(self._REWARD_CLASSES.keys())}"
+        )
+        self.base_fn: GridReward = self._REWARD_CLASSES[base_reward_str](
+            height, ndim, **base_kwargs
+        )
+        self.base_reward_str = base_reward_str
+        self._is_tiered = hasattr(self.base_fn, "tier_indicators")
+
+        # Estimate per-tier replacement rates so E[promotions] ~ E[demotions].
+        self._replacement_rates: list[float] = []
+        if self._is_tiered and self.corruption_rate > 0:
+            self._estimate_replacement_rates()
+
+    def _estimate_replacement_rates(self) -> None:
+        """Sample states to estimate per-tier pass fraction, then set
+        replacement rates so promotions ~ demotions in expectation."""
+        n_samples = min(50_000, max(4096, self.height**self.ndim))
+        with torch.no_grad():
+            xs = torch.randint(
+                0, self.height, (n_samples, self.ndim), device=torch.device("cpu")
+            )
+            indicators = self.base_fn.tier_indicators(xs)  # type: ignore[attr-defined]
+            for ind in indicators:
+                frac = float(ind.float().mean().item())
+                if frac > 0 and frac < 1:
+                    # E[demoted] = frac * corruption_rate * N
+                    # E[promoted] = (1 - frac) * replacement_rate * N
+                    # Set equal: replacement_rate = corruption_rate * frac / (1 - frac)
+                    rate = self.corruption_rate * frac / (1.0 - frac)
+                    self._replacement_rates.append(min(rate, 1.0))
+                elif frac == 0:
+                    # No states pass → nothing to demote → no replacement needed
+                    self._replacement_rates.append(0.0)
+                else:
+                    # All states pass → demotions happen but no non-passing
+                    # states to promote. Use corruption_rate as fallback.
+                    self._replacement_rates.append(self.corruption_rate)
+        assert len(self._replacement_rates) == len(indicators)
+
+    def mode_threshold(self) -> float:
+        """Return the mode threshold derived from the base reward."""
+        bf = self.base_fn
+        if isinstance(bf, ConditionalMultiScaleReward):
+            return bf.mode_threshold()
+        if hasattr(bf, "tier_weights") and hasattr(bf, "R0"):
+            return float(bf.R0) + float(sum(bf.tier_weights))  # type: ignore[attr-defined]
+        if isinstance(bf, UniformRandomReward):
+            return bf.R0 + bf.R_mode
+        # Fallback for simple rewards.
+        r0 = float(bf.kwargs.get("R0", 0.0))
+        r1 = float(bf.kwargs.get("R1", 0.0))
+        r2 = float(bf.kwargs.get("R2", 0.0))
+        return r0 + r1 + r2
+
+    def __call__(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        if not self._is_tiered:
+            return self._call_simple(states_tensor)
+
+        indicators = self.base_fn.tier_indicators(states_tensor)  # type: ignore[attr-defined]
+        dev = states_tensor.device
+        batch_shape = states_tensor.shape[:-1]
+        r0 = float(getattr(self.base_fn, "R0", self.base_fn.kwargs.get("R0", 0.0)))
+        R = torch.full(batch_shape, r0, device=dev, dtype=torch.get_default_dtype())
+        tw = getattr(self.base_fn, "tier_weights", [])
+
+        tier_ok = torch.ones(batch_shape, device=dev, dtype=torch.bool)
+        for t, (ind, w) in enumerate(zip(indicators, tw)):
+            if self.corruption_rate > 0:
+                h_demote = _state_hash_uniform(states_tensor, self.seed + 2 * t)
+                h_promote = _state_hash_uniform(states_tensor, self.seed + 2 * t + 1)
+                demote = ind & (h_demote < self.corruption_rate)
+                repl_rate = (
+                    self._replacement_rates[t]
+                    if t < len(self._replacement_rates)
+                    else 0.0
+                )
+                promote = (~ind) & (h_promote < repl_rate)
+                corrupted_ind = (ind & ~demote) | promote
+            else:
+                corrupted_ind = ind
+            tier_ok = tier_ok & corrupted_ind
+            R = R + tier_ok.to(R.dtype) * float(w)
+        return R
+
+    def _call_simple(self, states_tensor: torch.Tensor) -> torch.Tensor:
+        """Fallback for non-tiered base rewards: binary corruption."""
+        base_reward = self.base_fn(states_tensor)
+        if self.corruption_rate == 0:
+            return base_reward
+
+        thr = self.mode_threshold()
+        is_base_mode = base_reward >= thr
+        h_demote = _state_hash_uniform(states_tensor, self.seed)
+
+        # Estimate replacement rate from mode fraction.
+        frac = float(is_base_mode.float().mean().item())
+        if 0 < frac < 1:
+            repl_rate = min(self.corruption_rate * frac / (1.0 - frac), 1.0)
+        else:
+            repl_rate = 0.0
+
+        h_promote = _state_hash_uniform(states_tensor, self.seed + 1)
+        demote = is_base_mode & (h_demote < self.corruption_rate)
+        promote = (~is_base_mode) & (h_promote < repl_rate)
+
+        r0 = float(getattr(self.base_fn, "R0", self.base_fn.kwargs.get("R0", 0.0)))
+        mode_r = thr  # mode-level reward for promoted states
+        result = base_reward.clone()
+        result[demote] = r0
+        result[promote] = mode_r
+        return result
 
 
 # -------------------------
@@ -2614,8 +2943,78 @@ def get_deceptive_presets(ndim: int, height: int) -> dict:
     return presets
 
 
+def get_uniform_random_presets(ndim: int, height: int) -> dict:
+    """Return five difficulty presets for UniformRandomReward.
+
+    Difficulty is controlled by ``mode_prob``: lower probability means sparser
+    modes, which are harder for GFlowNets to discover.
+    """
+    presets = {
+        "easy": dict(R0=0.1, R_mode=2.0, mode_prob=0.1, seed=42),
+        "medium": dict(R0=0.1, R_mode=2.0, mode_prob=0.01, seed=42),
+        "hard": dict(R0=0.1, R_mode=2.0, mode_prob=0.001, seed=42),
+        "challenging": dict(R0=0.1, R_mode=2.0, mode_prob=0.0001, seed=42),
+        "impossible": dict(R0=0.1, R_mode=2.0, mode_prob=0.00001, seed=42),
+    }
+    return presets
+
+
+def get_corrupted_presets(ndim: int, height: int) -> dict:
+    """Return five difficulty presets for CorruptedReward.
+
+    Each preset wraps a ``conditional_multiscale`` "medium" base and applies
+    increasing corruption. A single ``corruption_rate`` parameter controls the
+    fraction of per-tier structure that is randomized.
+
+    Difficulty progression:
+      - easy:        10% corruption -> mostly structured
+      - medium:      30% corruption -> noticeable randomness
+      - hard:        50% corruption -> half structured, half random
+      - challenging: 70% corruption -> mostly random
+      - impossible:  90% corruption -> near-total randomness
+
+    Note: requires ``height`` to be a power of 4 (same as the base reward).
+    """
+    cms_presets = get_conditional_multiscale_presets(ndim, height)
+    base_kwargs = cms_presets.get("medium", cms_presets.get("easy", {}))
+
+    presets = {
+        "easy": dict(
+            base_reward="conditional_multiscale",
+            base_kwargs=base_kwargs,
+            corruption_rate=0.1,
+            seed=137,
+        ),
+        "medium": dict(
+            base_reward="conditional_multiscale",
+            base_kwargs=base_kwargs,
+            corruption_rate=0.3,
+            seed=137,
+        ),
+        "hard": dict(
+            base_reward="conditional_multiscale",
+            base_kwargs=base_kwargs,
+            corruption_rate=0.5,
+            seed=137,
+        ),
+        "challenging": dict(
+            base_reward="conditional_multiscale",
+            base_kwargs=base_kwargs,
+            corruption_rate=0.7,
+            seed=137,
+        ),
+        "impossible": dict(
+            base_reward="conditional_multiscale",
+            base_kwargs=base_kwargs,
+            corruption_rate=0.9,
+            seed=137,
+        ),
+    }
+    return presets
+
+
 def get_reward_presets(reward_fn_str: str, ndim: int, height: int) -> dict:
-    """Return presets for a given reward name: 'bitwise_xor', 'multiplicative_coprime', 'conditional_multiscale'.
+    """Return presets for a given reward function name.
 
     Usage
     ----
@@ -2637,4 +3036,8 @@ def get_reward_presets(reward_fn_str: str, ndim: int, height: int) -> dict:
         return get_sparse_presets(ndim, height)
     if reward_fn_str == "deceptive":
         return get_deceptive_presets(ndim, height)
+    if reward_fn_str == "uniform_random":
+        return get_uniform_random_presets(ndim, height)
+    if reward_fn_str == "corrupted":
+        return get_corrupted_presets(ndim, height)
     raise ValueError(f"Unknown reward_fn_str for presets: {reward_fn_str}")
