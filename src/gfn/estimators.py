@@ -206,6 +206,12 @@ class PolicyMixin:
                 with no_conditions_exception_handler("estimator", self):
                     estimator_outputs = self(states_active)  # type: ignore[misc]
 
+        if callable(policy_kwargs.get("temperature")):
+            policy_kwargs = dict(policy_kwargs)
+            policy_kwargs["temperature"] = policy_kwargs["temperature"](
+                states_active, estimator_outputs
+            )
+
         # Build the distribution.
         dist = self.to_probability_distribution(
             states_active, estimator_outputs, **policy_kwargs
@@ -306,6 +312,12 @@ class RecurrentPolicyMixin(PolicyMixin):
         """
         estimator_outputs, new_carry = self(states_active, ctx.carry)  # type: ignore
         ctx.carry = new_carry
+        if callable(policy_kwargs.get("temperature")):
+            policy_kwargs = dict(policy_kwargs)
+            policy_kwargs["temperature"] = policy_kwargs["temperature"](
+                states_active, estimator_outputs
+            )
+
         dist = self.to_probability_distribution(
             states_active,
             estimator_outputs,
@@ -551,11 +563,14 @@ class LogitBasedEstimator(Estimator):
         masks: torch.Tensor,
         sf_index: int | None,
         sf_bias: float,
-        temperature: float,
+        temperature: float | torch.Tensor,
         debug: bool = False,
     ) -> torch.Tensor:
         """Clone and apply mask, bias and temperature to logits."""
-        assert temperature > 0.0
+        if isinstance(temperature, torch.Tensor):
+            assert torch.all(temperature > 0.0)
+        else:
+            assert temperature > 0.0
 
         x = logits.clone()
         x[~masks] = -float("inf")
@@ -584,7 +599,12 @@ class LogitBasedEstimator(Estimator):
         if sf_index is not None and sf_bias != 0.0:
             x[..., sf_index] = x[..., sf_index] - sf_bias
 
-        if temperature != 1.0:
+        if isinstance(temperature, torch.Tensor):
+            temp = temperature.to(device=x.device, dtype=x.dtype)
+            while temp.ndim < x.ndim:
+                temp = temp.unsqueeze(-1)
+            x = x / temp
+        elif temperature != 1.0:
             x = x / temperature
 
         return x
@@ -652,7 +672,7 @@ class LogitBasedEstimator(Estimator):
         masks: torch.Tensor,
         sf_index: int | None,
         sf_bias: float,
-        temperature: float,
+        temperature: float | torch.Tensor,
         epsilon: float,
         debug: bool = False,
     ) -> torch.Tensor:
@@ -810,7 +830,7 @@ class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
         states: DiscreteStates,
         module_output: torch.Tensor,
         sf_bias: float = 0.0,
-        temperature: float = 1.0,
+        temperature: float | torch.Tensor = 1.0,
         epsilon: float = 0.0,
     ) -> Categorical:
         """Returns a Categorical distribution given a batch of states and module output.
@@ -843,7 +863,10 @@ class DiscretePolicyEstimator(PolicyMixin, LogitBasedEstimator):
                 f"Module output shape {module_output.shape} does not match "
                 f"expected output dimension {self.expected_output_dim}"
             )
-            assert temperature > 0.0
+            if isinstance(temperature, torch.Tensor):
+                assert torch.all(temperature > 0.0)
+            else:
+                assert temperature > 0.0
             assert 0.0 <= epsilon <= 1.0
 
         logits = LogitBasedEstimator._compute_logits_for_distribution(
