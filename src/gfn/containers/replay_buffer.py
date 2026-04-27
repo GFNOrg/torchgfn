@@ -10,7 +10,7 @@ from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
 from gfn.env import Env
 from gfn.utils.common import Timer
-from gfn.utils.distributed import recv, send
+from gfn.utils.distributed import AsyncSendHandle, isend, recv, send
 
 
 @runtime_checkable
@@ -75,6 +75,7 @@ class ReplayBuffer:
         communication_backend: str = "mpi",
         timing: bool = False,
         async_score: bool = False,
+        async_comm: bool = False,
     ):
         """Initializes a ReplayBuffer instance.
 
@@ -96,6 +97,10 @@ class ReplayBuffer:
             async_score: If True, trajectory sends are fire-and-forget; scores
                 are collected lazily on the next add() call (1-iteration stale).
                 Decouples training throughput from buffer scoring latency.
+            async_comm: If True, uses ``isend`` for non-blocking data
+                submission (deferred score collection on next ``add()``).
+                The agent blocks only to collect the previous score and
+                to wait for the prior ``isend`` to complete.
         """
         self.env = env
         self.capacity = capacity
@@ -113,7 +118,9 @@ class ReplayBuffer:
         self.remote_buffer_freq = remote_buffer_freq
         self._add_counter = 0
         self.async_score = async_score
+        self.async_comm = async_comm
         self._pending_score: bool = False  # True when a score recv is outstanding.
+        self._send_handle: AsyncSendHandle | None = None  # Outstanding non-blocking send.
 
     @property
     def device(self) -> torch.device:
@@ -159,7 +166,21 @@ class ReplayBuffer:
             if isinstance(self.pending_container, Trajectories):
                 self.pending_container.estimator_outputs = None
             if self._add_counter % self.remote_buffer_freq == 0:
-                if self.async_score:
+                if self.async_comm:
+
+                    with Timer(self.timing_data, "wait_previous_send", enabled=self.timing):
+                        self._wait_previous_send()
+
+                    with Timer(self.timing_data, "wait_pending_score", enabled=self.timing):
+                        stale_score = self._collect_pending_score()
+
+                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
+                        self._isend_and_defer_score(self.pending_container)
+
+                    self.pending_container = None
+
+                    return stale_score
+                elif self.async_score:
                     # Collect stale score from previous send (if any), then
                     # fire-and-forget the new batch.
                     stale_score = self._collect_pending_score()
@@ -197,16 +218,55 @@ class ReplayBuffer:
         self._pending_score = False
         return score
 
+    def _isend_and_defer_score(self, training_container: ContainerUnion) -> None:
+        """Non-blocking send (isend), deferred score: fire-and-forget data, collect score on next add().
+
+        The send handle is kept alive in ``_send_handle`` until the next
+        call to ``_wait_previous_send``.
+        """
+        assert self.remote_manager_rank is not None
+        msg = Message(MessageType.DATA, training_container)
+        with Timer(self.timing_data, "serialize_objs", enabled=self.timing):
+            msg_tensor = msg.serialize()
+        if self.timing:
+            self.timing_data.setdefault("send_bytes", []).append(
+                float(msg_tensor.numel() * msg_tensor.element_size())
+            )
+        with Timer(self.timing_data, "isend_data", enabled=self.timing):
+            self._send_handle = isend(
+                msg_tensor,
+                dst_rank=self.remote_manager_rank,
+                backend=self.communication_backend,
+            )
+        self._pending_score = True
+
+    def _wait_previous_send(self) -> None:
+        """Block until the previous non-blocking send has completed.
+
+        This is typically near-instantaneous because MPI internally buffers
+        the data, but guarantees the send buffer can be safely reused.
+        """
+        if self._send_handle is not None:
+            with Timer(self.timing_data, "wait_send", enabled=self.timing):
+                self._send_handle.wait()
+            self._send_handle = None
+
     def drain_pending_score(self, timeout_sec: float = 30.0) -> dict[str, float] | None:
         """Drain any outstanding async score before shutdown.
 
-        Should be called before sending the EXIT signal when async_score is
-        enabled, to avoid leaving the buffer manager with an undelivered
-        response.
+        Should be called before sending the EXIT signal when ``async_score``
+        or ``async_comm`` is enabled, to avoid leaving the buffer manager
+        with an undelivered response.
+
+        For ``async_comm`` mode this also waits for the outstanding
+        non-blocking send to complete.
 
         Uses a timeout to avoid hanging indefinitely if the buffer manager
         has crashed.  Returns None on timeout (score is lost).
         """
+        # Ensure any outstanding isend is flushed first.
+        self._wait_previous_send()
+
         if not self._pending_score:
             return None
 
@@ -242,6 +302,10 @@ class ReplayBuffer:
         msg = Message(MessageType.DATA, training_container)
         with Timer(self.timing_data, "serialize_objs", enabled=self.timing):
             msg_tensor = msg.serialize()
+        if self.timing:
+            self.timing_data.setdefault("send_bytes", []).append(
+                float(msg_tensor.numel() * msg_tensor.element_size())
+            )
         with Timer(self.timing_data, "send_data", enabled=self.timing):
             send(
                 msg_tensor,
@@ -399,7 +463,25 @@ class ReplayBuffer:
             total = sum(times)
             count = len(times)
             mean = total / count if count > 0 else 0.0
-            log_str += f"{key}: total={total:.4f}s, count={count}, mean={mean:.4f}s\n"
+            if key == "send_bytes":
+                log_str += (
+                    f"  {key}: total={total / 1e6:.1f} MB, "
+                    f"count={count}, avg={mean / 1e6:.2f} MB\n"
+                )
+            else:
+                log_str += (
+                    f"  {key}: total={total:.4f}s, "
+                    f"count={count}, mean={mean:.4f}s\n"
+                )
+        # Effective bandwidth (send_bytes / send_data time).
+        send_bytes = self.timing_data.get("send_bytes", [])
+        send_times = self.timing_data.get("send_data", [])
+        if send_bytes and send_times:
+            total_bytes = sum(send_bytes)
+            total_time = sum(send_times)
+            if total_time > 0:
+                bw = (total_bytes / 1e6) / total_time
+                log_str += f"  effective_send_bandwidth: {bw:.1f} MB/s\n"
         return log_str
 
 
@@ -432,6 +514,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         communication_backend: str = "mpi",
         timing: bool = False,
         async_score: bool = False,
+        async_comm: bool = False,
     ):
         """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
 
@@ -449,6 +532,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             timing: If True, record operation durations for profiling.
             async_score: If True, trajectory sends are fire-and-forget; scores
                 are collected lazily on the next add() call.
+            async_comm: If True, fully non-blocking send and recv.
         """
         super().__init__(
             env,
@@ -459,6 +543,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             communication_backend=communication_backend,
             timing=timing,
             async_score=async_score,
+            async_comm=async_comm,
         )
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance

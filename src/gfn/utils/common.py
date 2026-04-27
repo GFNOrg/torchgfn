@@ -388,3 +388,68 @@ class Timer:
             self.timing_dict[self.key].append(self.elapsed)
         else:
             self.elapsed = 0.0
+
+def timing_print_summary(
+    timing_dict: dict[str, list[float]],
+    rank: int,
+    train_comm=None,
+    num_training_ranks: int = 1,
+) -> None:
+    """Print per-phase mean ± std timing summary.
+
+    When *train_comm* is provided, rank 0 gathers all ranks' timing data
+    via MPI and prints a consolidated table.  Other ranks participate in the
+    gather but do not print.  When *train_comm* is ``None``, only the local
+    rank's data is printed (single-process fallback).
+    """
+    if not timing_dict:
+        return
+
+    if train_comm is not None and num_training_ranks > 1:
+        import pickle
+        local_bytes = pickle.dumps(timing_dict)
+        all_bytes = train_comm.allgather(local_bytes)
+        if rank != 0:
+            return
+        all_dicts: list[dict[str, list[float]]] = [
+            pickle.loads(b) for b in all_bytes
+        ]
+    else:
+        all_dicts = [timing_dict]
+
+    # Discover all phases across all ranks (preserving insertion order).
+    all_phases: list[str] = []
+    seen: set[str] = set()
+    for td in all_dicts:
+        for phase in td:
+            if phase not in seen:
+                all_phases.append(phase)
+                seen.add(phase)
+
+    for r, td in enumerate(all_dicts):
+        sample_vals = next((v for v in td.values() if v), None)
+        if not sample_vals:
+            continue
+        n_iters = len(sample_vals)
+        print(
+            f"\n+ Rank {r} timing summary ({n_iters} iters):",
+            flush=True,
+        )
+        rank_total = 0.0
+        for phase in all_phases:
+            vals = td.get(phase, [])
+            if vals:
+                arr = np.array(vals)
+                total = float(arr.sum())
+                if phase != "iter_total":
+                    rank_total += total
+                print(
+                    f"    {phase:25s}: total={total:8.3f}s  "
+                    f"mean={arr.mean():.4f}  std={arr.std():.4f}  "
+                    f"min={arr.min():.4f}  max={arr.max():.4f}",
+                    flush=True,
+                )
+        print(
+            f"    {'TOTAL (excl iter_total)':25s}: {rank_total:8.3f}s",
+            flush=True,
+        )
