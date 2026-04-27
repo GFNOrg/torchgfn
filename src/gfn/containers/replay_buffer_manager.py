@@ -81,16 +81,14 @@ class ReplayBufferManager:
         """
         handler = self._handle_message_async if async_send else self._handle_message_sync
         while self.is_running:
-            with Timer(self._timing_data, 'recv', enabled=self.timing):
+            with Timer(self._timing_data, "recv", enabled=self.timing):
                 sender_rank, msg, msg_data_len = self._recv_object()
             handler(sender_rank, msg, msg_data_len)
         self._print_timing_summary()
 
     def _prune_completed_sends(self) -> None:
         """Remove completed non-blocking sends from the pending list."""
-        self._pending_sends = [
-            h for h in self._pending_sends if not h.is_complete()
-        ]
+        self._pending_sends = [h for h in self._pending_sends if not h.is_complete()]
 
     def _handle_message_async(self, sender_rank: int, msg, msg_data_len: int = 0):
         """Dispatch a message using non-blocking ``isend`` for responses."""
@@ -98,13 +96,13 @@ class ReplayBufferManager:
         self._prune_completed_sends()
 
         if msg.message_type == MessageType.DATA:
-            with Timer(self._timing_data, 'replay_add', enabled=self.timing):
+            with Timer(self._timing_data, "replay_add", enabled=self.timing):
                 self.replay_buffer.add(msg.message_data)
-            with Timer(self._timing_data, 'scoring', enabled=self.timing):
+            with Timer(self._timing_data, "scoring", enabled=self.timing):
                 score_dict = self.scoring_function(
                     msg.message_data, sender_rank=sender_rank
                 )
-            with Timer(self._timing_data, 'send', enabled=self.timing):
+            with Timer(self._timing_data, "send", enabled=self.timing):
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()
                 response_bytes = message_tensor.numel() * message_tensor.element_size()
@@ -115,12 +113,17 @@ class ReplayBufferManager:
                 )
                 self._pending_sends.append(handle)
 
-            stats = self._comm_stats.setdefault(sender_rank, {
-                'n_requests': 0, 'bytes_recv': 0, 'bytes_sent': 0,
-            })
-            stats['n_requests'] += 1
-            stats['bytes_recv'] += msg_data_len
-            stats['bytes_sent'] += response_bytes
+            stats = self._comm_stats.setdefault(
+                sender_rank,
+                {
+                    "n_requests": 0,
+                    "bytes_recv": 0,
+                    "bytes_sent": 0,
+                },
+            )
+            stats["n_requests"] += 1
+            stats["bytes_recv"] += msg_data_len
+            stats["bytes_sent"] += response_bytes
 
         elif msg.message_type == MessageType.GET_METADATA:
             metadata = self._compute_metadata()
@@ -153,13 +156,13 @@ class ReplayBufferManager:
         is in flight, making it preferable when all ranks share a CPU.
         """
         if msg.message_type == MessageType.DATA:
-            with Timer(self._timing_data, 'replay_add', enabled=self.timing):
+            with Timer(self._timing_data, "replay_add", enabled=self.timing):
                 self.replay_buffer.add(msg.message_data)
-            with Timer(self._timing_data, 'scoring', enabled=self.timing):
+            with Timer(self._timing_data, "scoring", enabled=self.timing):
                 score_dict = self.scoring_function(
                     msg.message_data, sender_rank=sender_rank
                 )
-            with Timer(self._timing_data, 'send', enabled=self.timing):
+            with Timer(self._timing_data, "send", enabled=self.timing):
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()
                 response_bytes = message_tensor.numel() * message_tensor.element_size()
@@ -169,12 +172,17 @@ class ReplayBufferManager:
                     backend=self.communication_backend,
                 )
 
-            stats = self._comm_stats.setdefault(sender_rank, {
-                'n_requests': 0, 'bytes_recv': 0, 'bytes_sent': 0,
-            })
-            stats['n_requests'] += 1
-            stats['bytes_recv'] += msg_data_len
-            stats['bytes_sent'] += response_bytes
+            stats = self._comm_stats.setdefault(
+                sender_rank,
+                {
+                    "n_requests": 0,
+                    "bytes_recv": 0,
+                    "bytes_sent": 0,
+                },
+            )
+            stats["n_requests"] += 1
+            stats["bytes_recv"] += msg_data_len
+            stats["bytes_sent"] += response_bytes
 
         elif msg.message_type == MessageType.GET_METADATA:
             metadata = self._compute_metadata()
@@ -235,9 +243,9 @@ class ReplayBufferManager:
 
     def _print_timing_summary(self) -> None:
         """Print communication and timing stats at shutdown."""
-        total_requests = sum(s['n_requests'] for s in self._comm_stats.values())
-        total_recv = sum(s['bytes_recv'] for s in self._comm_stats.values())
-        total_sent = sum(s['bytes_sent'] for s in self._comm_stats.values())
+        total_requests = sum(s["n_requests"] for s in self._comm_stats.values())
+        total_recv = sum(s["bytes_recv"] for s in self._comm_stats.values())
+        total_sent = sum(s["bytes_sent"] for s in self._comm_stats.values())
 
         print(
             f"\n{'=' * 60}\n"
@@ -268,7 +276,7 @@ class ReplayBufferManager:
                 f"{'mean':>10s} {'min':>10s} {'max':>10s}",
                 flush=True,
             )
-            for phase in ['recv', 'replay_add', 'scoring', 'send']:
+            for phase in ["recv", "replay_add", "scoring", "send"]:
                 vals = self._timing_data.get(phase, [])
                 if not vals:
                     continue

@@ -389,6 +389,7 @@ class Timer:
         else:
             self.elapsed = 0.0
 
+
 def timing_print_summary(
     timing_dict: dict[str, list[float]],
     rank: int,
@@ -407,13 +408,12 @@ def timing_print_summary(
 
     if train_comm is not None and num_training_ranks > 1:
         import pickle
+
         local_bytes = pickle.dumps(timing_dict)
         all_bytes = train_comm.allgather(local_bytes)
         if rank != 0:
             return
-        all_dicts: list[dict[str, list[float]]] = [
-            pickle.loads(b) for b in all_bytes
-        ]
+        all_dicts: list[dict[str, list[float]]] = [pickle.loads(b) for b in all_bytes]
     else:
         all_dicts = [timing_dict]
 

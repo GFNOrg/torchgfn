@@ -120,7 +120,9 @@ class ReplayBuffer:
         self.async_score = async_score
         self.async_comm = async_comm
         self._pending_score: bool = False  # True when a score recv is outstanding.
-        self._send_handle: AsyncSendHandle | None = None  # Outstanding non-blocking send.
+        self._send_handle: AsyncSendHandle | None = (
+            None  # Outstanding non-blocking send.
+        )
 
     @property
     def device(self) -> torch.device:
@@ -168,10 +170,14 @@ class ReplayBuffer:
             if self._add_counter % self.remote_buffer_freq == 0:
                 if self.async_comm:
 
-                    with Timer(self.timing_data, "wait_previous_send", enabled=self.timing):
+                    with Timer(
+                        self.timing_data, "wait_previous_send", enabled=self.timing
+                    ):
                         self._wait_previous_send()
 
-                    with Timer(self.timing_data, "wait_pending_score", enabled=self.timing):
+                    with Timer(
+                        self.timing_data, "wait_pending_score", enabled=self.timing
+                    ):
                         stale_score = self._collect_pending_score()
 
                     with Timer(self.timing_data, "send_objs", enabled=self.timing):
@@ -470,8 +476,7 @@ class ReplayBuffer:
                 )
             else:
                 log_str += (
-                    f"  {key}: total={total:.4f}s, "
-                    f"count={count}, mean={mean:.4f}s\n"
+                    f"  {key}: total={total:.4f}s, " f"count={count}, mean={mean:.4f}s\n"
                 )
         # Effective bandwidth (send_bytes / send_data time).
         send_bytes = self.timing_data.get("send_bytes", [])
