@@ -52,6 +52,8 @@ class ReplayBufferManager:
                 env,
                 capacity=self.capacity,
                 communication_backend=self.communication_backend,
+                timing=self.timing,
+                lazy_sort=True,
             )
         else:
             self.replay_buffer = ReplayBuffer(
@@ -61,6 +63,8 @@ class ReplayBufferManager:
                 remote_manager_rank=self.remote_manager_rank,
                 remote_buffer_freq=1,
                 communication_backend=self.communication_backend,
+                timing=self.timing,
+                lazy_sort=True,
             )
 
     def default_scoring_function(self, obj, sender_rank: int = -1) -> dict[str, float]:
