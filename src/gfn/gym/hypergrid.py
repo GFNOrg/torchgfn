@@ -481,16 +481,21 @@ class HyperGrid(DiscreteEnv):
             return self.reward_fn.mode_threshold()
 
         # For other compositional rewards with tiered structure, mark mode as
-        # achieving the highest tier.
-        if isinstance(
-            self.reward_fn,
-            (BitwiseXORReward, MultiplicativeCoprimeReward),
-        ):
-            r0 = float(getattr(self.reward_fn, "R0", 0.0))
-            tw = getattr(self.reward_fn, "tier_weights", [])
-            if not isinstance(tw, (list, tuple)) or len(tw) == 0:
+        # achieving the highest tier (plus head bonus for K-rule bitxor).
+        if isinstance(self.reward_fn, BitwiseXORReward):
+            r0 = float(self.reward_fn.R0)
+            tw = self.reward_fn.tier_weights
+            if len(tw) == 0:
                 raise ValueError(
-                    "Tiered reward missing `tier_weights`; cannot derive mode threshold."
+                    "BitwiseXORReward missing `tier_weights`; cannot derive mode threshold."
+                )
+            return r0 + float(sum(tw)) + float(self.reward_fn.head_weight)
+        if isinstance(self.reward_fn, MultiplicativeCoprimeReward):
+            r0 = float(self.reward_fn.R0)
+            tw = self.reward_fn.tier_weights
+            if len(tw) == 0:
+                raise ValueError(
+                    "MultiplicativeCoprimeReward missing `tier_weights`; cannot derive mode threshold."
                 )
             return r0 + float(sum(tw))
 
@@ -743,6 +748,8 @@ class HyperGrid(DiscreteEnv):
             return self._exists_bitwise_xor(thr)
         if isinstance(self.reward_fn, MultiplicativeCoprimeReward):
             return self._exists_multiplicative_coprime(thr)
+        if isinstance(self.reward_fn, ConditionalMultiScaleReward):
+            return self._exists_conditional_multiscale(thr)
         if isinstance(self.reward_fn, (UniformRandomReward, CorruptedReward)):
             return self._exists_random_or_corrupted(thr)
         return self._exists_fallback_random(thr)
@@ -863,85 +870,182 @@ class HyperGrid(DiscreteEnv):
     def _exists_bitwise_xor(self, thr: float) -> bool:
         """Deterministic feasibility check for ``BitwiseXORReward``.
 
-        The top-tier threshold ``R0 + sum(tier_weights)`` is reached iff a
-        state's constrained bits satisfy the full cumulative GF(2) system
-        ``full_A @ bits = full_c``. Feasibility of this system is therefore
-        necessary and sufficient for a mode to exist; no random sampling
-        is required. An empty system (no tiers active) means every state
-        is a mode, which ``_solve_gf2_has_solution`` returns True for.
+        Builds the combined GF(2) system [trunk; selector→0; head_0]·b =
+        [c_trunk; 0; c_head_0] for rule 0 and verifies consistency. This works
+        uniformly for n_rules=1 (k_select=0, selector empty) and for K-rule
+        (per-rule coverage was already verified at __init__ by
+        _validate_rule_coverage; this re-checks rule 0 as a defense-in-depth).
 
-        Note: for non-power-of-two heights the bit-space is a superset of
-        the valid coord range; a feasible bit-assignment may decode to an
-        out-of-grid coord. Presets here use power-of-two heights, so every
-        feasible bit-assignment is a valid state.
+        Feasibility of this combined GF(2) system is necessary and sufficient
+        for a mode to exist; no random sampling is required. Presets use
+        power-of-two heights so every feasible bit-assignment is a valid
+        state (raw coord < height).
         """
         rf = self.reward_fn
-        return self._solve_gf2_has_solution(rf._full_A, rf._full_c)
+        sel_c = torch.zeros(rf.k_select, dtype=torch.long)
+        head_A_0 = rf._head_A_per_rule[0]
+        head_c_0 = rf._head_c_per_rule[0]
+        full_A = torch.cat([rf._full_A, rf._selector_matrix, head_A_0], dim=0)
+        full_c = torch.cat([rf._full_c, sel_c, head_c_0], dim=0)
+        if full_A.numel() == 0:
+            return True
+        return self._solve_gf2_has_solution(full_A, full_c)
 
-    def _exists_multiplicative_coprime(self, thr: float) -> bool:
+    def _exists_multiplicative_coprime(self, thr: float) -> bool:  # noqa: C901
         """Number-theoretic constructive check for ``MultiplicativeCoprimeReward``.
 
+        For each rule, factors the rule's target LCM over allowed primes,
+        tries permutations of prime-to-active-dim assignments, and checks
+        coprime + grid-bound + selector-match. Returns True iff at least one
+        rule has a witness state whose selector maps back to that rule's
+        index AND whose reward reaches the mode threshold.
+
         The reward shifts raw coords by +1 internally (raw 0 → internal 1),
-        so the mode-satisfying assignment must be built in *internal* space
-        (prime powers the reward expects to see) and then converted to raw
-        state via ``raw = internal - 1``. The internal value ``p**exp`` fits
-        in the grid iff ``p**exp <= height`` (raw ≤ height-1).
+        so witness states are constructed in raw space as ``p**exp - 1`` per
+        active dim, with coprime pair checks evaluated on the post-shift
+        internal values.
 
-        Constructs a candidate by factoring the target LCM over the allowed
-        primes, assigning each prime power to a separate active dim, and
-        verifying coprimality and grid bounds — all in internal space.
+        At n_rules=1 the selector is trivially 0 and only rule 0 is tried,
+        recovering the legacy behavior.
         """
-        primes: list[int] = [int(p) for p in self.reward_fn.primes]
-        caps: list[int] = [int(c) for c in self.reward_fn.exponent_caps]
-        active = list(self.reward_fn.active_dims)
-        coprime_pairs = self.reward_fn.coprime_pairs or []
+        rf = self.reward_fn
+        primes: list[int] = [int(p) for p in rf.primes]
+        caps: list[int] = [int(c) for c in rf.exponent_caps]
+        active = list(rf.active_dims)
+        coprime_pairs = rf.coprime_pairs or []
         max_exponent = int(caps[-1])
-        target_lcms = self.reward_fn.target_lcms
-        target = None if target_lcms is None else target_lcms[-1]
+        rule_targets = rf.rule_targets
 
-        # Internal (post +1-shift) values. Origin raw=0 → internal=1, which
-        # factors trivially over any prime set.
-        internal = [1] * self.ndim
-
-        if target is not None:
-            target = int(target)
-
-            # Factor target LCM over the allowed primes.
-            required_prime_powers: list[tuple[int, int]] = []
-            unfactored_remainder = target
+        # No per-rule head targets → mode is determined by trunk's tier-T
+        # target_lcms[-1] (or trivially the all-zeros state if both are None).
+        # In this regime we ignore the selector match (head trivially passes
+        # for every rule), so any state achieving the trunk LCM is a witness.
+        if not rule_targets or all(t is None for t in rule_targets):
+            trunk_target = rf.target_lcms[-1] if rf.target_lcms else None
+            if trunk_target is None:
+                x = torch.zeros(self.ndim, dtype=torch.long)
+                r = float(rf(x.unsqueeze(0))[0])
+                return r >= thr - EPS_REWARD_CMP
+            # Factor trunk_target and search permutations like the per-rule
+            # branch, but with no selector constraint.
+            required: list[tuple[int, int]] = []
+            remaining = int(trunk_target)
             for p in primes:
                 exp = 0
-                while unfactored_remainder % p == 0:
-                    unfactored_remainder //= p
+                while remaining % p == 0:
+                    remaining //= p
                     exp += 1
                 if exp > 0:
-                    # Internal value p**exp must fit in [1, height].
                     if exp > max_exponent or (p**exp) > self.height:
                         return False
-                    required_prime_powers.append((p, exp))
-
-            # All prime factors must come from the allowed set.
-            if unfactored_remainder != 1:
+                    required.append((p, exp))
+            if remaining != 1 or len(required) > len(active):
                 return False
-            # Need at most one dimension per distinct prime power.
-            if len(required_prime_powers) > len(active):
-                return False
-
-            # Assign each prime power (as internal value) to a separate active dim.
-            for (p, exp), dim in zip(required_prime_powers, active):
-                internal[dim] = p**exp
-
-            # Verify coprime pair constraints on internal values.
-            for i, j in coprime_pairs:
-                if math.gcd(internal[active[i]], internal[active[j]]) != 1:
-                    return False
-
-        # Convert internal -> raw for the reward call. Raw values must fit [0, height).
-        x = torch.tensor([v - 1 for v in internal], dtype=torch.long)
-        if int(x.max()) >= self.height or int(x.min()) < 0:
+            for perm in itertools.permutations(active, len(required)):
+                x = torch.zeros(self.ndim, dtype=torch.long)
+                for (p, e), dim in zip(required, perm):
+                    x[dim] = p**e - 1
+                if int(x.max()) >= self.height:
+                    continue
+                coprime_ok = True
+                for i, j in coprime_pairs:
+                    if i >= len(active) or j >= len(active):
+                        continue
+                    vi = int(x[active[i]]) + 1
+                    vj = int(x[active[j]]) + 1
+                    if math.gcd(vi, vj) != 1:
+                        coprime_ok = False
+                        break
+                if not coprime_ok:
+                    continue
+                r = float(rf(x.unsqueeze(0))[0])
+                if r >= thr - EPS_REWARD_CMP:
+                    return True
             return False
-        r = float(self.reward_fn(x.unsqueeze(0))[0])
-        return r >= thr - EPS_REWARD_CMP
+
+        for k, target in enumerate(rule_targets):
+            if target is None:
+                # Rule with no LCM constraint passes head trivially. Try
+                # all-zeros and check selector.
+                x = torch.zeros(self.ndim, dtype=torch.long)
+                if int(rf._selector((x[active] + 1).unsqueeze(0))[0]) == k:
+                    r = float(rf(x.unsqueeze(0))[0])
+                    if r >= thr - EPS_REWARD_CMP:
+                        return True
+                continue
+
+            # Factor target LCM over allowed primes.
+            required: list[tuple[int, int]] = []
+            remaining = int(target)
+            for p in primes:
+                exp = 0
+                while remaining % p == 0:
+                    remaining //= p
+                    exp += 1
+                if exp > 0:
+                    if exp > max_exponent or (p**exp) > self.height:
+                        break
+                    required.append((p, exp))
+            else:
+                if remaining != 1 or len(required) > len(active):
+                    continue
+                # Try permutations of prime → dim assignment until one matches
+                # the selector and passes coprime/grid constraints.
+                for perm in itertools.permutations(active, len(required)):
+                    x = torch.zeros(self.ndim, dtype=torch.long)
+                    for (p, e), dim in zip(required, perm):
+                        x[dim] = p**e - 1
+                    if int(x.max()) >= self.height:
+                        continue
+                    # Coprime check on post-shift values.
+                    coprime_ok = True
+                    for i, j in coprime_pairs:
+                        if i >= len(active) or j >= len(active):
+                            continue
+                        vi = int(x[active[i]]) + 1
+                        vj = int(x[active[j]]) + 1
+                        if math.gcd(vi, vj) != 1:
+                            coprime_ok = False
+                            break
+                    if not coprime_ok:
+                        continue
+                    # Selector must map back to this rule.
+                    if int(rf._selector((x[active] + 1).unsqueeze(0))[0]) != k:
+                        continue
+                    r = float(rf(x.unsqueeze(0))[0])
+                    if r >= thr - EPS_REWARD_CMP:
+                        return True
+        return False
+
+    def _exists_conditional_multiscale(self, thr: float) -> bool:
+        """Constructive existence check for ConditionalMultiScaleReward.
+
+        With filter_shift=[0,...,0] (default) the all-zeros state is always a
+        mode: every per-tier filter passes 0 since (0 + 0) mod B = 0 < f. With
+        non-zero filter_shift, we try a few "all-same-v" candidate states
+        chosen so the MSD passes tier 0; one of them typically passes all
+        deeper tiers when the per-rule shift_coeffs map zero lower digits to
+        zero, leaving the constant filter_shift[t] as the only contribution.
+        """
+        rf = self.reward_fn
+        with torch.no_grad():
+            # Try all-same v over digit values that pass tier 0's filter.
+            # MSD passes iff (msd + filter_shift[0]) mod B < f.
+            base = rf.base
+            f = rf.filter_width
+            fs0 = rf.filter_shift[0] if hasattr(rf, "filter_shift") else 0
+            msb_factor = base ** (rf.num_levels - 1)
+            for msd in range(base):
+                if (msd + fs0) % base >= f:
+                    continue
+                v = msd * msb_factor
+                xs = torch.full(
+                    (1, self.ndim), v, dtype=torch.long, device=torch.device("cpu")
+                )
+                r = rf(xs)[0].item()
+                if r >= thr - EPS_REWARD_CMP:
+                    return True
+        return self._exists_fallback_random(thr)
 
     def _exists_random_or_corrupted(self, thr: float) -> bool:
         """Check for UniformRandomReward or CorruptedReward.
@@ -998,6 +1102,54 @@ class HyperGrid(DiscreteEnv):
             xs = torch.randint(0, self.height, (B, self.ndim), device=device)
             rr = self.reward_fn(xs)
             return bool((rr >= thr - EPS_REWARD_CMP).any().item())
+
+    @staticmethod
+    def _solve_gf2_witness(
+        A: torch.Tensor, c: torch.Tensor, n_vars: int
+    ) -> torch.Tensor | None:
+        """Return a witness solution to A·b = c over GF(2), or None if none exists.
+
+        b has length n_vars. A is reduced via Gaussian elimination; free
+        variables are set to 0.
+        """
+        if A.numel() == 0:
+            return torch.zeros(n_vars, dtype=torch.long)
+        A = A.clone().detach().to(dtype=torch.uint8, device=torch.device("cpu")) & 1
+        c = c.clone().detach().to(dtype=torch.uint8, device=torch.device("cpu")) & 1
+
+        n_eq, n_vars_check = A.shape
+        assert n_vars == n_vars_check
+        pivot_cols: list[int] = []
+        pivot_row = 0
+        for col in range(n_vars):
+            cand = None
+            for r in range(pivot_row, n_eq):
+                if A[r, col]:
+                    cand = r
+                    break
+            if cand is None:
+                continue
+            if cand != pivot_row:
+                A[[pivot_row, cand]] = A[[cand, pivot_row]]
+                c[[pivot_row, cand]] = c[[cand, pivot_row]]
+            for r in range(n_eq):
+                if r != pivot_row and A[r, col]:
+                    A[r] ^= A[pivot_row]
+                    c[r] ^= c[pivot_row]
+            pivot_cols.append(col)
+            pivot_row += 1
+            if pivot_row == n_eq:
+                break
+
+        # Inconsistent if any zero row has nonzero RHS.
+        for r in range(pivot_row, n_eq):
+            if c[r]:
+                return None
+
+        b = torch.zeros(n_vars, dtype=torch.long)
+        for r, col in enumerate(pivot_cols):
+            b[col] = int(c[r])
+        return b
 
     @staticmethod
     def _solve_gf2_has_solution(A: torch.Tensor, c: torch.Tensor) -> bool:
@@ -1490,6 +1642,28 @@ class BitwiseXORReward(GridReward):
     and the number of constrained dimensions. Typical distance from origin for
     valid modes scales roughly like (constrained_dims · 2^{highest_bit}).
 
+    K-rule structure (n_rules >= 1):
+        - Trunk: the per-tier parity stack above, shared across all rules.
+        - Selector: a fixed GF(2) matrix S of shape (k_select, M*B) projects
+          bits to a rule index r = pack(S·b mod 2) ∈ [0, n_rules). Here
+          k_select = ceil(log2(n_rules)); for n_rules=1, k_select=0 and r is
+          always 0.
+        - Head: per-rule parity matrix H_r of shape (head_check_count, M),
+          applied at every bit-plane in head_bit_range. Mode iff trunk passes
+          AND H_r·b == c_r at the head's bit-planes.
+
+        Reward:
+            R = R0 + Σ_t w_t·1[trunk_0..t pass]
+                  + head_weight · 1[trunk all pass ∧ head_{σ(b)} pass]
+
+        At n_rules=1 with head_check_count=0 and head_weight=0 (defaults), the
+        head is empty and the K-rule code path collapses to the legacy reward
+        bit-exactly.
+
+        Total mode count is invariant in n_rules when it's a power of 2 — the
+        selector adds k_select bits that partition the trunk-passing space,
+        and per-rule head adds head_check_count·n_head_bits bits per coset.
+
     Comparison with other compositional rewards:
         - MultiplicativeCoprimeReward: number-theoretic (prime factorization);
           knowledge composition — learning prime structure enables coprimality
@@ -1502,7 +1676,9 @@ class BitwiseXORReward(GridReward):
           Modes are non-local (algebraic, not spatial).
     """
 
-    def __init__(self, height: int, ndim: int, **kwargs):
+    _RULE_SEED_STRIDE: int = 1_000_003
+
+    def __init__(self, height: int, ndim: int, **kwargs):  # noqa: C901
         super().__init__(height, ndim, **kwargs)
         self.R0: float = float(kwargs.get("R0", 0.0))
         tier_weights = kwargs.get("tier_weights", [1.0, 10.0, 100.0])
@@ -1636,6 +1812,235 @@ class BitwiseXORReward(GridReward):
                 )
                 break
 
+        # --- K-rule selector + per-rule heads ---
+        self.n_rules: int = int(kwargs.get("n_rules", 1))
+        assert self.n_rules >= 1, f"n_rules must be >= 1, got {self.n_rules}"
+        self.head_check_count: int = int(kwargs.get("head_check_count", 0))
+        head_seed = kwargs.get("head_seed", None)
+        # head_seed is required whenever K-rule structure is non-trivial:
+        # either n_rules > 1 (selector exists) or head_check_count > 0 (head matrix).
+        if head_seed is None and (self.n_rules > 1 or self.head_check_count > 0):
+            raise ValueError(
+                "head_seed must be provided when n_rules > 1 or "
+                f"head_check_count > 0; got None (n_rules={self.n_rules}, "
+                f"head_check_count={self.head_check_count})."
+            )
+        self.head_seed: int = int(head_seed) if head_seed is not None else 0
+        self.head_weight: float = float(kwargs.get("head_weight", 0.0))
+        if self.head_check_count == 0 and self.head_weight != 0.0:
+            raise ValueError(
+                "head_weight is non-zero but head_check_count=0; head will "
+                "always pass and contribute trivially. Set head_check_count > 0."
+            )
+        head_bit_range = kwargs.get("head_bit_range", None)
+        if head_bit_range is None:
+            head_bit_range = (0, B - 1) if self.head_check_count > 0 else (0, -1)
+        self.head_bit_range: tuple[int, int] = (
+            int(head_bit_range[0]),
+            int(head_bit_range[1]),
+        )
+        if self.head_check_count > 0:
+            assert self.head_bit_range[0] <= self.head_bit_range[1], (
+                f"head_bit_range={self.head_bit_range} is empty but "
+                f"head_check_count={self.head_check_count} > 0."
+            )
+        self.k_select: int = (
+            int(math.ceil(math.log2(self.n_rules))) if self.n_rules > 1 else 0
+        )
+
+        # Build selector matrix (shared across rules). Re-seed up to a few
+        # times if the random selector accidentally aligns with the trunk
+        # (rank deficient combined system). At M*B >= 16 + k_select this is
+        # rare in practice, but assert independence loudly if it persists.
+        if self.k_select > 0:
+            trunk_rank_for_indep = (
+                _gf2_rank(self._full_A) if self._full_A.numel() > 0 else 0
+            )
+            for attempt in range(8):
+                S, _ = _gf2_random_fullrank(
+                    self.k_select,
+                    M * B,
+                    self.head_seed + attempt * self._RULE_SEED_STRIDE,
+                )
+                S_long = S.long()
+                if self._full_A.numel() == 0:
+                    combined_rank = _gf2_rank(S_long)
+                else:
+                    combined_rank = _gf2_rank(torch.cat([self._full_A, S_long], dim=0))
+                if combined_rank == trunk_rank_for_indep + self.k_select:
+                    break
+            else:
+                raise ValueError(
+                    f"BitwiseXORReward: could not find a selector matrix "
+                    f"linearly independent of the trunk after 8 attempts "
+                    f"(head_seed={self.head_seed}). Trunk rank={trunk_rank_for_indep}, "
+                    f"k_select={self.k_select}, M*B={M*B}."
+                )
+            self._selector_matrix = S_long
+        else:
+            self._selector_matrix = torch.zeros(0, M * B, dtype=torch.long)
+
+        # Build head_A (shared across rules) and per-rule head_c. Sharing head_A
+        # guarantees uniform per-rule mode count (rank is invariant in c). Per-
+        # rule head_c is constructed from a witness b_rule that solves
+        # trunk + selector→rule, so the combined system is consistent for every
+        # rule by construction.
+        lo_h, hi_h = self.head_bit_range
+        n_head_bits = max(0, hi_h - lo_h + 1)
+        r_head_total = self.head_check_count * n_head_bits
+        self._head_c_per_rule = torch.zeros(self.n_rules, r_head_total, dtype=torch.long)
+        if self.head_check_count > 0 and n_head_bits > 0:
+            A_r, _ = _gf2_random_fullrank(
+                self.head_check_count, M, self.head_seed + self._RULE_SEED_STRIDE
+            )
+            self._head_A = torch.zeros(r_head_total, M * B, dtype=torch.long)
+            row = 0
+            for bb in range(lo_h, hi_h + 1):
+                for cd in range(M):
+                    self._head_A[row : row + self.head_check_count, cd * B + bb] = A_r[
+                        :, cd
+                    ].long()
+                row += self.head_check_count
+            # Per-rule head_c via witness construction.
+            for rule in range(self.n_rules):
+                sel_target = torch.tensor(
+                    [(rule >> i) & 1 for i in range(self.k_select)], dtype=torch.long
+                )
+                witness_A = torch.cat([self._full_A, self._selector_matrix], dim=0)
+                witness_c = torch.cat([self._full_c, sel_target], dim=0)
+                b_rule = HyperGrid._solve_gf2_witness(witness_A, witness_c, M * B)
+                if b_rule is None:
+                    raise ValueError(
+                        f"BitwiseXORReward: rule {rule} has no solution under "
+                        f"trunk + selector. Cannot construct head_c. "
+                        f"Reduce trunk strictness or change head_seed."
+                    )
+                self._head_c_per_rule[rule] = (self._head_A @ b_rule.long()) & 1
+        else:
+            self._head_A = torch.zeros(0, M * B, dtype=torch.long)
+
+        # Stack head_A into per-rule shape (n_rules, r_head_total, M*B) for
+        # batched gather in __call__. All rules share the same A matrix.
+        self._head_A_per_rule = (
+            self._head_A.unsqueeze(0).expand(self.n_rules, -1, -1).contiguous()
+        )
+
+        # Powers of 2 for packing selector bits to rule_idx.
+        self._select_powers = (
+            torch.tensor([2**i for i in range(self.k_select)], dtype=torch.long)
+            if self.k_select > 0
+            else torch.zeros(0, dtype=torch.long)
+        )
+
+        # Run validator whenever K-rule structure is non-trivial. Covers the
+        # K=1-with-head case too (single rule but witness construction must
+        # have succeeded for the head_c[0] to be feasible).
+        self._uniform_partition: bool = True
+        if self.n_rules > 1 or self._head_A_per_rule.shape[1] > 0:
+            self._validate_rule_coverage()
+
+    def _validate_rule_coverage(self) -> None:
+        """Ensure every rule index has >= 1 mode (trunk + selector→rule + head_rule).
+
+        For each rule k, build the combined GF(2) system:
+            [H_trunk; S; H_k] · b = [c_trunk; pack^-1(k); c_k]
+        and verify it's consistent via _solve_gf2_has_solution. With k_select
+        bits encoding the rule index, the selector contributes k_select scalar
+        equations whose RHS is determined by the rule.
+
+        Also tracks _uniform_partition: True iff n_rules is a power of 2 AND
+        the combined trunk+selector matrix has rank r_trunk + k_select (i.e.
+        the selector is independent of the trunk, so each rule is reachable
+        with the same per-rule mode count).
+        """
+        trunk_A = self._full_A
+        trunk_c = self._full_c
+        S = self._selector_matrix
+        for rule in range(self.n_rules):
+            sel_bits = [(rule >> i) & 1 for i in range(self.k_select)]
+            sel_c = torch.tensor(sel_bits, dtype=torch.long)
+            head_A = self._head_A_per_rule[rule]
+            head_c = self._head_c_per_rule[rule]
+            full_A = torch.cat([trunk_A, S, head_A], dim=0)
+            full_c = torch.cat([trunk_c, sel_c, head_c], dim=0)
+            if not HyperGrid._solve_gf2_has_solution(full_A, full_c):
+                raise ValueError(
+                    f"BitwiseXORReward: rule {rule} has no solution "
+                    f"(combined trunk + selector + head is inconsistent over GF(2)). "
+                    f"Reduce head_check_count or change head_seed."
+                )
+
+        # Uniform partition iff every rule has the same per-rule mode count.
+        # This subsumes power-of-2 + selector-rank-independence and also
+        # catches incidental rank deficiency in head_k for some rules.
+        per_rule = self._per_rule_mode_counts()
+        self._uniform_partition = len(set(per_rule)) == 1
+        if not self._uniform_partition:
+            logger.warning(
+                "BitwiseXORReward: K-rule partition is not uniform "
+                "(per-rule mode counts: %s). "
+                "analytic_mode_count(per_rule=True) will raise.",
+                per_rule,
+            )
+
+    def analytic_mode_count(self, per_rule: bool = False) -> int:
+        """Total mode count via per-rule GF(2) rank summation.
+
+        For each rule k, modes_k = 2^(M·B − rank([trunk; selector; head_k])).
+        Total = Σ_k modes_k. With random full-rank head matrices the per-rule
+        ranks coincide and total = K · modes_0; for small or degenerate
+        configurations they may differ. Multiplied by H^(ndim − M) for
+        unconstrained dims.
+        """
+        M = len(self.dims_constrained)
+        unconstrained = self.height ** (self.ndim - M)
+        per_rule_counts = self._per_rule_mode_counts()
+        total = sum(per_rule_counts) * unconstrained
+
+        if per_rule:
+            if not self._uniform_partition:
+                raise ValueError(
+                    "analytic_mode_count(per_rule=True) requires a uniform "
+                    "K-partition; per-rule mode counts differ."
+                )
+            return per_rule_counts[0] * unconstrained
+        return total
+
+    def _per_rule_mode_counts(self) -> list[int]:
+        """Bit-config mode count per rule (without unconstrained-dim factor).
+
+        For rule k, returns 2^(M·B − rank([trunk; selector; head_k])) when
+        the combined system is consistent, else 0. Inconsistency means the
+        rule is unreachable — its bit-config mode count is 0.
+        """
+        M = len(self.dims_constrained)
+        B = self._B
+        n_vars = M * B
+        if self.n_rules == 1 and self._head_A_per_rule.shape[1] == 0:
+            if self._full_A.numel() == 0:
+                return [2**n_vars]
+            if not HyperGrid._solve_gf2_has_solution(self._full_A, self._full_c):
+                return [0]
+            return [2 ** (n_vars - _gf2_rank(self._full_A))]
+        counts = []
+        for r in range(self.n_rules):
+            sel_target = torch.tensor(
+                [(r >> i) & 1 for i in range(self.k_select)], dtype=torch.long
+            )
+            A = torch.cat(
+                [self._full_A, self._selector_matrix, self._head_A_per_rule[r]],
+                dim=0,
+            )
+            c = torch.cat([self._full_c, sel_target, self._head_c_per_rule[r]], dim=0)
+            if A.numel() == 0:
+                counts.append(2**n_vars)
+                continue
+            if not HyperGrid._solve_gf2_has_solution(A, c):
+                counts.append(0)
+                continue
+            counts.append(2 ** (n_vars - _gf2_rank(A)))
+        return counts
+
     def _even_parity_mask(self, bits: torch.Tensor) -> torch.Tensor:
         """bits: (..., m) int/bool -> returns (...,) bool for even parity."""
         if bits.dtype != torch.long:
@@ -1712,6 +2117,35 @@ class BitwiseXORReward(GridReward):
         for ind, w in zip(indicators, self.tier_weights):
             tier_ok = tier_ok & ind
             R = R + tier_ok.to(R.dtype) * w
+
+        # K-rule head: selector projects bits to rule_idx (or 0 at K=1);
+        # head_{rule_idx} adds an extra parity check that must also pass for
+        # head_weight. No-op when head matrices are empty. Trunk-only
+        # tier_indicators above leaves head outside CorruptedReward's view.
+        if self._head_A_per_rule.shape[1] > 0:
+            dim_idx = self._dim_idx.to(dev)
+            bit_positions = self._bit_positions.to(dev)
+            x = states_tensor.index_select(-1, dim_idx)
+            all_bits = (x.unsqueeze(-1) >> bit_positions) & 1
+            flat_bits = all_bits.reshape(*x.shape[:-1], -1).long()
+
+            if self.k_select > 0:
+                S = self._selector_matrix.to(dev)
+                select_powers = self._select_powers.to(dev)
+                sel_bits = (flat_bits @ S.t()) & 1
+                rule_idx = (sel_bits * select_powers).sum(dim=-1) % self.n_rules
+            else:
+                rule_idx = torch.zeros(batch_shape, device=dev, dtype=torch.long)
+
+            head_A = self._head_A_per_rule.to(dev)
+            head_c = self._head_c_per_rule.to(dev)
+            A_per_state = head_A[rule_idx]
+            c_per_state = head_c[rule_idx]
+            head_prod = torch.einsum("...rj,...j->...r", A_per_state, flat_bits) & 1
+            head_ok = (head_prod == c_per_state).all(-1)
+
+            R = R + (tier_ok & head_ok).to(R.dtype) * self.head_weight
+
         return R
 
 
@@ -1778,7 +2212,7 @@ class MultiplicativeCoprimeReward(GridReward):
           each tier requires understanding the prior tier's structure.
     """
 
-    def __init__(self, height: int, ndim: int, **kwargs):
+    def __init__(self, height: int, ndim: int, **kwargs):  # noqa: C901
         super().__init__(height, ndim, **kwargs)
         self.R0: float = float(kwargs.get("R0", 0.0))
         tier_weights = kwargs.get("tier_weights", [1.0, 10.0, 100.0])
@@ -1851,6 +2285,164 @@ class MultiplicativeCoprimeReward(GridReward):
                 self.target_lcms.append(int(lcm_val))
             else:
                 self.target_lcms.append(None)
+
+        # --- K-rule selector + per-rule top-tier LCM heads ---
+        # Trunk = tiers 0..T-2 (existing behavior). Head = tier T-1, replaced
+        # per-rule by rule_targets[selector(state)]. Three resolution paths:
+        #   1. Explicit `rule_targets` kwarg → use as-is.
+        #   2. Explicit `head_seed` kwarg → generate K targets from head_seed
+        #      (this is the K-rule path; works for K=1 too).
+        #   3. Neither → backward-compat: inherit from target_lcms[T-1] (for
+        #      n_rules=1; n_rules>1 without head_seed already raised above).
+        self.n_rules: int = int(kwargs.get("n_rules", 1))
+        assert self.n_rules >= 1, f"n_rules must be >= 1, got {self.n_rules}"
+        head_seed_provided = kwargs.get("head_seed", None) is not None
+        if not head_seed_provided and self.n_rules > 1:
+            raise ValueError("head_seed must be provided when n_rules > 1; got None.")
+        self.head_seed: int = int(kwargs["head_seed"]) if head_seed_provided else 0
+
+        rule_targets = kwargs.get("rule_targets", None)
+        rule_targets_inherited_from_trunk = False
+        if rule_targets is None:
+            if head_seed_provided:
+                rule_targets = self._generate_rule_targets(self.n_rules, self.head_seed)
+            else:
+                # Legacy K=1 backward-compat: head's single LCM mirrors the
+                # trunk's top-tier LCM. Mark as inherited so we don't later
+                # clear target_lcms[-1] (the redundancy is harmless and
+                # preserving it keeps pre-refactor reward output bit-exact).
+                rule_targets = [self.target_lcms[-1]]
+                rule_targets_inherited_from_trunk = True
+        assert (
+            len(rule_targets) == self.n_rules
+        ), f"rule_targets has {len(rule_targets)} entries; expected n_rules={self.n_rules}"
+        self.rule_targets: list[int | None] = [
+            int(t) if t is not None else None for t in rule_targets
+        ]
+
+        # Clear the shared trunk top-tier LCM only when the head replaces it
+        # with non-trivial per-rule LCMs that *differ* from the trunk's.
+        # - Legacy K=1 (no head_seed): rule_targets inherited from trunk —
+        #   keep target_lcms[-1] (redundancy is harmless, bit-exact compat).
+        # - K-rule with auto-gen or explicit rule_targets: clear to avoid the
+        #   trunk LCM conflicting with rule-specific head LCMs (B1 fix).
+        # - Selector-only K-rule (rule_targets=[None]*K): keep target_lcms[-1]
+        #   so the trunk LCM still constrains modes.
+        head_has_lcm = any(t is not None for t in self.rule_targets)
+        if head_has_lcm and not rule_targets_inherited_from_trunk:
+            self.target_lcms[-1] = None
+
+        # Pre-factor each rule's target_lcm into prime exponents, for fast
+        # per-state gather in __call__. Shape: (n_rules, n_primes).
+        # Rule with target=None uses sentinel exponents of -1 (always passes).
+        n_primes = len(self.primes)
+        self._rule_target_exps = torch.full(
+            (self.n_rules, n_primes), -1, dtype=torch.long
+        )
+        for r, T in enumerate(self.rule_targets):
+            if T is None:
+                continue
+            remaining = int(T)
+            for j, p in enumerate(self.primes):
+                e = 0
+                while remaining % p == 0:
+                    remaining //= p
+                    e += 1
+                self._rule_target_exps[r, j] = e
+            if remaining != 1:
+                raise ValueError(
+                    f"rule_targets[{r}]={T} contains primes outside the "
+                    f"allowed set {self.primes}."
+                )
+
+        if self.n_rules > 1:
+            self._validate_rule_coverage()
+
+    def _generate_rule_targets(self, n_rules: int, seed: int) -> list[int]:
+        """Generate n_rules distinct LCM targets from a deterministic enum.
+
+        Enumerates cap-tuples (cap_p ∈ {1, ..., top_cap}) over allowed primes —
+        cap=0 (prime absent from LCM) is excluded so every rule has a
+        non-trivial target. Total tuples = top_cap^n_primes; permutes by seed
+        and picks the first n_rules. The prime universe must satisfy
+        top_cap^n_primes >= n_rules.
+
+        Note: cap=0 is intentionally excluded. With cap=0, the LCM head
+        constraint "no active dim has prime p as factor" combined with
+        coprime-pair and exponent-cap constraints typically yields zero or
+        near-zero modes — degenerate rules.
+        """
+        if not self.primes:
+            raise ValueError(
+                "Cannot generate rule_targets: no allowed primes for height."
+            )
+        n_primes = len(self.primes)
+        top_cap = self.exponent_caps[-1]
+        if top_cap < 1:
+            raise ValueError(
+                f"Cannot generate rule_targets: top exponent_cap={top_cap} < 1."
+            )
+        n_cap_values = top_cap  # caps in {1, ..., top_cap}
+        n_total = n_cap_values**n_primes
+        if n_total < n_rules:
+            raise ValueError(
+                f"Cannot generate {n_rules} distinct LCMs with {n_primes} primes "
+                f"and cap_p ∈ {{1..{top_cap}}}: {n_cap_values}^{n_primes}={n_total}."
+            )
+        all_tuples: list[int] = []
+        for idx in range(n_total):
+            rem = idx
+            caps: list[int] = []
+            for _ in range(n_primes):
+                caps.append((rem % n_cap_values) + 1)  # shift to {1..top_cap}
+                rem //= n_cap_values
+            lcm = 1
+            for p, c in zip(self.primes, caps):
+                lcm *= p**c
+            all_tuples.append(lcm)
+        gen = torch.Generator().manual_seed(seed)
+        perm = torch.randperm(n_total, generator=gen).tolist()
+        return [all_tuples[perm[i]] for i in range(n_rules)]
+
+    def _validate_rule_coverage(self) -> None:
+        """Ensure each rule's LCM target is achievable.
+
+        A target is achievable iff (a) it factors over allowed primes (already
+        checked at __init__), and (b) every required exponent is <= top cap.
+        Both conditions are necessary; with active_dims >= n_primes_with_nonzero_exp
+        and coprime_pairs constraints, sufficiency requires enumeration.
+        Here we check only the necessary conditions and verify that the rules
+        produce non-degenerate distinct targets.
+        """
+        top_cap = self.exponent_caps[-1]
+        seen = set()
+        for r, exps in enumerate(self._rule_target_exps.tolist()):
+            if all(e == -1 for e in exps):
+                continue
+            for j, e in enumerate(exps):
+                if e > top_cap:
+                    raise ValueError(
+                        f"rule_targets[{r}] requires exponent {e} for prime "
+                        f"{self.primes[j]}, exceeding top cap {top_cap}."
+                    )
+            tup = tuple(exps)
+            seen.add(tup)
+        if len(seen) < self.n_rules:
+            logger.warning(
+                "MultiplicativeCoprimeReward: only %d distinct rule targets "
+                "for n_rules=%d; some rules collide (selector partition "
+                "remains valid; mode-set is reduced).",
+                len(seen),
+                self.n_rules,
+            )
+
+    def _selector(self, x_active: torch.Tensor) -> torch.Tensor:
+        """Map state's active-dim values to a rule index in [0, n_rules).
+
+        Selector is sum_i x_i mod n_rules (over active dims, shifted values).
+        Returns shape (...,) long tensor.
+        """
+        return x_active.sum(dim=-1) % self.n_rules
 
     def _factor_exponents_up_to_cap(self, v: torch.Tensor, cap: int):
         """Trial-divide each element by allowed primes, returning residue and exponents.
@@ -1949,6 +2541,13 @@ class MultiplicativeCoprimeReward(GridReward):
             )
             + 1
         )
+
+        # K-rule selector: rule index per state. At n_rules=1 with a None
+        # per-rule target this is trivially 0 and head_lcm_ok is uniformly True.
+        rule_idx = self._selector(x)
+        rule_target_exps = self._rule_target_exps.to(x.device)
+        T_top = len(self.tier_weights) - 1
+
         indicators: list[torch.Tensor] = []
         for t in range(len(self.tier_weights)):
             cap = self.exponent_caps[t]
@@ -1967,6 +2566,19 @@ class MultiplicativeCoprimeReward(GridReward):
             lcm_target = self.target_lcms[t]
             if lcm_target is not None:
                 lcm_ok = self._lcm_ok(exps, lcm_target)
+
+            # K-rule top-tier per-rule LCM head: active when n_rules > 1, or
+            # n_rules=1 with a non-None rule_targets[0]. Folded into lcm_ok so
+            # CorruptedReward sees the K-rule-modulated indicator at this tier.
+            if t == T_top:
+                target_per_state = rule_target_exps[rule_idx]  # (..., n_primes)
+                # Sentinel -1 means "no LCM constraint for this rule".
+                no_target = (target_per_state == -1).all(dim=-1)
+                max_exp = exps.max(dim=-1).values  # (n_primes, ...)
+                max_exp_perm = torch.movedim(max_exp, 0, -1)  # (..., n_primes)
+                head_match = (max_exp_perm == target_per_state).all(dim=-1)
+                head_lcm_ok = no_target | head_match
+                lcm_ok = lcm_ok & head_lcm_ok
 
             indicators.append(support_ok & pairs_ok & lcm_ok)
         return indicators
@@ -2014,20 +2626,39 @@ class ConditionalMultiScaleReward(GridReward):
     for predicting fine-scale constraints.
 
     Per-dimension constraint at tier t (0-indexed):
-        (d_{L-1-t}(i) + sigma_t(i)) mod B < f
+        (d_{L-1-t}(i) + sigma_t(i; r)) mod B < f
 
-    where sigma_t(i) = sum_{k=0}^{t-1} a_{t,k} * d_{L-1-k}(i) mod B is a
-    linear function of coarser-scale digits with seed-derived coefficients.
+    where sigma_t(i; r) = sum_{k=0}^{t-1} a_{t,k}^{(r)} * d_{L-1-k}(i) mod B is a
+    linear function of coarser-scale digits with seed-derived coefficients,
+    parameterized by the rule index r. Tier 0 has no shift (sigma_0 = 0) and
+    is shared across all rules — it forms the trunk.
 
-    Optional cross-dimensional constraint at tier t:
+    K-rule structure (n_rules >= 1):
+        - Tier 0 is the shared trunk: constrains the most-significant digit per
+          active dim via filter [0, f). Same across all rules.
+        - The selector projects each state to a rule index r ∈ [0, n_rules)
+          deterministically: r(s) = packed_MSD(s) mod n_rules where
+          packed_MSD = sum_i d_{L-1, i} * base^i across active dims.
+        - Tiers >= 1 use rule-specific shift coefficients derived from
+          (head_seed, r), so each rule has a different head.
+
+        At n_rules=1, the selector always returns 0 and there is one head, with
+        coefficients derived from `seed` — bit-exact reproduction of the
+        single-rule reward.
+
+    Optional cross-dimensional constraint at tier t (applies to all rules):
         sum_i d_{L-1-t}(i) ≡ 0  (mod m_t)
 
-    Reward form (cumulative — tier t requires all tiers 0..t):
+    Reward form (cumulative — tier t requires all tiers 0..t under the rule):
         R(s) = R0 + sum_t tier_weights[t] * 1[s satisfies tiers 0..t]
 
-    Mode count (exact closed form):
-        Without cross-dim:  modes_T = (prod_{t=1}^T f_t)^d * B^{(L-T)*d}
-        With cross-dim:     modes_T = (prod_t f_t)^d * B^{(L-T)*d} / prod_t m_t
+    Mode count (closed form, total across all rules):
+        Without cross-dim:  modes_T = (f^T)^d * B^{(L-T)*d}
+        With cross-dim:     modes_T = (f^T)^d * B^{(L-T)*d} / prod_t m_t
+
+    The total mode count is INVARIANT in n_rules: rules partition the canonical
+    mode set. When n_rules divides f^d_active, the partition is uniform and
+    modes_per_rule = total / n_rules.
 
     Partition function (analytic, no enumeration):
         Z = R0 * H^d + sum_t w_t * modes_t
@@ -2039,6 +2670,11 @@ class ConditionalMultiScaleReward(GridReward):
         - filter_width: int, number of passing digit values per tier (default B//2).
           Constant across tiers to avoid mode collapse at deep tiers.
         - seed: int, PRNG seed for generating shift coefficients (default 42).
+        - n_rules: int, number of rules K (default 1). Selector partitions
+          tier-0-passing states into K buckets; uniform partition requires
+          K | f^d_active.
+        - head_seed: int, PRNG seed for per-rule head shift coefficients
+          (default: same as seed; ensures n_rules=1 reproduces single-rule).
         - cross_dim_mods: Optional[list[int|None]], per-tier modular cross-dim
           constraint. m_t must divide filter_width for exact mode counts.
           Default: no cross-dim constraints.
@@ -2056,7 +2692,10 @@ class ConditionalMultiScaleReward(GridReward):
           ordering creates distance-correlated difficulty.
     """
 
-    def __init__(self, height: int, ndim: int, **kwargs):
+    # Stride between per-rule RNG seeds; large prime to decorrelate rules.
+    _RULE_SEED_STRIDE: int = 1_000_003
+
+    def __init__(self, height: int, ndim: int, **kwargs):  # noqa: C901
         super().__init__(height, ndim, **kwargs)
         self.R0: float = float(kwargs.get("R0", 0.0))
 
@@ -2090,21 +2729,65 @@ class ConditionalMultiScaleReward(GridReward):
 
         self.seed: int = int(kwargs.get("seed", 42))
 
-        # Generate shift coefficients from seed.
-        # Coarse-to-fine ordering: tier t constrains digit (L-1-t).
-        # shift_coeffs[t] has t entries: a_{t,k} for k=0..t-1, where each
-        # coefficient references digit (L-1-k) — a coarser digit already
-        # constrained by a prior tier.
-        rng = torch.Generator().manual_seed(self.seed)
-        self.shift_coeffs: list[list[int]] = []
-        for t in range(len(self.tier_weights)):
-            if t == 0:
-                self.shift_coeffs.append([])  # tier 0 has no prior digits
-            else:
-                coeffs = torch.randint(0, self.base, (t,), generator=rng).tolist()
-                self.shift_coeffs.append(coeffs)
+        # Per-tier constant filter shift. Default None → 0 at every tier
+        # (current behavior: tier-t passing window starts at digit=0). Setting
+        # filter_shift[t]=c moves tier t's passing window to start at digit
+        # (-c) mod B — i.e., the blind strip cyclically rotates. Useful for
+        # spreading mode coverage across the full axis instead of clumping
+        # in the lower f/B fraction.
+        filter_shift = kwargs.get("filter_shift", None)
+        if filter_shift is None:
+            filter_shift = [0] * len(self.tier_weights)
+        assert len(filter_shift) == len(
+            self.tier_weights
+        ), f"filter_shift length {len(filter_shift)} != n_tiers {len(self.tier_weights)}"
+        self.filter_shift: list[int] = [int(s) % self.base for s in filter_shift]
 
-        # Cross-dimensional modular constraints (optional)
+        active_dims = kwargs.get("active_dims", None)
+        if active_dims is None:
+            active_dims = list(range(ndim))
+        self.active_dims: list[int] = list(map(int, active_dims))
+
+        # K-rule structure. n_rules=1 reproduces the original single-rule reward
+        # bit-exactly: rule 0's RNG is seeded by head_seed (defaulting to seed),
+        # which matches the historical generator state.
+        self.n_rules: int = int(kwargs.get("n_rules", 1))
+        assert self.n_rules >= 1, f"n_rules must be >= 1, got {self.n_rules}"
+        head_seed = kwargs.get("head_seed", self.seed)
+        if head_seed is None:
+            raise ValueError("head_seed=None is not allowed; pass an int or omit.")
+        self.head_seed: int = int(head_seed)
+
+        # Generate per-rule shift coefficients.
+        # shift_coeffs_per_rule[r][t] has length t (empty list for t=0).
+        # Coefficient a_{t,k}^{(r)} references digit (L-1-k) — a coarser digit
+        # already constrained by a prior tier — for rule r.
+        self.shift_coeffs_per_rule: list[list[list[int]]] = []
+        for r in range(self.n_rules):
+            rule_seed = (
+                self.head_seed if r == 0 else self.head_seed + r * self._RULE_SEED_STRIDE
+            )
+            rng = torch.Generator().manual_seed(rule_seed)
+            rule_shifts: list[list[int]] = []
+            for t in range(len(self.tier_weights)):
+                if t == 0:
+                    rule_shifts.append([])
+                else:
+                    coeffs = torch.randint(0, self.base, (t,), generator=rng).tolist()
+                    rule_shifts.append(coeffs)
+            self.shift_coeffs_per_rule.append(rule_shifts)
+
+        # Pre-pack rule shift coefficients as a (n_rules, n_tiers, n_tiers) tensor
+        # for fast per-state gather in __call__. Padded with zeros where j >= t.
+        n_tiers = len(self.tier_weights)
+        shift_tensor = torch.zeros(self.n_rules, n_tiers, n_tiers, dtype=torch.long)
+        for r in range(self.n_rules):
+            for t in range(n_tiers):
+                for j_idx, c in enumerate(self.shift_coeffs_per_rule[r][t]):
+                    shift_tensor[r, t, j_idx] = c
+        self._shift_coeffs_tensor: torch.Tensor = shift_tensor
+
+        # Cross-dimensional modular constraints (optional, applied to all rules)
         cross_dim_mods = kwargs.get("cross_dim_mods", None)
         if cross_dim_mods is None:
             cross_dim_mods = [None] * len(self.tier_weights)
@@ -2120,10 +2803,97 @@ class ConditionalMultiScaleReward(GridReward):
                 )
             self.cross_dim_mods.append(m)
 
-        active_dims = kwargs.get("active_dims", None)
-        if active_dims is None:
-            active_dims = list(range(ndim))
-        self.active_dims: list[int] = list(map(int, active_dims))
+        # Construction-time check for K-rule structure: every rule must be
+        # represented by at least one trunk-passing pattern. Enumerates the
+        # f^d_active tier-0-passing patterns (small: e.g. 64 at f=2, d=6).
+        self._uniform_partition: bool = True
+        if self.n_rules > 1:
+            self._validate_rule_coverage()
+
+    def _validate_rule_coverage(self) -> None:
+        """Ensure every rule index is hit by at least one trunk-passing state.
+
+        Trunk = tier 0 = each active dim's shifted MSD in [0, filter_width)
+        AND (if cross_dim_mods[0] is set) MSD-sum mod m_0 == 0. The selector
+        packs MSDs as base-f and mods by n_rules.
+
+        Implementation uses cyclic-uniformity: trunk-passing MSD patterns map
+        bijectively to integers [0, f^d_active) via the base-f packing, so
+        `pat mod n_rules` distributes uniformly when `n_rules | n_surv`. The
+        cross-dim filter at tier 0 thins this set further; for non-trivial
+        cross_mod_0 we sample to verify coverage. (Old enumeration over
+        f^d_active patterns was intractable at d_active > ~10.)
+
+        Sets `_uniform_partition` based on whether n_rules divides the
+        trunk-passing count evenly.
+        """
+        d_active = len(self.active_dims)
+        f = self.filter_width
+        cross_mod_0 = self.cross_dim_mods[0]
+
+        n_patterns = f**d_active  # tier-0-filter-passing patterns
+        if cross_mod_0 is None:
+            n_surv = n_patterns
+        else:
+            # Each cross_mod_0 is a divisor of f, and the sum-mod-m constraint
+            # picks 1/m of the patterns symmetrically. Hence n_surv = n_patterns / m.
+            assert (
+                n_patterns % cross_mod_0 == 0
+            ), f"f^d_active={n_patterns} not divisible by cross_dim_mods[0]={cross_mod_0}"
+            n_surv = n_patterns // cross_mod_0
+
+        if self.n_rules > n_surv:
+            raise ValueError(
+                f"n_rules={self.n_rules} exceeds trunk-passing pattern count "
+                f"{n_surv} (f^d_active={f}^{d_active}={n_patterns}, "
+                f"cross_dim_mods[0]={cross_mod_0}); some rules cannot be reached."
+            )
+
+        # With cyclic uniformity (no cross_dim_mods[0]), or symmetric cross-dim
+        # reduction by a divisor of f, the bucket distribution is determined
+        # by n_surv mod n_rules. All buckets non-empty iff n_surv >= n_rules,
+        # which we already verified. Uniform iff n_surv % n_rules == 0.
+        # If cross_mod_0 happens to interact pathologically with the selector,
+        # we'd miss it here — fall back to enumeration only at small d_active.
+        ENUM_THRESHOLD = 12
+        if d_active <= ENUM_THRESHOLD:
+            bucket_counts = [0] * self.n_rules
+            survivors_iter = (
+                range(n_patterns)
+                if cross_mod_0 is None
+                else (
+                    pat
+                    for pat in range(n_patterns)
+                    if sum((pat // (f**i)) % f for i in range(d_active)) % cross_mod_0
+                    == 0
+                )
+            )
+            for pat in survivors_iter:
+                bucket_counts[pat % self.n_rules] += 1
+            empty = [k for k, c in enumerate(bucket_counts) if c == 0]
+            if empty:
+                raise ValueError(
+                    f"K-rule selector leaves rules {empty} with no trunk-passing "
+                    f"states (n_rules={self.n_rules}, trunk-passing patterns="
+                    f"{n_surv}). Loosen cross_dim_mods[0] or reduce n_rules."
+                )
+            self._uniform_partition: bool = (
+                n_surv % self.n_rules == 0 and len(set(bucket_counts)) == 1
+            )
+        else:
+            # Above threshold: rely on cyclic-uniformity. n_rules ≤ n_surv
+            # already verified; uniform partition iff n_rules divides n_surv.
+            self._uniform_partition = n_surv % self.n_rules == 0
+
+        if not self._uniform_partition:
+            logger.warning(
+                "ConditionalMultiScaleReward: n_rules=%d does not yield a "
+                "uniform partition over %d trunk-passing patterns. Rule mode "
+                "counts will be imbalanced; analytic_mode_count(per_rule=True) "
+                "is no longer well-defined and will raise.",
+                self.n_rules,
+                n_surv,
+            )
 
     def _extract_digits(self, x: torch.Tensor, num_levels: int) -> list[torch.Tensor]:
         """Extract base-B digits from x.
@@ -2143,6 +2913,23 @@ class ConditionalMultiScaleReward(GridReward):
             remaining = remaining // self.base
         return digits
 
+    def _selector(self, msd_digits: torch.Tensor) -> torch.Tensor:
+        """Map state MSDs (..., d_active) -> rule index in [0, n_rules).
+
+        Applies the same shift used by tier 0's filter (sigma_0 = 0 +
+        filter_shift[0]) before packing as base-f. For trunk-passing states
+        the shifted MSD is in [0, f) so the packing is bijective on the
+        trunk-passing set; non-trunk-passing states still get a rule index
+        but cannot become modes (their tier-0 check fails).
+        """
+        d_active = msd_digits.shape[-1]
+        f = self.filter_width
+        fs0 = self.filter_shift[0]
+        shifted = (msd_digits + fs0) % self.base
+        powers = f ** torch.arange(d_active, device=msd_digits.device, dtype=torch.long)
+        packed = ((shifted % f) * powers).sum(dim=-1)
+        return packed % self.n_rules
+
     def tier_indicators(self, states_tensor: torch.Tensor) -> list[torch.Tensor]:
         """Per-tier independent pass/fail indicators.
 
@@ -2161,17 +2948,30 @@ class ConditionalMultiScaleReward(GridReward):
         L = self.num_levels
         digits = self._extract_digits(x, L)
 
+        # K-rule selector + per-rule shift coefficients. At n_rules=1 with
+        # zero filter_shift this collapses to the legacy single-rule behavior.
+        rule_idx = self._selector(digits[L - 1])  # shape: x.shape[:-1]
+        shift_coeffs_t = self._shift_coeffs_tensor.to(x.device)  # (K, n_tiers, n_tiers)
+
         indicators: list[torch.Tensor] = []
         for t in range(len(self.tier_weights)):
+            # Coarse-to-fine: tier t constrains digit (L-1-t).
             target_digit = digits[L - 1 - t]
 
+            # Tier 0 is the shared trunk (no state-dependent shift). Tiers ≥ 1
+            # use rule-specific state-dependent shifts gathered by rule_idx.
+            # An optional per-tier constant filter_shift[t] is added on top.
             if t == 0:
-                shift = torch.zeros_like(x)
+                shift = torch.full_like(x, self.filter_shift[t])
             else:
-                shift = torch.zeros_like(x)
-                for k, a_tk in enumerate(self.shift_coeffs[t]):
-                    if a_tk != 0:
-                        shift = shift + int(a_tk) * digits[L - 1 - k]
+                # tier_coeffs_all: (K, t) — rule k's coefficients a_{t,0..t-1}.
+                tier_coeffs_all = shift_coeffs_t[:, t, :t]
+                # per_state_coeffs: (..., t) — broadcast-gather over rule_idx.
+                per_state_coeffs = tier_coeffs_all[rule_idx]
+                shift = torch.full_like(x, self.filter_shift[t])
+                for k_idx in range(t):
+                    a = per_state_coeffs[..., k_idx].unsqueeze(-1)  # (..., 1)
+                    shift = shift + a * digits[L - 1 - k_idx]
                 shift = shift % self.base
 
             shifted = (target_digit + shift) % self.base
@@ -2240,15 +3040,24 @@ class ConditionalMultiScaleReward(GridReward):
         t = self.mode_tier(target_sparsity)
         return self.R0 + sum(self.tier_weights[:t])
 
-    def analytic_mode_count(self, tier: int | None = None) -> int:
+    def analytic_mode_count(
+        self, tier: int | None = None, per_rule: bool = False
+    ) -> int:
         """Compute exact mode count for a given tier (1-indexed) or all tiers.
+
+        Total mode count is invariant in `n_rules` — rules partition the
+        canonical mode set rather than multiplying it.
 
         Args:
             tier: 1-indexed tier number. If None, returns count for the
                   highest tier (most constrained).
+            per_rule: If True, returns the per-rule count (total // n_rules).
+                Requires uniform partition (n_rules divides the trunk-passing
+                pattern count); raises ValueError otherwise.
 
         Returns:
-            Number of states satisfying all constraints up to the given tier.
+            Number of states satisfying all constraints up to the given tier
+            (over all rules combined if per_rule=False, per rule otherwise).
         """
         if tier is None:
             tier = len(self.tier_weights)
@@ -2261,8 +3070,12 @@ class ConditionalMultiScaleReward(GridReward):
         f = self.filter_width
 
         # Per-dim: (f)^T valid constrained digit combos × B^(L-T) free digits
+        # extended over inactive dims (which are unconstrained, so B^L each).
         choices_per_coord = (f**T) * (B ** (L - T))
         modes = choices_per_coord**d
+        # Inactive dims contribute B^L = self.height each.
+        n_inactive = self.ndim - d
+        modes *= self.height**n_inactive
 
         # Cross-dim modular constraints divide out uniformly.
         for t in range(T):
@@ -2270,15 +3083,22 @@ class ConditionalMultiScaleReward(GridReward):
             if cross_mod is not None:
                 modes //= cross_mod
 
+        if per_rule:
+            if not self._uniform_partition:
+                raise ValueError(
+                    f"analytic_mode_count(per_rule=True) requires a uniform "
+                    f"K-partition; n_rules={self.n_rules} does not partition "
+                    f"the trunk-passing set evenly."
+                )
+            return modes // self.n_rules
         return modes
 
     def analytic_log_partition(self) -> float:
         """Compute log(Z) analytically.
 
-        Z = R0 * H^d + sum_t w_t * modes_t
+        Z = R0 * H^ndim + sum_t w_t * modes_t
         """
-        d = len(self.active_dims)
-        Z = self.R0 * (self.height**d)
+        Z = self.R0 * (self.height**self.ndim)
         for t in range(len(self.tier_weights)):
             Z += self.tier_weights[t] * self.analytic_mode_count(tier=t + 1)
         return log(Z) if Z > 0 else float("-inf")
@@ -2678,6 +3498,45 @@ def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
         "challenging": _make_preset("challenging", 10, [1, 2, 4]),
         "impossible": _make_preset("impossible", 12, [2, 4, 6]),
     }
+
+    # K-rule trunk+heads presets (designed for ndim=10, H=16). Density ~9.5e-7
+    # is invariant across K — selector partitions trunk-and-head-passing states.
+    # Trunk: M=10 (all dims), checks_per_tier=[1,1,2] -> 4 cumulative trunk
+    # checks per bit-plane * 4 bit-planes = 16 trunk checks total.
+    # Head: 1 check per bit-plane * 4 bit-planes = 4 head rows per rule.
+    # Selector: ceil(log2(K)) bits over the full M*B=40 bit space.
+    # Mode count: 2^(40 - 16 - 4) = 2^20 = ~1M total, invariant in K.
+    if ndim >= 10:
+        k_trunk = _make_preset("Ktrunk", 10, [1, 1, 2])
+        for n_rules in (1, 16, 64):
+            presets[f"K{n_rules}"] = dict(
+                k_trunk,
+                n_rules=n_rules,
+                head_seed=2025,
+                head_weight=1000.0,
+                head_check_count=1,
+                head_bit_range=(0, max_bit),
+            )
+
+        # "Matched" K-presets: production-grade matched-density (~1e-7) with
+        # K=64 specialization at ndim=10, h=16. Trunk same as standard K-presets
+        # (16 rows); head extended to 2 checks across 3 bit-planes (r_head=6)
+        # for richer per-rule heads at slightly tighter density (2.4e-7 vs the
+        # standard preset's 9.5e-7). T_max=150, parity-symmetric coverage.
+        # Total modes: 2^(40 - 16 - 6) = 2^18 = 262K, density 2.4e-7.
+        # Requires height >= 8 (B >= 3) so head_bit_range=(0, 2) is valid.
+        if height >= 8:
+            k_trunk_matched = _make_preset("Ktrunk_matched", 10, [1, 1, 2])
+            for n_rules in (1, 16, 64):
+                presets[f"K{n_rules}_matched"] = dict(
+                    k_trunk_matched,
+                    n_rules=n_rules,
+                    head_seed=2025,
+                    head_weight=1000.0,
+                    head_check_count=2,
+                    head_bit_range=(0, 2),
+                )
+
     return presets
 
 
@@ -2765,11 +3624,66 @@ def get_multiplicative_coprime_presets(ndim: int, height: int) -> dict:
             target_lcms=[None, None, None, None, "auto"],
         ),
     }
+
+    # K-rule trunk+heads presets (designed for ndim=6, H=64). Trunk = tiers 0..2
+    # (smooth-number + caps + coprime pairs). Head = tier 3, with per-rule LCM
+    # target enumerated from cap-tuples. Primes={2,3,5,7} all representable at
+    # cap=2 in h=64; cap_p ∈ {1, 2} gives 2^4 = 16 distinct LCMs.
+    #
+    # K=64 is not supported at h=64 because it would require either (a) a
+    # 6-prime universe where 11 and 13 force auto-cap to 1, collapsing the
+    # enum, or (b) cap=3 which isn't representable for primes 5 and 7 at h=64.
+    # K=64 coprime is left as a TODO; users can pick h=256 with 6 primes.
+    # K=1 draws rule 0 from the same enum so density matches K=16.
+    if ndim >= 6:
+        k_trunk = dict(
+            R0=0.0,
+            tier_weights=[1.0, 10.0, 100.0, 1000.0],
+            primes=[2, 3, 5, 7],
+            exponent_caps=[2, 2, 2, 2],
+            active_dims=_first_k_dims(6, ndim),
+            coprime_pairs=chain_pairs(6),
+            coprime_start_tier=2,
+            target_lcms=[None, None, None, None],
+        )
+        for n_rules in (1, 16):
+            presets[f"K{n_rules}"] = dict(
+                k_trunk,
+                n_rules=n_rules,
+                head_seed=2025,
+            )
+
+    # "Matched" K-presets: production-grade matched-density (~1e-7) with
+    # K=64 specialization at ndim=10, h=64. Selector-only K-rule because the
+    # cap-tuple LCM enum tops out at K=16 with 4 primes; K=64 needs h>=169 for
+    # 6-prime caps, which makes T_max prohibitive. The trunk holds the LCM=auto
+    # constraint (44100), and the selector partitions the same canonical mode
+    # set into 64 buckets — rules differ in spatial assignment, not per-rule
+    # head LCM. T_max=630, smooth-set spans 1–64 per dim (no origin clumping).
+    if ndim >= 10:
+        k_trunk_matched = dict(
+            R0=0.0,
+            tier_weights=[1.0, 10.0, 100.0, 1000.0],
+            primes=[2, 3, 5, 7],
+            exponent_caps=[2, 2, 2, 2],
+            active_dims=_first_k_dims(10, ndim),
+            coprime_pairs=chain_pairs(10),
+            coprime_start_tier=2,
+            target_lcms=[None, None, None, "auto"],
+        )
+        for n_rules in (1, 16, 64):
+            presets[f"K{n_rules}_matched"] = dict(
+                k_trunk_matched,
+                n_rules=n_rules,
+                head_seed=2025,
+                rule_targets=[None] * n_rules,
+            )
+
     return presets
 
 
 def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
-    """Return five difficulty presets for ConditionalMultiScaleReward.
+    """Return difficulty presets for ConditionalMultiScaleReward.
 
     All presets use base=4 (requiring H to be a power of 4). The number of
     available digit levels is L = log_4(H). Difficulty is controlled by:
@@ -2778,7 +3692,7 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
       - Cross-dim modular constraints (further sparsification)
 
     Mode counts are computed via:
-        modes_T = (f^T * 4^{L-T})^d / prod_t m_t
+        modes_T = (f^T * 4^{L-T})^d * H^(ndim-d) / prod_t m_t
 
     with f = filter_width = 2 (i.e. B//2), so each tier halves modes per coord.
 
@@ -2787,12 +3701,19 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
     pass the filter. Deeper tiers constrain progressively finer digits,
     creating distance-correlated difficulty.
 
-    Presets (assuming H=256, i.e. L=4 digit levels):
+    Two preset families:
+
+    Difficulty presets (single-rule legacy, assuming H=256, i.e. L=4):
       - easy:        2 tiers, 3 active dims -> ~2M modes at tier 2
       - medium:      3 tiers, 4 active dims -> ~1M modes at tier 3
       - hard:        3 tiers, 6 active dims, cross-dim -> ~260K modes at tier 3
       - challenging: 4 tiers, 8 active dims, cross-dim -> ~65K modes at tier 4
       - impossible:  4 tiers, 12 active dims, cross-dim -> ~4K modes at tier 4
+
+    K-rule trunk+heads presets (sparsity matched, K rules sharing tier-0 trunk):
+      - K1, K16, K64: 3 tiers, 6 active dims, cross_dim_mods=[2,2,2].
+        Total modes invariant in K (~32K total at H=64, density ~5e-7); rules
+        partition the canonical mode set. Designed for ndim=6, H=64.
 
     If height provides fewer digit levels than a preset requires, the preset's
     tier_weights and cross_dim_mods are auto-truncated with a warning.
@@ -2880,6 +3801,50 @@ def get_conditional_multiscale_presets(ndim: int, height: int) -> dict:
             )
         ),
     }
+
+    # K-rule trunk+heads presets (designed for ndim=6, H=64).
+    # Density ~9.5e-7 (~65K modes) is invariant across K — rules partition the
+    # canonical mode set. cross_dim_mods[0] is None: a tier-0 cross-dim filter
+    # would shrink the trunk-passing set below n_rules and leave rules empty.
+    # head_seed is shared across K presets so K=1's rule 0 == K=16's rule 0
+    # == K=64's rule 0 by construction (useful for cross-K diagnostics).
+    k_rule_template = dict(
+        R0=0.0,
+        tier_weights=[1.0, 10.0, 100.0],
+        base=base,
+        filter_width=2,
+        seed=42,
+        head_seed=2025,
+        active_dims=_first_k_dims(6, ndim),
+        cross_dim_mods=[None, 2, 2],
+    )
+    for n_rules in (1, 16, 64):
+        presets[f"K{n_rules}"] = _cap_tiers(dict(k_rule_template, n_rules=n_rules))
+
+    # "Matched" K-presets: production-grade matched-density (~1e-7) with K=64
+    # specialization at ndim=24, h=16 (base=4, L=2, f=3). Trades dim count for
+    # trajectory length: T_max=360 (vs 882 at ndim=14, h=64). 75% per-axis
+    # coverage via filter_width=3 over base=4 — 3-of-4 top digits pass tier 0,
+    # so each axis has only a 25% blind strip (cyclic via filter_shift if you
+    # want it elsewhere). cross_dim_mods=[3,3] tightens density without
+    # collapsing the partition. K_native = 3^24 ≈ 282B; K=64 is non-uniform
+    # (3^23 not divisible by 64) but every rule is reachable.
+    if ndim >= 24:
+        k_rule_matched_template = dict(
+            R0=0.0,
+            tier_weights=[1.0, 10.0],
+            base=base,
+            filter_width=3,
+            seed=42,
+            head_seed=2025,
+            active_dims=_first_k_dims(24, ndim),
+            cross_dim_mods=[3, 3],
+        )
+        for n_rules in (1, 16, 64):
+            presets[f"K{n_rules}_matched"] = _cap_tiers(
+                dict(k_rule_matched_template, n_rules=n_rules)
+            )
+
     return presets
 
 
