@@ -361,6 +361,68 @@ class TestDistributedReports:
             report_time_info(timing, world_size=2)
         assert "train" in caplog.text
 
+    def test_initialize_distributed_compute_uses_openmpi_env(self, monkeypatch):
+        try:
+            from gfn.utils import distributed as distributed_utils
+        except (ImportError, RuntimeError):
+            pytest.skip("mpi4py / MPI library not available")
+
+        for name in (
+            "PMI_SIZE",
+            "PMI_RANK",
+            "MV2_COMM_WORLD_SIZE",
+            "MV2_COMM_WORLD_RANK",
+            "WORLD_SIZE",
+            "RANK",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("OMPI_COMM_WORLD_SIZE", "4")
+        monkeypatch.setenv("OMPI_COMM_WORLD_RANK", "2")
+
+        init_calls = {}
+        group_calls = []
+
+        monkeypatch.setattr(distributed_utils.dist, "is_gloo_available", lambda: True)
+        monkeypatch.setattr(
+            distributed_utils.dist,
+            "init_process_group",
+            lambda **kwargs: init_calls.update(kwargs),
+        )
+        monkeypatch.setattr(distributed_utils.dist, "barrier", lambda: None)
+        monkeypatch.setattr(distributed_utils.dist, "get_rank", lambda: 2)
+        monkeypatch.setattr(distributed_utils.dist, "get_world_size", lambda: 4)
+
+        def _fake_new_group(ranks, backend, timeout):
+            group_calls.append((tuple(ranks), backend))
+            return tuple(ranks)
+
+        monkeypatch.setattr(distributed_utils.dist, "new_group", _fake_new_group)
+        monkeypatch.setattr(
+            distributed_utils,
+            "initialize_distributed_compute_mpi4py",
+            lambda **kwargs: {"kwargs": kwargs},
+        )
+
+        ctx = distributed_utils.initialize_distributed_compute(
+            dist_backend="gloo",
+            num_remote_buffers=1,
+            num_agent_groups=1,
+        )
+
+        assert init_calls["world_size"] == 4
+        assert init_calls["rank"] == 2
+        assert init_calls["backend"] == "gloo"
+        assert group_calls == [
+            ((0, 1, 2), "gloo"),
+            ((0, 1, 2), "gloo"),
+            ((3,), "gloo"),
+        ]
+        assert ctx.my_rank == 2
+        assert ctx.world_size == 4
+        assert ctx.num_training_ranks == 3
+        assert ctx.assigned_buffer == 3
+        assert ctx.assigned_training_ranks is None
+
 
 # ===========================================================================
 # utils/graphs.py — edge index functions (pure torch)

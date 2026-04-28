@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _first_env(*names: str, default: str | None = None) -> str | None:
+    """Return the first non-empty environment variable from a list of names."""
+    for name in names:
+        value = os.environ.get(name)
+        if value not in (None, ""):
+            return value
+    return default
+
+
 def _get_MPI():
     """Lazily import and return the mpi4py MPI module."""
     from mpi4py import MPI
@@ -352,8 +361,19 @@ def initialize_distributed_compute(
         "gloo",
     ], f"Invalid backend requested: {dist_backend}"
 
-    pmi_size = int(os.environ.get("PMI_SIZE", "0"))  # 0 or 1 default value?
-    logger.info("Initializing distributed compute, PMI_SIZE=%d", pmi_size)
+    pmi_size = int(
+        cast(
+            str,
+            _first_env(
+                "PMI_SIZE",
+                "OMPI_COMM_WORLD_SIZE",
+                "MV2_COMM_WORLD_SIZE",
+                "WORLD_SIZE",
+                default="0",
+            ),
+        )
+    )
+    logger.info("Initializing distributed compute, detected world_size=%d", pmi_size)
 
     if pmi_size <= 1:
         logger.info("PMI_SIZE <= 1, running in single process mode.")
@@ -384,8 +404,26 @@ def initialize_distributed_compute(
     else:
         raise Exception(f"Invalid backend requested: {dist_backend}")
 
-    os.environ["RANK"] = os.environ.get("PMI_RANK", "0")
-    os.environ["WORLD_SIZE"] = os.environ.get("PMI_SIZE", "1")
+    os.environ["RANK"] = cast(
+        str,
+        _first_env(
+            "PMI_RANK",
+            "OMPI_COMM_WORLD_RANK",
+            "MV2_COMM_WORLD_RANK",
+            "RANK",
+            default="0",
+        ),
+    )
+    os.environ["WORLD_SIZE"] = cast(
+        str,
+        _first_env(
+            "PMI_SIZE",
+            "OMPI_COMM_WORLD_SIZE",
+            "MV2_COMM_WORLD_SIZE",
+            "WORLD_SIZE",
+            default="1",
+        ),
+    )
 
     logger.info("OMP_NUM_THREADS = %s", os.getenv("OMP_NUM_THREADS"))
 
@@ -680,6 +718,74 @@ def send(
         comm = MPI.COMM_WORLD
         arr = data.detach().cpu().contiguous().numpy()
         comm.Send(arr, dest=dst_rank, tag=tag)
+    else:
+        raise ValueError(f"Unknown backend: {backend}")
+
+
+@dataclass
+class AsyncSendHandle:
+    """Handle for a non-blocking send operation.
+
+    The underlying buffer must remain alive until the send completes.
+    Call :meth:`is_complete` to poll or :meth:`wait` to block.
+    """
+
+    _request: Any
+    _buffer: Any  # numpy array or tensor kept alive until send completes.
+
+    def is_complete(self) -> bool:
+        """Check if the send has completed without blocking."""
+        if hasattr(self._request, "is_completed"):
+            return self._request.is_completed()
+        result = self._request.Test()
+        # MPI4Py uppercase Isend: Test() returns bool.
+        # Torch dist.isend: Test() returns (bool, ...) tuple.
+        if isinstance(result, bool):
+            return result
+        return result[0]
+
+    def wait(self) -> None:
+        """Block until the send completes."""
+        if hasattr(self._request, "wait"):
+            self._request.wait()
+        else:
+            self._request.Wait()
+
+
+def isend(
+    data: torch.Tensor,
+    dst_rank: int,
+    backend: str = default_backend,
+    tag: int = 0,
+) -> AsyncSendHandle:
+    """Non-blocking send of a byte tensor to ``dst_rank``.
+
+    Returns an :class:`AsyncSendHandle` whose internal buffer **must** be
+    kept alive until :meth:`~AsyncSendHandle.is_complete` returns ``True``
+    or :meth:`~AsyncSendHandle.wait` is called.
+
+    Args:
+        data: Tensor to send (will be cast to uint8).
+        dst_rank: Destination rank (global).
+        backend: ``"torch"`` or ``"mpi"``.
+        tag: MPI/torch tag for message matching.
+
+    Returns:
+        A handle that tracks the outstanding send.
+    """
+    if backend == "torch":
+        data = data.to(dtype=torch.uint8).contiguous().cpu()
+        length_tensor = torch.tensor([data.numel()], dtype=torch.int64, device="cpu")
+        # Length message is blocking (tiny); payload is non-blocking.
+        dist.send(tensor=length_tensor, dst=dst_rank, tag=2 * tag)
+        req = dist.isend(tensor=data, dst=dst_rank, tag=2 * tag + 1)
+        return AsyncSendHandle(_request=req, _buffer=data)
+    elif backend == "mpi":
+        MPI = _get_MPI()
+        comm = MPI.COMM_WORLD
+        arr = data.detach().cpu().contiguous().numpy()
+        req = comm.Isend(arr, dest=dst_rank, tag=tag)
+        return AsyncSendHandle(_request=req, _buffer=arr)
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
