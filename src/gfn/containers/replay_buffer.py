@@ -76,6 +76,7 @@ class ReplayBuffer:
         timing: bool = False,
         async_score: bool = False,
         async_comm: bool = False,
+        lazy_sort: bool = False,
     ):
         """Initializes a ReplayBuffer instance.
 
@@ -101,6 +102,9 @@ class ReplayBuffer:
                 submission (deferred score collection on next ``add()``).
                 The agent blocks only to collect the previous score and
                 to wait for the prior ``isend`` to complete.
+            lazy_sort: If True, defer concatenation and sorting until the
+                buffer reaches 2x capacity. Useful for buffer manager ranks
+                that only accumulate data and don't sample every iteration.
         """
         self.env = env
         self.capacity = capacity
@@ -123,6 +127,14 @@ class ReplayBuffer:
         self._send_handle: AsyncSendHandle | None = (
             None  # Outstanding non-blocking send.
         )
+
+        # Lazy-sort bookkeeping (only active when lazy_sort=True):
+        # incoming batches are accumulated in a list and only flushed
+        # (concatenated + sorted + truncated) when the total pending +
+        # committed length reaches 2 * capacity.
+        self.lazy_sort = lazy_sort
+        self._pending_batches: list[ContainerUnion] = []
+        self._pending_len: int = 0
 
     @property
     def device(self) -> torch.device:
@@ -347,9 +359,12 @@ class ReplayBuffer:
         """Returns the number of items in the buffer.
 
         Returns:
-            The number of items in the buffer.
+            The number of items in the buffer (including pending batches).
         """
-        return 0 if self.training_container is None else len(self.training_container)
+        committed = (
+            0 if self.training_container is None else len(self.training_container)
+        )
+        return committed + self._pending_len
 
     def initialize(self, training_container: ContainerUnion) -> None:
         """Initializes the buffer with the type of the first added object.
@@ -367,6 +382,35 @@ class ReplayBuffer:
         else:
             raise ValueError(f"Unsupported type: {type(training_container)}")
 
+    def _flush_pending(self) -> None:
+        """Concatenate all pending batches into ``training_container``.
+
+        Called lazily when the accumulated size reaches 2 * capacity, or
+        eagerly by callers that need a consistent view.
+
+        Merges all pending batches into a single combined batch first, then
+        extends ``training_container`` once to avoid extra copy cost.
+        """
+        if not self._pending_batches:
+            return
+
+        with Timer(self.timing_data, "local_add/extend", enabled=self.timing):
+            # Merge pending batches into one combined batch (cheap: starts
+            # from 0 items), then extend training_container once.
+            assert self.training_container is not None
+            combined = self.initialize(self._pending_batches[0])
+            for batch in self._pending_batches:
+                combined.extend(batch)  # type: ignore
+            self.training_container.extend(combined)  # type: ignore  # single extend
+            self._pending_batches.clear()
+            self._pending_len = 0
+
+        # Clear fields that must be recomputed for Trajectories and Transitions.
+        if isinstance(self.training_container, (Trajectories, Transitions)):
+            self.training_container.log_probs = None
+        if isinstance(self.training_container, Trajectories):
+            self.training_container.estimator_outputs = None
+
     def _local_add(self, training_container: ContainerUnion):
         """Adds a training object to the local buffer, handling capacity.
 
@@ -383,16 +427,34 @@ class ReplayBuffer:
         assert self.training_container is not None
         assert isinstance(training_container, type(self.training_container))  # type: ignore
 
-        self.training_container.extend(training_container)  # type: ignore
+        if self.lazy_sort:
+            # Accumulate the incoming batch without concatenating yet.
+            self._pending_batches.append(training_container)
+            self._pending_len += len(training_container)
 
-        # Clear fields that must be recomputed for Trajectories and Transitions.
-        # Otherwise, we might accidentally use the old values.
-        if isinstance(self.training_container, (Trajectories, Transitions)):
-            self.training_container.log_probs = None
-        if isinstance(self.training_container, Trajectories):
-            self.training_container.estimator_outputs = None
+            total_len = len(self.training_container) + self._pending_len
 
-        # Sort elements by log reward, capping the size at the defined capacity.
+            # Flush, sort, and truncate only when we hit 2x capacity.
+            if total_len >= 2 * self.capacity:
+                self._flush_pending()
+                self._sort_and_truncate(training_container)
+        else:
+            # Eager path: extend, sort, and truncate on every add.
+            with Timer(self.timing_data, "local_add/extend", enabled=self.timing):
+                self.training_container.extend(training_container)  # type: ignore
+
+            # Clear fields that must be recomputed.
+            if isinstance(self.training_container, (Trajectories, Transitions)):
+                self.training_container.log_probs = None
+            if isinstance(self.training_container, Trajectories):
+                self.training_container.estimator_outputs = None
+
+            self._sort_and_truncate(training_container)
+
+    def _sort_and_truncate(self, training_container: ContainerUnion) -> None:
+        """Sort by log-reward (if prioritized) and truncate to capacity."""
+        assert self.training_container is not None
+
         if self.prioritized_capacity:
             if (
                 self.training_container.log_rewards is None
@@ -400,14 +462,16 @@ class ReplayBuffer:
             ):
                 raise ValueError("log_rewards must be defined for prioritized replay.")
 
-            # Ascending sort.
-            ix = torch.argsort(self.training_container.log_rewards)
-            self.training_container = cast(ContainerUnion, self.training_container[ix])
+            with Timer(self.timing_data, "local_add/sort", enabled=self.timing):
+                ix = torch.argsort(self.training_container.log_rewards)
+                self.training_container = cast(
+                    ContainerUnion, self.training_container[ix]
+                )
 
-        assert self.training_container is not None
-        self.training_container = cast(
-            ContainerUnion, self.training_container[-self.capacity :]
-        )
+        with Timer(self.timing_data, "local_add/truncate", enabled=self.timing):
+            self.training_container = cast(
+                ContainerUnion, self.training_container[-self.capacity :]
+            )
 
     def sample(self, n_samples: int) -> ContainerUnion:
         """Samples training objects from the buffer.
@@ -418,8 +482,11 @@ class ReplayBuffer:
         Returns:
             A sampled Trajectories, Transitions, or StatesContainer.
         """
-        if self.training_container is None:
+        if self.training_container is None or len(self.training_container) == 0:
             raise ValueError("Buffer is empty")
+
+        # Sample from the committed container only — pending batches are not
+        # flushed here so that lazy sorting can accumulate up to 2x capacity.
 
         # If the buffer is flagged as prioritised, draw samples proportionally to the
         # (exponentiated) log-rewards; otherwise, fall back to uniform sampling.
@@ -436,7 +503,7 @@ class ReplayBuffer:
 
             # Decide whether to sample with replacement – this is required when the
             # request is larger than the buffer size.
-            replacement = n_samples > len(self)
+            replacement = n_samples > len(self.training_container)
 
             indices = torch.multinomial(probs, n_samples, replacement=replacement)
             return self.training_container[indices]
@@ -450,6 +517,7 @@ class ReplayBuffer:
         Args:
             path: File path (e.g. ``"replay_buffer.pt"``).
         """
+        self._flush_pending()
         if self.training_container is not None:
             self.training_container.save(path)
 
@@ -520,6 +588,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         timing: bool = False,
         async_score: bool = False,
         async_comm: bool = False,
+        lazy_sort: bool = False,
     ):
         """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
 
@@ -538,6 +607,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             async_score: If True, trajectory sends are fire-and-forget; scores
                 are collected lazily on the next add() call.
             async_comm: If True, fully non-blocking send and recv.
+            lazy_sort: If True, defer concatenation and sorting until 2x capacity.
         """
         super().__init__(
             env,
@@ -549,6 +619,7 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             timing=timing,
             async_score=async_score,
             async_comm=async_comm,
+            lazy_sort=lazy_sort,
         )
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
@@ -577,10 +648,15 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         to_add = len(training_container)
         self._is_full |= len(self) + to_add >= self.capacity
 
-        # The buffer isn't full yet.
+        # The buffer isn't full yet — delegate to base class (lazy sorting ok).
         if len(self) < self.capacity:
             super()._local_add(training_container)
             return
+
+        # Flush any pending lazy batches so diversity filtering sees all data.
+        # This defeats lazy sorting once the buffer is full, but diversity
+        # filtering requires a consistent view of the committed container.
+        self._flush_pending()
 
         # Our buffer is full and we will prioritize diverse, high reward additions.
         log_rewards = training_container.log_rewards
