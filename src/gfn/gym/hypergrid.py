@@ -891,7 +891,7 @@ class HyperGrid(DiscreteEnv):
             return True
         return self._solve_gf2_has_solution(full_A, full_c)
 
-    def _exists_multiplicative_coprime(self, thr: float) -> bool:
+    def _exists_multiplicative_coprime(self, thr: float) -> bool:  # noqa: C901
         """Number-theoretic constructive check for ``MultiplicativeCoprimeReward``.
 
         For each rule, factors the rule's target LCM over allowed primes,
@@ -1678,7 +1678,7 @@ class BitwiseXORReward(GridReward):
 
     _RULE_SEED_STRIDE: int = 1_000_003
 
-    def __init__(self, height: int, ndim: int, **kwargs):
+    def __init__(self, height: int, ndim: int, **kwargs):  # noqa: C901
         super().__init__(height, ndim, **kwargs)
         self.R0: float = float(kwargs.get("R0", 0.0))
         tier_weights = kwargs.get("tier_weights", [1.0, 10.0, 100.0])
@@ -1866,9 +1866,7 @@ class BitwiseXORReward(GridReward):
                 if self._full_A.numel() == 0:
                     combined_rank = _gf2_rank(S_long)
                 else:
-                    combined_rank = _gf2_rank(
-                        torch.cat([self._full_A, S_long], dim=0)
-                    )
+                    combined_rank = _gf2_rank(torch.cat([self._full_A, S_long], dim=0))
                 if combined_rank == trunk_rank_for_indep + self.k_select:
                     break
             else:
@@ -1890,9 +1888,7 @@ class BitwiseXORReward(GridReward):
         lo_h, hi_h = self.head_bit_range
         n_head_bits = max(0, hi_h - lo_h + 1)
         r_head_total = self.head_check_count * n_head_bits
-        self._head_c_per_rule = torch.zeros(
-            self.n_rules, r_head_total, dtype=torch.long
-        )
+        self._head_c_per_rule = torch.zeros(self.n_rules, r_head_total, dtype=torch.long)
         if self.head_check_count > 0 and n_head_bits > 0:
             A_r, _ = _gf2_random_fullrank(
                 self.head_check_count, M, self.head_seed + self._RULE_SEED_STRIDE
@@ -1901,9 +1897,9 @@ class BitwiseXORReward(GridReward):
             row = 0
             for bb in range(lo_h, hi_h + 1):
                 for cd in range(M):
-                    self._head_A[row : row + self.head_check_count, cd * B + bb] = (
-                        A_r[:, cd].long()
-                    )
+                    self._head_A[row : row + self.head_check_count, cd * B + bb] = A_r[
+                        :, cd
+                    ].long()
                 row += self.head_check_count
             # Per-rule head_c via witness construction.
             for rule in range(self.n_rules):
@@ -1925,9 +1921,9 @@ class BitwiseXORReward(GridReward):
 
         # Stack head_A into per-rule shape (n_rules, r_head_total, M*B) for
         # batched gather in __call__. All rules share the same A matrix.
-        self._head_A_per_rule = self._head_A.unsqueeze(0).expand(
-            self.n_rules, -1, -1
-        ).contiguous()
+        self._head_A_per_rule = (
+            self._head_A.unsqueeze(0).expand(self.n_rules, -1, -1).contiguous()
+        )
 
         # Powers of 2 for packing selector bits to rule_idx.
         self._select_powers = (
@@ -1997,8 +1993,6 @@ class BitwiseXORReward(GridReward):
         unconstrained dims.
         """
         M = len(self.dims_constrained)
-        B = self._B
-        n_vars = M * B
         unconstrained = self.height ** (self.ndim - M)
         per_rule_counts = self._per_rule_mode_counts()
         total = sum(per_rule_counts) * unconstrained
@@ -2037,9 +2031,7 @@ class BitwiseXORReward(GridReward):
                 [self._full_A, self._selector_matrix, self._head_A_per_rule[r]],
                 dim=0,
             )
-            c = torch.cat(
-                [self._full_c, sel_target, self._head_c_per_rule[r]], dim=0
-            )
+            c = torch.cat([self._full_c, sel_target, self._head_c_per_rule[r]], dim=0)
             if A.numel() == 0:
                 counts.append(2**n_vars)
                 continue
@@ -2149,9 +2141,7 @@ class BitwiseXORReward(GridReward):
             head_c = self._head_c_per_rule.to(dev)
             A_per_state = head_A[rule_idx]
             c_per_state = head_c[rule_idx]
-            head_prod = (
-                torch.einsum("...rj,...j->...r", A_per_state, flat_bits) & 1
-            )
+            head_prod = torch.einsum("...rj,...j->...r", A_per_state, flat_bits) & 1
             head_ok = (head_prod == c_per_state).all(-1)
 
             R = R + (tier_ok & head_ok).to(R.dtype) * self.head_weight
@@ -2222,7 +2212,7 @@ class MultiplicativeCoprimeReward(GridReward):
           each tier requires understanding the prior tier's structure.
     """
 
-    def __init__(self, height: int, ndim: int, **kwargs):
+    def __init__(self, height: int, ndim: int, **kwargs):  # noqa: C901
         super().__init__(height, ndim, **kwargs)
         self.R0: float = float(kwargs.get("R0", 0.0))
         tier_weights = kwargs.get("tier_weights", [1.0, 10.0, 100.0])
@@ -2308,20 +2298,14 @@ class MultiplicativeCoprimeReward(GridReward):
         assert self.n_rules >= 1, f"n_rules must be >= 1, got {self.n_rules}"
         head_seed_provided = kwargs.get("head_seed", None) is not None
         if not head_seed_provided and self.n_rules > 1:
-            raise ValueError(
-                "head_seed must be provided when n_rules > 1; got None."
-            )
-        self.head_seed: int = (
-            int(kwargs["head_seed"]) if head_seed_provided else 0
-        )
+            raise ValueError("head_seed must be provided when n_rules > 1; got None.")
+        self.head_seed: int = int(kwargs["head_seed"]) if head_seed_provided else 0
 
         rule_targets = kwargs.get("rule_targets", None)
         rule_targets_inherited_from_trunk = False
         if rule_targets is None:
             if head_seed_provided:
-                rule_targets = self._generate_rule_targets(
-                    self.n_rules, self.head_seed
-                )
+                rule_targets = self._generate_rule_targets(self.n_rules, self.head_seed)
             else:
                 # Legacy K=1 backward-compat: head's single LCM mirrors the
                 # trunk's top-tier LCM. Mark as inherited so we don't later
@@ -2329,9 +2313,9 @@ class MultiplicativeCoprimeReward(GridReward):
                 # preserving it keeps pre-refactor reward output bit-exact).
                 rule_targets = [self.target_lcms[-1]]
                 rule_targets_inherited_from_trunk = True
-        assert len(rule_targets) == self.n_rules, (
-            f"rule_targets has {len(rule_targets)} entries; expected n_rules={self.n_rules}"
-        )
+        assert (
+            len(rule_targets) == self.n_rules
+        ), f"rule_targets has {len(rule_targets)} entries; expected n_rules={self.n_rules}"
         self.rule_targets: list[int | None] = [
             int(t) if t is not None else None for t in rule_targets
         ]
@@ -2711,7 +2695,7 @@ class ConditionalMultiScaleReward(GridReward):
     # Stride between per-rule RNG seeds; large prime to decorrelate rules.
     _RULE_SEED_STRIDE: int = 1_000_003
 
-    def __init__(self, height: int, ndim: int, **kwargs):
+    def __init__(self, height: int, ndim: int, **kwargs):  # noqa: C901
         super().__init__(height, ndim, **kwargs)
         self.R0: float = float(kwargs.get("R0", 0.0))
 
@@ -2754,9 +2738,9 @@ class ConditionalMultiScaleReward(GridReward):
         filter_shift = kwargs.get("filter_shift", None)
         if filter_shift is None:
             filter_shift = [0] * len(self.tier_weights)
-        assert len(filter_shift) == len(self.tier_weights), (
-            f"filter_shift length {len(filter_shift)} != n_tiers {len(self.tier_weights)}"
-        )
+        assert len(filter_shift) == len(
+            self.tier_weights
+        ), f"filter_shift length {len(filter_shift)} != n_tiers {len(self.tier_weights)}"
         self.filter_shift: list[int] = [int(s) % self.base for s in filter_shift]
 
         active_dims = kwargs.get("active_dims", None)
@@ -2850,15 +2834,13 @@ class ConditionalMultiScaleReward(GridReward):
         n_patterns = f**d_active  # tier-0-filter-passing patterns
         if cross_mod_0 is None:
             n_surv = n_patterns
-            uniform_after_cross = True
         else:
             # Each cross_mod_0 is a divisor of f, and the sum-mod-m constraint
             # picks 1/m of the patterns symmetrically. Hence n_surv = n_patterns / m.
-            assert n_patterns % cross_mod_0 == 0, (
-                f"f^d_active={n_patterns} not divisible by cross_dim_mods[0]={cross_mod_0}"
-            )
+            assert (
+                n_patterns % cross_mod_0 == 0
+            ), f"f^d_active={n_patterns} not divisible by cross_dim_mods[0]={cross_mod_0}"
             n_surv = n_patterns // cross_mod_0
-            uniform_after_cross = True
 
         if self.n_rules > n_surv:
             raise ValueError(
@@ -2876,9 +2858,15 @@ class ConditionalMultiScaleReward(GridReward):
         ENUM_THRESHOLD = 12
         if d_active <= ENUM_THRESHOLD:
             bucket_counts = [0] * self.n_rules
-            survivors_iter = range(n_patterns) if cross_mod_0 is None else (
-                pat for pat in range(n_patterns)
-                if sum((pat // (f**i)) % f for i in range(d_active)) % cross_mod_0 == 0
+            survivors_iter = (
+                range(n_patterns)
+                if cross_mod_0 is None
+                else (
+                    pat
+                    for pat in range(n_patterns)
+                    if sum((pat // (f**i)) % f for i in range(d_active)) % cross_mod_0
+                    == 0
+                )
             )
             for pat in survivors_iter:
                 bucket_counts[pat % self.n_rules] += 1
@@ -2895,7 +2883,7 @@ class ConditionalMultiScaleReward(GridReward):
         else:
             # Above threshold: rely on cyclic-uniformity. n_rules ≤ n_surv
             # already verified; uniform partition iff n_rules divides n_surv.
-            self._uniform_partition = (n_surv % self.n_rules == 0)
+            self._uniform_partition = n_surv % self.n_rules == 0
 
         if not self._uniform_partition:
             logger.warning(

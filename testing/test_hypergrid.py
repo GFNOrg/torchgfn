@@ -520,9 +520,7 @@ def test_conditional_multiscale_density_invariant_in_K():
 @pytest.mark.parametrize("n_rules", [1, 16, 64])
 def test_conditional_multiscale_per_rule_count_matches_total(n_rules):
     p = get_reward_presets("conditional_multiscale", ndim=6, height=64)[f"K{n_rules}"]
-    env = _make_env(
-        "conditional_multiscale", p, ndim=6, height=64, validate_modes=False
-    )
+    env = _make_env("conditional_multiscale", p, ndim=6, height=64, validate_modes=False)
     rf = env.reward_fn
     total = rf.analytic_mode_count()
     per_rule = rf.analytic_mode_count(per_rule=True)
@@ -533,9 +531,7 @@ def test_conditional_multiscale_selector_covers_all_rules():
     """Selector must produce every rule index in [0, n_rules) over uniform
     random states (else _validate_rule_coverage failed silently)."""
     p = get_reward_presets("conditional_multiscale", ndim=6, height=64)["K64"]
-    env = _make_env(
-        "conditional_multiscale", p, ndim=6, height=64, validate_modes=False
-    )
+    env = _make_env("conditional_multiscale", p, ndim=6, height=64, validate_modes=False)
     rf = env.reward_fn
     torch.manual_seed(0)
     xs = torch.randint(0, 64, (200_000, 6))
@@ -546,9 +542,7 @@ def test_conditional_multiscale_selector_covers_all_rules():
 
 def test_conditional_multiscale_selector_deterministic():
     p = get_reward_presets("conditional_multiscale", ndim=6, height=64)["K16"]
-    env = _make_env(
-        "conditional_multiscale", p, ndim=6, height=64, validate_modes=False
-    )
+    env = _make_env("conditional_multiscale", p, ndim=6, height=64, validate_modes=False)
     rf = env.reward_fn
     torch.manual_seed(123)
     xs = torch.randint(0, 64, (1024, 6))
@@ -593,7 +587,7 @@ def test_conditional_multiscale_rule_coverage_assert_fires():
         filter_width=2,
         seed=42,
         active_dims=[0, 1],  # f^d_active = 4
-        n_rules=8,           # exceeds 4
+        n_rules=8,  # exceeds 4
     )
     with pytest.raises(ValueError):
         HyperGrid(
@@ -641,8 +635,8 @@ def test_conditional_multiscale_validator_rejects_dead_rules_via_cross_dim():
         seed=42,
         head_seed=2025,
         active_dims=[0, 1, 2, 3, 4, 5],
-        cross_dim_mods=[2, 2, 2],   # tier-0 cross-dim halves trunk patterns
-        n_rules=64,                  # but selector mod 64 needs 64 distinct buckets
+        cross_dim_mods=[2, 2, 2],  # tier-0 cross-dim halves trunk patterns
+        n_rules=64,  # but selector mod 64 needs 64 distinct buckets
     )
     with pytest.raises(ValueError, match="trunk-passing"):
         HyperGrid(
@@ -692,7 +686,7 @@ def test_conditional_multiscale_K16_enumeration_parity():
         filter_width=2,
         seed=42,
         head_seed=7,
-        n_rules=16,            # f^d_active = 2^4 = 16, exact partition
+        n_rules=16,  # f^d_active = 2^4 = 16, exact partition
         active_dims=[0, 1, 2, 3],
     )
     env = HyperGrid(
@@ -782,8 +776,10 @@ def test_bitwise_xor_K1_no_head_equals_legacy_over_random_batch():
     # Only the constrained dims feed the parity check.
     xs_constrained = xs[:, rf.dims_constrained]
     flat_bits = (
-        (xs_constrained.unsqueeze(-1) >> torch.arange(rf._B)) & 1
-    ).reshape(2048, -1).long()
+        ((xs_constrained.unsqueeze(-1) >> torch.arange(rf._B)) & 1)
+        .reshape(2048, -1)
+        .long()
+    )
     prod = (flat_bits @ rf._full_A.t()) & 1
     expected = torch.full((2048,), float(rf.R0))
     tier_ok = torch.ones(2048, dtype=torch.bool)
@@ -791,8 +787,7 @@ def test_bitwise_xor_K1_no_head_equals_legacy_over_random_batch():
     for n_chk, w in zip(rf._tier_check_counts, rf.tier_weights):
         if n_chk > 0:
             slice_ok = (
-                prod[..., offset : offset + n_chk]
-                == rf._full_c[offset : offset + n_chk]
+                prod[..., offset : offset + n_chk] == rf._full_c[offset : offset + n_chk]
             ).all(-1)
             tier_ok = tier_ok & slice_ok
         expected = expected + tier_ok.float() * w
@@ -803,9 +798,7 @@ def test_bitwise_xor_K1_no_head_equals_legacy_over_random_batch():
 @pytest.mark.parametrize("n_rules", [1, 16, 64])
 def test_bitwise_xor_K_presets_validate_modes(n_rules):
     p = get_reward_presets("bitwise_xor", 10, 16)[f"K{n_rules}"]
-    env = _make_env(
-        "bitwise_xor", p, ndim=10, height=16, validate_modes=True
-    )
+    env = _make_env("bitwise_xor", p, ndim=10, height=16, validate_modes=True)
     assert env.reward_fn.n_rules == n_rules
 
 
@@ -853,21 +846,32 @@ def test_bitwise_xor_head_seed_required_when_K_gt_1():
     )
     with pytest.raises(ValueError, match="head_seed"):
         HyperGrid(
-            ndim=3, height=16, reward_fn_str="bitwise_xor",
-            reward_fn_kwargs=bad, validate_modes=False,
+            ndim=3,
+            height=16,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs=bad,
+            validate_modes=False,
         )
 
 
 def test_bitwise_xor_head_weight_nonzero_with_zero_check_count_raises():
     bad = dict(
-        R0=0.0, tier_weights=[1.0], dims_constrained=[0, 1, 2],
-        bits_per_tier=[(0, 3)], n_rules=2, head_seed=1,
-        head_check_count=0, head_weight=10.0,
+        R0=0.0,
+        tier_weights=[1.0],
+        dims_constrained=[0, 1, 2],
+        bits_per_tier=[(0, 3)],
+        n_rules=2,
+        head_seed=1,
+        head_check_count=0,
+        head_weight=10.0,
     )
     with pytest.raises(ValueError, match="head_check_count=0"):
         HyperGrid(
-            ndim=3, height=16, reward_fn_str="bitwise_xor",
-            reward_fn_kwargs=bad, validate_modes=False,
+            ndim=3,
+            height=16,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs=bad,
+            validate_modes=False,
         )
 
 
@@ -897,8 +901,11 @@ def test_bitwise_xor_validator_rejects_unreachable_rule():
     )
     with pytest.raises(ValueError, match="selector|no solution|inconsistent"):
         HyperGrid(
-            ndim=2, height=4, reward_fn_str="bitwise_xor",
-            reward_fn_kwargs=bad, validate_modes=False,
+            ndim=2,
+            height=4,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs=bad,
+            validate_modes=False,
         )
 
 
@@ -943,9 +950,9 @@ def test_multiplicative_coprime_K1_no_head_seed_equals_legacy_over_random_batch(
         cum += float(w)
         valid_rewards.add(cum)
     seen = set(round(x, 6) for x in r.tolist())
-    assert seen.issubset({round(v, 6) for v in valid_rewards}), (
-        f"unexpected reward values: {seen - {round(v, 6) for v in valid_rewards}}"
-    )
+    assert seen.issubset(
+        {round(v, 6) for v in valid_rewards}
+    ), f"unexpected reward values: {seen - {round(v, 6) for v in valid_rewards}}"
     # And: there must be at least one tier-3 mode in 2048 samples? No — too
     # rare. Instead: assert there are tier-1 passers (lots).
     threshold_t1 = rf.R0 + float(rf.tier_weights[0])
@@ -984,8 +991,11 @@ def test_multiplicative_coprime_head_seed_required_when_K_gt_1():
     )
     with pytest.raises(ValueError, match="head_seed"):
         HyperGrid(
-            ndim=6, height=64, reward_fn_str="multiplicative_coprime",
-            reward_fn_kwargs=bad, validate_modes=False,
+            ndim=6,
+            height=64,
+            reward_fn_str="multiplicative_coprime",
+            reward_fn_kwargs=bad,
+            validate_modes=False,
         )
 
 
@@ -993,19 +1003,22 @@ def test_multiplicative_coprime_too_few_primes_for_K_raises():
     bad = dict(
         R0=0.0,
         tier_weights=[1.0, 10.0, 100.0, 1000.0],
-        primes=[2, 3],          # only 2 primes
+        primes=[2, 3],  # only 2 primes
         exponent_caps=[2, 2, 2, 2],
         active_dims=[0, 1],
         coprime_pairs=[(0, 1)],
         coprime_start_tier=2,
         target_lcms=[None, None, None, None],
-        n_rules=16,             # 2^2 = 4 < 16
+        n_rules=16,  # 2^2 = 4 < 16
         head_seed=42,
     )
     with pytest.raises(ValueError, match="Cannot generate"):
         HyperGrid(
-            ndim=2, height=16, reward_fn_str="multiplicative_coprime",
-            reward_fn_kwargs=bad, validate_modes=False,
+            ndim=2,
+            height=16,
+            reward_fn_str="multiplicative_coprime",
+            reward_fn_kwargs=bad,
+            validate_modes=False,
         )
 
 
@@ -1034,7 +1047,9 @@ def test_multiplicative_coprime_K1_with_explicit_head_seed_uses_enum():
     env_b = _make_env(
         "multiplicative_coprime",
         dict(common, n_rules=1, head_seed=2025),
-        ndim=6, height=64, validate_modes=True,  # validate must succeed
+        ndim=6,
+        height=64,
+        validate_modes=True,  # validate must succeed
     )
     assert env_b.reward_fn.rule_targets[0] != 44100
     assert env_b.reward_fn.target_lcms[-1] is None  # cleared by K-rule path
@@ -1043,8 +1058,12 @@ def test_multiplicative_coprime_K1_with_explicit_head_seed_uses_enum():
 def test_multiplicative_coprime_head_seed_reproducibility():
     """Same head_seed → same rule_targets across constructions."""
     p = get_reward_presets("multiplicative_coprime", 6, 64)["K16"]
-    env_a = _make_env("multiplicative_coprime", p, ndim=6, height=64, validate_modes=False)
-    env_b = _make_env("multiplicative_coprime", p, ndim=6, height=64, validate_modes=False)
+    env_a = _make_env(
+        "multiplicative_coprime", p, ndim=6, height=64, validate_modes=False
+    )
+    env_b = _make_env(
+        "multiplicative_coprime", p, ndim=6, height=64, validate_modes=False
+    )
     assert env_a.reward_fn.rule_targets == env_b.reward_fn.rule_targets
 
 
@@ -1061,11 +1080,14 @@ def test_multiplicative_coprime_explicit_rule_targets_bypass_generator():
         target_lcms=[None, "auto"],  # would yield 36 = 4*9
         n_rules=2,
         head_seed=42,
-        rule_targets=[6, 12],         # explicit — bypasses generator
+        rule_targets=[6, 12],  # explicit — bypasses generator
     )
     env = HyperGrid(
-        ndim=2, height=16, reward_fn_str="multiplicative_coprime",
-        reward_fn_kwargs=kwargs, validate_modes=False,
+        ndim=2,
+        height=16,
+        reward_fn_str="multiplicative_coprime",
+        reward_fn_kwargs=kwargs,
+        validate_modes=False,
     )
     assert env.reward_fn.rule_targets == [6, 12]
     assert env.reward_fn.target_lcms[-1] is None  # K-rule path cleared it
@@ -1088,8 +1110,11 @@ def test_multiplicative_coprime_rule_targets_with_None_uses_sentinel():
         rule_targets=[None, 6],
     )
     env = HyperGrid(
-        ndim=2, height=16, reward_fn_str="multiplicative_coprime",
-        reward_fn_kwargs=kwargs, validate_modes=False,
+        ndim=2,
+        height=16,
+        reward_fn_str="multiplicative_coprime",
+        reward_fn_kwargs=kwargs,
+        validate_modes=False,
     )
     rf = env.reward_fn
     # Rule 0's exps are all -1 sentinel.
@@ -1123,9 +1148,7 @@ def test_multiplicative_coprime_exists_check_K_rule_path():
     """At K>1 with a large grid, _exists_multiplicative_coprime must find at
     least one rule with a witness whose selector maps back to its index."""
     p = get_reward_presets("multiplicative_coprime", 6, 64)["K16"]
-    env = _make_env(
-        "multiplicative_coprime", p, ndim=6, height=64, validate_modes=False
-    )
+    env = _make_env("multiplicative_coprime", p, ndim=6, height=64, validate_modes=False)
     thr = env._mode_reward_threshold()
     assert env._exists_multiplicative_coprime(thr) is True
 
@@ -1156,8 +1179,12 @@ def test_multiplicative_coprime_K16_enumeration_parity():
         head_seed=42,
     )
     env = HyperGrid(
-        ndim=3, height=16, reward_fn_str="multiplicative_coprime",
-        reward_fn_kwargs=kwargs, validate_modes=False, store_all_states=True,
+        ndim=3,
+        height=16,
+        reward_fn_str="multiplicative_coprime",
+        reward_fn_kwargs=kwargs,
+        validate_modes=False,
+        store_all_states=True,
     )
     all_states = env.all_states
     assert all_states is not None
@@ -1208,47 +1235,58 @@ def test_bitwise_xor_K1_with_head_is_validated():
     assert rf.n_rules == 1
     assert rf.head_check_count == 1
     assert rf.head_weight == 1000.0
-    # Witness construction must have set head_c[0] consistently.
-    # Verify: there exists a state with reward equal to the full mode threshold.
-    threshold = rf.R0 + sum(rf.tier_weights) + rf.head_weight
-    # For this preset, an explicit mode is hard to construct without enumeration,
-    # but the analytic count > 0 implies one exists.
+    # Witness construction must have set head_c[0] consistently. An explicit
+    # mode is hard to construct without enumeration, but the analytic count
+    # > 0 implies one exists at threshold R0 + sum(tier_weights) + head_weight.
     assert rf.analytic_mode_count() > 0
 
 
 def test_bitwise_xor_K1_head_seed_required():
     """At K=1 with head_check_count > 0, head_seed=None must raise."""
     bad = dict(
-        R0=0.0, tier_weights=[1.0], dims_constrained=[0, 1, 2],
+        R0=0.0,
+        tier_weights=[1.0],
+        dims_constrained=[0, 1, 2],
         bits_per_tier=[(0, 3)],
         n_rules=1,
-        head_check_count=1, head_weight=10.0,
+        head_check_count=1,
+        head_weight=10.0,
         # head_seed missing
     )
     with pytest.raises(ValueError, match="head_seed"):
         HyperGrid(
-            ndim=3, height=16, reward_fn_str="bitwise_xor",
-            reward_fn_kwargs=bad, validate_modes=False,
+            ndim=3,
+            height=16,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs=bad,
+            validate_modes=False,
         )
 
 
 def test_bitwise_xor_empty_head_bit_range_with_count_raises():
     bad = dict(
-        R0=0.0, tier_weights=[1.0], dims_constrained=[0, 1, 2],
-        bits_per_tier=[(0, 3)], n_rules=2, head_seed=1,
-        head_check_count=1, head_weight=10.0,
+        R0=0.0,
+        tier_weights=[1.0],
+        dims_constrained=[0, 1, 2],
+        bits_per_tier=[(0, 3)],
+        n_rules=2,
+        head_seed=1,
+        head_check_count=1,
+        head_weight=10.0,
         head_bit_range=(0, -1),  # empty range
     )
     with pytest.raises(AssertionError, match="head_bit_range"):
         HyperGrid(
-            ndim=3, height=16, reward_fn_str="bitwise_xor",
-            reward_fn_kwargs=bad, validate_modes=False,
+            ndim=3,
+            height=16,
+            reward_fn_str="bitwise_xor",
+            reward_fn_kwargs=bad,
+            validate_modes=False,
         )
 
 
 def test_bitwise_xor_K_enumeration_parity():
     """Brute-force enumeration must match analytic_mode_count on a small grid."""
-    M = 4
     B = 2  # height=4
     kwargs = dict(
         R0=0.0,
@@ -1263,8 +1301,12 @@ def test_bitwise_xor_K_enumeration_parity():
         head_bit_range=(0, B - 1),
     )
     env = HyperGrid(
-        ndim=4, height=4, reward_fn_str="bitwise_xor",
-        reward_fn_kwargs=kwargs, validate_modes=False, store_all_states=True,
+        ndim=4,
+        height=4,
+        reward_fn_str="bitwise_xor",
+        reward_fn_kwargs=kwargs,
+        validate_modes=False,
+        store_all_states=True,
     )
     all_states = env.all_states
     assert all_states is not None
@@ -1284,7 +1326,7 @@ def test_conditional_multiscale_analytic_matches_enumeration_K():
         filter_width=2,
         seed=42,
         head_seed=99,
-        n_rules=4,                  # f^d_active = 2^3 = 8 ≥ 4
+        n_rules=4,  # f^d_active = 2^3 = 8 ≥ 4
         active_dims=[0, 1, 2],
     )
     # 16x16x16 grid (4^2 each): state space = 4096. Easily enumerable.
@@ -1313,8 +1355,14 @@ def test_conditional_multiscale_analytic_matches_enumeration_K():
 def test_multiscale_filter_shift_default_is_zero_and_unchanged():
     """Without filter_shift, the trunk passes top_digit < f starting at 0
     (current behavior)."""
-    kwargs = dict(R0=0.0, tier_weights=[1.0, 10.0], base=4, filter_width=2,
-                  seed=42, active_dims=[0, 1])
+    kwargs = dict(
+        R0=0.0,
+        tier_weights=[1.0, 10.0],
+        base=4,
+        filter_width=2,
+        seed=42,
+        active_dims=[0, 1],
+    )
     env = _make_env("conditional_multiscale", kwargs, ndim=2, height=16)
     rf = env.reward_fn
     assert rf.filter_shift == [0, 0]
@@ -1330,10 +1378,17 @@ def test_multiscale_filter_shift_moves_blind_strip():
     base = 4
     f = 3
     L = 2  # h=16
-    H = base ** L
+    H = base**L
     # filter_shift[0] = 1: passing top-digits are {3, 0, 1} (excludes 2).
-    kwargs = dict(R0=0.0, tier_weights=[1.0, 10.0], base=base, filter_width=f,
-                  seed=42, active_dims=[0, 1], filter_shift=[1, 0])
+    kwargs = dict(
+        R0=0.0,
+        tier_weights=[1.0, 10.0],
+        base=base,
+        filter_width=f,
+        seed=42,
+        active_dims=[0, 1],
+        filter_shift=[1, 0],
+    )
     env = _make_env("conditional_multiscale", kwargs, ndim=2, height=H)
     rf = env.reward_fn
 
@@ -1344,7 +1399,9 @@ def test_multiscale_filter_shift_moves_blind_strip():
         xs = torch.tensor([[v, v]], dtype=torch.long)
         r = env.reward_fn(xs)[0].item()
         passes_tier0 = (top_digit + 1) % base < f  # 1 == filter_shift[0]
-        assert (r > rf.R0) == passes_tier0, (
+        assert (
+            r > rf.R0
+        ) == passes_tier0, (
             f"top_digit={top_digit}, expected pass_t0={passes_tier0}, got reward={r}"
         )
 
@@ -1352,15 +1409,23 @@ def test_multiscale_filter_shift_moves_blind_strip():
 def test_multiscale_filter_shift_density_invariant():
     """Density (analytic_mode_count) is invariant under filter_shift —
     the shift cyclically rotates the passing window without changing |window|."""
-    base_kwargs = dict(R0=0.0, tier_weights=[1.0, 10.0, 100.0], base=4,
-                       filter_width=3, seed=42, head_seed=2025,
-                       active_dims=list(range(8)),
-                       cross_dim_mods=[None, 3, 3], n_rules=1)
+    base_kwargs = dict(
+        R0=0.0,
+        tier_weights=[1.0, 10.0, 100.0],
+        base=4,
+        filter_width=3,
+        seed=42,
+        head_seed=2025,
+        active_dims=list(range(8)),
+        cross_dim_mods=[None, 3, 3],
+        n_rules=1,
+    )
     counts = []
     for fs0 in range(4):
         kw = dict(base_kwargs, filter_shift=[fs0, 0, 0])
-        env = _make_env("conditional_multiscale", kw, ndim=8, height=64,
-                        validate_modes=False)
+        env = _make_env(
+            "conditional_multiscale", kw, ndim=8, height=64, validate_modes=False
+        )
         counts.append(env.reward_fn.analytic_mode_count())
     assert len(set(counts)) == 1, f"density varies under filter_shift: {counts}"
 
@@ -1373,9 +1438,7 @@ def test_multiscale_filter_shift_density_invariant():
 @pytest.mark.parametrize("n_rules", [1, 16, 64])
 def test_multiscale_K_matched_validate_modes(n_rules):
     p = get_reward_presets("conditional_multiscale", 24, 16)[f"K{n_rules}_matched"]
-    env = _make_env(
-        "conditional_multiscale", p, ndim=24, height=16, validate_modes=True
-    )
+    env = _make_env("conditional_multiscale", p, ndim=24, height=16, validate_modes=True)
     assert env.reward_fn.n_rules == n_rules
     total = env.reward_fn.analytic_mode_count()
     density = total / 16**24
@@ -1399,9 +1462,7 @@ def test_coprime_K_matched_validate_modes(n_rules):
     constructs a witness for trunk LCM=44100. No analytic count; just confirm
     construction + at least one mode exists."""
     p = get_reward_presets("multiplicative_coprime", 10, 64)[f"K{n_rules}_matched"]
-    env = _make_env(
-        "multiplicative_coprime", p, ndim=10, height=64, validate_modes=True
-    )
+    env = _make_env("multiplicative_coprime", p, ndim=10, height=64, validate_modes=True)
     assert env.reward_fn.n_rules == n_rules
 
 
