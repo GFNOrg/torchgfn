@@ -3524,16 +3524,18 @@ def get_bitwise_xor_presets(ndim: int, height: int) -> dict:
         # for richer per-rule heads at slightly tighter density (2.4e-7 vs the
         # standard preset's 9.5e-7). T_max=150, parity-symmetric coverage.
         # Total modes: 2^(40 - 16 - 6) = 2^18 = 262K, density 2.4e-7.
-        k_trunk_matched = _make_preset("Ktrunk_matched", 10, [1, 1, 2])
-        for n_rules in (1, 16, 64):
-            presets[f"K{n_rules}_matched"] = dict(
-                k_trunk_matched,
-                n_rules=n_rules,
-                head_seed=2025,
-                head_weight=1000.0,
-                head_check_count=2,
-                head_bit_range=(0, 2),
-            )
+        # Requires height >= 8 (B >= 3) so head_bit_range=(0, 2) is valid.
+        if height >= 8:
+            k_trunk_matched = _make_preset("Ktrunk_matched", 10, [1, 1, 2])
+            for n_rules in (1, 16, 64):
+                presets[f"K{n_rules}_matched"] = dict(
+                    k_trunk_matched,
+                    n_rules=n_rules,
+                    head_seed=2025,
+                    head_weight=1000.0,
+                    head_check_count=2,
+                    head_bit_range=(0, 2),
+                )
 
     return presets
 
