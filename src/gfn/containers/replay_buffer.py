@@ -77,6 +77,8 @@ class ReplayBuffer:
         async_score: bool = False,
         async_comm: bool = False,
         lazy_sort: bool = False,
+        baseline_filtering: bool = False,
+        scoring_only: bool = False,
     ):
         """Initializes a ReplayBuffer instance.
 
@@ -104,8 +106,15 @@ class ReplayBuffer:
                 to wait for the prior ``isend`` to complete.
             lazy_sort: If True, defer concatenation and sorting until the
                 buffer reaches 2x capacity. Useful for buffer manager ranks
-                that only accumulate data and don't sample every iteration.
-        """
+                that only accumulate data and don't sample every iteration.            baseline_filtering: If True, filter trajectories before sending
+                to the remote buffer manager. Only trajectories with
+                log-reward above the baseline (worst trajectory in the
+                remote buffer) are sent. The baseline is communicated
+                back by the buffer manager in the score response.
+            scoring_only: If True, only send terminating states and
+                log-rewards to the remote buffer manager (not full
+                trajectories). Use when the manager does not store data
+                locally and only needs scoring information."""
         self.env = env
         self.capacity = capacity
         self._is_full = False
@@ -136,6 +145,18 @@ class ReplayBuffer:
         self._pending_batches: list[ContainerUnion] = []
         self._pending_len: int = 0
 
+        # Baseline filtering: skip sending trajectories worse than the
+        # remote buffer's worst item. Updated from score responses.
+        self.baseline_filtering = baseline_filtering
+        self._baseline_log_reward: float = float("-inf")
+        # Filtering counters (tracked when timing=True).
+        self._baseline_total: int = 0
+        self._baseline_kept: int = 0
+        self._baseline_skipped_sends: int = 0
+
+        # Scoring-only: send only terminating states + log_rewards.
+        self.scoring_only = scoring_only
+
     @property
     def device(self) -> torch.device:
         """The device on which the buffer's data is stored.
@@ -156,6 +177,10 @@ class ReplayBuffer:
         call returns None (no pending score yet), and subsequent calls return the
         score from the *previous* submission.  This decouples training throughput
         from buffer scoring latency.
+
+        When ``baseline_filtering`` is enabled, only trajectories with log-reward
+        above the remote buffer's baseline are sent.  If all trajectories in the
+        pending batch are below the baseline, the send is skipped entirely.
 
         Args:
             training_container: The Trajectories, Transitions, or StatesContainer
@@ -191,26 +216,42 @@ class ReplayBuffer:
                         self.timing_data, "wait_pending_score", enabled=self.timing
                     ):
                         stale_score = self._collect_pending_score()
-
-                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
-                        self._isend_and_defer_score(self.pending_container)
-
+                    self._update_baseline(stale_score)
+                    self._filter_and_send(
+                        self.pending_container, self._isend_and_defer_score
+                    )
                     self.pending_container = None
-
                     return stale_score
                 elif self.async_score:
                     # Collect stale score from previous send (if any), then
                     # fire-and-forget the new batch.
                     stale_score = self._collect_pending_score()
-                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
-                        self._send_objs_async(self.pending_container)
+                    self._update_baseline(stale_score)
+                    self._filter_and_send(self.pending_container, self._send_objs_async)
                     self.pending_container = None
                     return stale_score
                 else:
-                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
-                        score = self._send_objs(self.pending_container)
+                    score = self._filter_and_send(
+                        self.pending_container, self._send_objs
+                    )
+                    if score is not None:
+                        self._update_baseline(score)
                     self.pending_container = None
                     return score
+
+    def _filter_and_send(self, container, send_fn):
+        """Filter by baseline, prepare for remote, and send.
+
+        Returns whatever ``send_fn`` returns (a score dict for sync sends,
+        None for async sends), or None if baseline filtering drops everything.
+        """
+        filtered = self._filter_by_baseline(container)
+        if filtered is None:
+            return None
+        with Timer(self.timing_data, "prepare_for_remote", enabled=self.timing):
+            to_send = self._prepare_for_remote(filtered)
+        with Timer(self.timing_data, "send_objs", enabled=self.timing):
+            return send_fn(to_send)
 
     def _send_objs(self, training_container: ContainerUnion) -> dict[str, float]:
         """Sends a training container to the remote manager (synchronous)."""
@@ -235,6 +276,83 @@ class ReplayBuffer:
         score = self._recv_score()
         self._pending_score = False
         return score
+
+    def _update_baseline(self, score_dict: dict[str, float] | None) -> None:
+        """Extract and store the baseline log-reward from a score response.
+
+        Called after receiving a score dict from the buffer manager.
+        Only updates if baseline_filtering is enabled and the score dict
+        contains a ``baseline_log_reward`` key.
+        """
+        if not self.baseline_filtering or score_dict is None:
+            return
+        if "baseline_log_reward" in score_dict:
+            self._baseline_log_reward = score_dict["baseline_log_reward"]
+
+    def _filter_by_baseline(
+        self,
+        container: ContainerUnion,
+    ) -> ContainerUnion | None:
+        """Filter a container to keep only items above the baseline log-reward.
+
+        Returns the filtered container, or None if all items are below the
+        baseline (nothing worth sending).  When baseline_filtering is
+        disabled or no baseline has been set yet, returns the container
+        unchanged.
+        """
+        if not self.baseline_filtering:
+            return container
+        if self._baseline_log_reward == float("-inf"):
+            return container  # No baseline yet — send everything.
+
+        log_rewards = container.log_rewards
+        if log_rewards is None:
+            return container  # Can't filter without rewards.
+
+        mask = log_rewards >= self._baseline_log_reward
+
+        n_total = len(container)
+        n_kept = int(mask.sum().item())
+        if self.timing:
+            self._baseline_total += n_total
+            self._baseline_kept += n_kept
+
+        if mask.all():
+            return container  # All above baseline — send everything.
+        if not mask.any():
+            if self.timing:
+                self._baseline_skipped_sends += 1
+            return None  # All below baseline — skip send.
+
+        indices = torch.where(mask)[0]
+        return container[indices]
+
+    def _prepare_for_remote(self, container: ContainerUnion) -> ContainerUnion:
+        """Convert a container to a lightweight form for remote scoring.
+
+        When ``scoring_only`` is True, extracts only the terminating states
+        and log-rewards into a ``StatesContainer``, discarding full
+        trajectory data (intermediate states, actions, etc.) to reduce
+        serialization and communication cost.
+
+        When ``scoring_only`` is False, returns the container unchanged.
+        """
+        if not self.scoring_only:
+            return container
+        if isinstance(container, StatesContainer):
+            return container
+
+        terminating_states = container.terminating_states
+        log_rewards = container.log_rewards
+        n = len(terminating_states)
+        return StatesContainer(
+            env=self.env,
+            states=terminating_states,
+            is_terminating=torch.ones(
+                n, dtype=torch.bool, device=terminating_states.device
+            ),
+            log_rewards=log_rewards,
+        )
 
     def _isend_and_defer_score(self, training_container: ContainerUnion) -> None:
         """Non-blocking send (isend), deferred score: fire-and-forget data, collect score on next add().
@@ -555,6 +673,15 @@ class ReplayBuffer:
             if total_time > 0:
                 bw = (total_bytes / 1e6) / total_time
                 log_str += f"  effective_send_bandwidth: {bw:.1f} MB/s\n"
+        # Baseline filtering stats.
+        if self._baseline_total > 0:
+            pct_filtered = 100.0 * (1.0 - self._baseline_kept / self._baseline_total)
+            log_str += (
+                f"  baseline_filtering: {self._baseline_kept}/{self._baseline_total} "
+                f"kept ({pct_filtered:.1f}% filtered), "
+                f"{self._baseline_skipped_sends} sends skipped entirely\n"
+            )
+
         return log_str
 
 

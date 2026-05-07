@@ -32,7 +32,9 @@ class ReplayBufferManager:
         remote_manager_rank: int | None = None,
         communication_backend: str = "mpi",
         timing: bool = False,
+        store_locally: bool = True,
     ):
+        self.store_locally = store_locally
         self.rank = rank
         self.is_running = True
         self.exit_counter = 0
@@ -71,6 +73,25 @@ class ReplayBufferManager:
         """Default score function if none provided, placeholder."""
         return {"score": math.inf}
 
+    def _inject_baseline_log_reward(self, score_dict: dict[str, float]) -> None:
+        """Add ``baseline_log_reward`` to *score_dict* when the buffer is full.
+
+        Reports the worst (min) log-reward currently held in the replay
+        buffer so that agents with ``baseline_filtering=True`` can skip
+        sending trajectories that would be immediately evicted.
+
+        The key is only added once the buffer has reached capacity;
+        before that every trajectory is accepted anyway.
+        """
+        if (
+            self.replay_buffer is not None
+            and self.replay_buffer.training_container is not None
+            and len(self.replay_buffer) >= self.capacity
+        ):
+            buf_log_rewards = self.replay_buffer.training_container.log_rewards
+            if buf_log_rewards is not None and buf_log_rewards.numel() > 0:
+                score_dict["baseline_log_reward"] = float(buf_log_rewards.min().item())
+
     def _compute_metadata(self) -> dict:
         raise NotImplementedError(
             "_compute_metadata is not implemented for default replay buffer manager"
@@ -100,12 +121,14 @@ class ReplayBufferManager:
         self._prune_completed_sends()
 
         if msg.message_type == MessageType.DATA:
-            with Timer(self._timing_data, "replay_add", enabled=self.timing):
-                self.replay_buffer.add(msg.message_data)
+            if self.store_locally:
+                with Timer(self._timing_data, "replay_add", enabled=self.timing):
+                    self.replay_buffer.add(msg.message_data)
             with Timer(self._timing_data, "scoring", enabled=self.timing):
                 score_dict = self.scoring_function(
                     msg.message_data, sender_rank=sender_rank
                 )
+            self._inject_baseline_log_reward(score_dict)
             with Timer(self._timing_data, "send", enabled=self.timing):
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()
@@ -160,12 +183,14 @@ class ReplayBufferManager:
         is in flight, making it preferable when all ranks share a CPU.
         """
         if msg.message_type == MessageType.DATA:
-            with Timer(self._timing_data, "replay_add", enabled=self.timing):
-                self.replay_buffer.add(msg.message_data)
+            if self.store_locally:
+                with Timer(self._timing_data, "replay_add", enabled=self.timing):
+                    self.replay_buffer.add(msg.message_data)
             with Timer(self._timing_data, "scoring", enabled=self.timing):
                 score_dict = self.scoring_function(
                     msg.message_data, sender_rank=sender_rank
                 )
+            self._inject_baseline_log_reward(score_dict)
             with Timer(self._timing_data, "send", enabled=self.timing):
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()
