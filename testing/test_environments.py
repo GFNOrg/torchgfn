@@ -427,8 +427,8 @@ def test_graph_env():
                     GraphActions.ACTION_TYPE_KEY: torch.full(
                         (BATCH_SIZE,), GraphActionType.ADD_NODE
                     ),
-                    GraphActions.NODE_CLASS_KEY: torch.randint(
-                        0, 10, (BATCH_SIZE,), dtype=torch.long
+                    GraphActions.NODE_CLASS_KEY: torch.full(
+                        (BATCH_SIZE,), i, dtype=torch.long
                     ),
                     GraphActions.NODE_INDEX_KEY: torch.tensor([i] * BATCH_SIZE),
                     GraphActions.EDGE_CLASS_KEY: torch.randint(
