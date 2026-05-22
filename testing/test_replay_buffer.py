@@ -7,6 +7,7 @@ from gfn.containers.replay_buffer import (
     NormBasedDiversePrioritizedReplayBuffer,
     ReplayBuffer,
 )
+from gfn.containers.replay_buffer_manager import ReplayBufferManager
 from gfn.containers.states_container import StatesContainer
 from gfn.containers.trajectories import Trajectories
 from gfn.containers.transitions import Transitions
@@ -626,3 +627,158 @@ def test_diversity_repr_shape():
         states_with_cond
     )
     assert repr_with_cond.shape == (2, 3)  # 2 state dims + 1 condition dim
+
+
+# --- baseline_filtering / scoring_only / store_locally --- #
+
+
+def test_baseline_filtering_requires_remote_rank(simple_env):
+    with pytest.raises(ValueError, match="baseline_filtering=True requires"):
+        ReplayBuffer(simple_env, baseline_filtering=True)
+
+
+def test_filter_by_baseline_no_baseline_yet(simple_env, trajectories):
+    buf = ReplayBuffer(simple_env, baseline_filtering=True, remote_manager_rank=0)
+    assert buf._filter_by_baseline(trajectories) is trajectories
+
+
+def test_filter_by_baseline_all_above(simple_env, trajectories):
+    buf = ReplayBuffer(simple_env, baseline_filtering=True, remote_manager_rank=0)
+    buf._baseline_log_reward = -1.0
+    assert buf._filter_by_baseline(trajectories) is trajectories
+    assert buf._consecutive_filtered_empty == 0
+
+
+def test_filter_by_baseline_all_below(simple_env, trajectories):
+    buf = ReplayBuffer(simple_env, baseline_filtering=True, remote_manager_rank=0)
+    buf._baseline_log_reward = 100.0
+    assert buf._filter_by_baseline(trajectories) is None
+    assert buf._baseline_skipped_sends == 1
+    assert buf._consecutive_filtered_empty == 1
+
+
+def test_filter_by_baseline_partial(simple_env, trajectories):
+    buf = ReplayBuffer(simple_env, baseline_filtering=True, remote_manager_rank=0)
+    buf._baseline_log_reward = 2.0
+    out = buf._filter_by_baseline(trajectories)
+    assert out is not None
+    assert len(out) == 3
+    assert out.log_rewards is not None
+    assert torch.equal(out.log_rewards, torch.tensor([2.0, 3.0, 4.0]))
+
+
+def test_filter_by_baseline_force_refresh(simple_env, trajectories):
+    buf = ReplayBuffer(
+        simple_env,
+        baseline_filtering=True,
+        remote_manager_rank=0,
+        baseline_refresh_after=2,
+    )
+    buf._baseline_log_reward = 100.0
+    assert buf._filter_by_baseline(trajectories) is None
+    # Second consecutive empty hits the threshold and bypasses the filter.
+    assert buf._filter_by_baseline(trajectories) is trajectories
+    assert buf._consecutive_filtered_empty == 0
+
+
+def test_filter_by_baseline_rejects_transitions(simple_env, transitions):
+    buf = ReplayBuffer(simple_env, baseline_filtering=True, remote_manager_rank=0)
+    buf._baseline_log_reward = 0.0
+    with pytest.raises(AssertionError, match="Trajectories or StatesContainer"):
+        buf._filter_by_baseline(transitions)
+
+
+def test_prepare_for_remote_trajectories(simple_env, trajectories):
+    buf = ReplayBuffer(simple_env, scoring_only=True, remote_manager_rank=0)
+    out = buf._prepare_for_remote(trajectories)
+    assert isinstance(out, StatesContainer)
+    assert bool(out.is_terminating.all())
+    assert out.log_rewards is not None
+    assert trajectories.log_rewards is not None
+    assert torch.equal(out.log_rewards, trajectories.log_rewards)
+
+
+def test_prepare_for_remote_states_container_noop(simple_env, state_pairs):
+    buf = ReplayBuffer(simple_env, scoring_only=True, remote_manager_rank=0)
+    assert buf._prepare_for_remote(state_pairs) is state_pairs
+
+
+def test_prepare_for_remote_rejects_transitions(simple_env, transitions):
+    buf = ReplayBuffer(simple_env, scoring_only=True, remote_manager_rank=0)
+    with pytest.raises(AssertionError, match="Trajectories or StatesContainer"):
+        buf._prepare_for_remote(transitions)
+
+
+# --- ReplayBufferManager baseline injection --- #
+
+
+def test_manager_baseline_strategy_validation(simple_env):
+    with pytest.raises(ValueError, match="baseline_strategy must be"):
+        ReplayBufferManager(
+            simple_env, rank=0, num_training_ranks=1, baseline_strategy="bad"
+        )
+
+
+def test_manager_baseline_min_when_buffer_full(simple_env, trajectories):
+    mgr = ReplayBufferManager(
+        simple_env,
+        rank=0,
+        num_training_ranks=1,
+        capacity=5,
+        baseline_strategy="min",
+    )
+    mgr.replay_buffer.add(trajectories)
+    mgr.replay_buffer._flush_pending()  # commit lazy-sorted data.
+    score: dict = {"score": 0.0}
+    mgr._inject_baseline_log_reward(score, None)  # no EMA influence.
+    assert score["baseline_log_reward"] == pytest.approx(0.0)
+
+
+def test_manager_baseline_percentile(simple_env, trajectories):
+    mgr = ReplayBufferManager(
+        simple_env,
+        rank=0,
+        num_training_ranks=1,
+        capacity=5,
+        baseline_strategy="percentile",
+        baseline_percentile=0.5,
+    )
+    mgr.replay_buffer.add(trajectories)
+    mgr.replay_buffer._flush_pending()
+    score: dict = {"score": 0.0}
+    mgr._inject_baseline_log_reward(score, None)
+    assert score["baseline_log_reward"] == pytest.approx(2.0)  # median of [0..4]
+
+
+def test_manager_baseline_ema_fallback_when_not_storing(simple_env, trajectories):
+    mgr = ReplayBufferManager(
+        simple_env,
+        rank=0,
+        num_training_ranks=1,
+        capacity=5,
+        store_locally=False,
+    )
+    score: dict = {"score": 0.0}
+    mgr._inject_baseline_log_reward(score, trajectories)
+    # EMA initialised from this batch's min finite reward == 0.0.
+    assert score["baseline_log_reward"] == pytest.approx(0.0)
+
+
+def test_manager_baseline_ema_skips_non_finite(simple_env, trajectories):
+    # -inf entries (e.g. from Transitions' non-terminating rows) must not
+    # poison the EMA.
+    mgr = ReplayBufferManager(
+        simple_env,
+        rank=0,
+        num_training_ranks=1,
+        capacity=5,
+        store_locally=False,
+        baseline_strategy="ema",
+    )
+    trajectories._log_rewards = torch.tensor(
+        [float("-inf"), 1.0, 2.0, 3.0, 4.0], dtype=torch.get_default_dtype()
+    )
+    score: dict = {"score": 0.0}
+    mgr._inject_baseline_log_reward(score, trajectories)
+    # Min over finite values is 1.0; the -inf must be filtered out.
+    assert score["baseline_log_reward"] == pytest.approx(1.0)
