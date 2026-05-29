@@ -2,6 +2,8 @@ import math
 from collections import defaultdict
 from typing import Callable, Optional
 
+import torch
+
 from gfn.containers.message import Message, MessageType
 from gfn.containers.replay_buffer import (
     NormBasedDiversePrioritizedReplayBuffer,
@@ -20,6 +22,20 @@ METADATA_TAG = 1
 
 
 class ReplayBufferManager:
+    """Receives training containers on the manager rank and replies with scores.
+
+    The manager optionally stores incoming data in a local replay buffer
+    (``store_locally=True``) and injects a ``baseline_log_reward`` into every
+    score response so workers with ``baseline_filtering`` can skip sending
+    payloads that would be immediately evicted.  The baseline source is
+    controlled by ``baseline_strategy``:
+
+    - ``"min"`` / ``"percentile"`` read from the local buffer once it
+      reaches capacity.
+    - ``"ema"`` (and any strategy when the buffer is unavailable, e.g.
+      ``store_locally=False``) reads from a running EMA of incoming
+      batch minima.
+    """
 
     def __init__(
         self,
@@ -32,7 +48,21 @@ class ReplayBufferManager:
         remote_manager_rank: int | None = None,
         communication_backend: str = "mpi",
         timing: bool = False,
+        store_locally: bool = True,
+        baseline_strategy: str = "min",
+        baseline_percentile: float = 0.1,
+        baseline_ema_alpha: float = 0.1,
     ):
+        if baseline_strategy not in ("min", "percentile", "ema"):
+            raise ValueError(
+                "baseline_strategy must be one of 'min', 'percentile', 'ema'; "
+                f"got {baseline_strategy!r}"
+            )
+        self.store_locally = store_locally
+        self.baseline_strategy = baseline_strategy
+        self.baseline_percentile = baseline_percentile
+        self.baseline_ema_alpha = baseline_ema_alpha
+        self._baseline_ema: float | None = None
         self.rank = rank
         self.is_running = True
         self.exit_counter = 0
@@ -71,6 +101,51 @@ class ReplayBufferManager:
         """Default score function if none provided, placeholder."""
         return {"score": math.inf}
 
+    def _inject_baseline_log_reward(
+        self, score_dict: dict[str, float], incoming
+    ) -> None:
+        """Inject ``baseline_log_reward`` into *score_dict* per ``baseline_strategy``.
+
+        Updates the EMA tracker from ``incoming.log_rewards`` (used as the
+        source under ``"ema"`` and as a fallback when the local buffer is
+        unavailable), then picks a baseline from the buffer (``"min"`` /
+        ``"percentile"`` once at capacity) or the EMA.  Non-finite rewards
+        are excluded so containers with ``-inf`` (e.g. Transitions) do not
+        poison the statistics.
+        """
+        incoming_lr = getattr(incoming, "log_rewards", None)
+        if incoming_lr is not None and incoming_lr.numel() > 0:
+            finite = incoming_lr[torch.isfinite(incoming_lr)]
+            if finite.numel() > 0:
+                batch_min = float(finite.min().item())
+                a = self.baseline_ema_alpha
+                self._baseline_ema = (
+                    batch_min
+                    if self._baseline_ema is None
+                    else a * batch_min + (1 - a) * self._baseline_ema
+                )
+
+        buf = self.replay_buffer
+        tc = buf.training_container
+        if (
+            self.store_locally
+            and self.baseline_strategy in ("min", "percentile")
+            and tc is not None
+            and tc.log_rewards is not None
+            and len(buf) >= self.capacity
+        ):
+            finite_lr = tc.log_rewards[torch.isfinite(tc.log_rewards)]
+            if finite_lr.numel() > 0:
+                if self.baseline_strategy == "min":
+                    score_dict["baseline_log_reward"] = float(finite_lr.min().item())
+                else:  # "percentile"
+                    score_dict["baseline_log_reward"] = float(
+                        finite_lr.quantile(self.baseline_percentile).item()
+                    )
+                return
+        if self._baseline_ema is not None:
+            score_dict["baseline_log_reward"] = self._baseline_ema
+
     def _compute_metadata(self) -> dict:
         raise NotImplementedError(
             "_compute_metadata is not implemented for default replay buffer manager"
@@ -100,12 +175,14 @@ class ReplayBufferManager:
         self._prune_completed_sends()
 
         if msg.message_type == MessageType.DATA:
-            with Timer(self._timing_data, "replay_add", enabled=self.timing):
-                self.replay_buffer.add(msg.message_data)
+            if self.store_locally:
+                with Timer(self._timing_data, "replay_add", enabled=self.timing):
+                    self.replay_buffer.add(msg.message_data)
             with Timer(self._timing_data, "scoring", enabled=self.timing):
                 score_dict = self.scoring_function(
                     msg.message_data, sender_rank=sender_rank
                 )
+            self._inject_baseline_log_reward(score_dict, msg.message_data)
             with Timer(self._timing_data, "send", enabled=self.timing):
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()
@@ -160,12 +237,14 @@ class ReplayBufferManager:
         is in flight, making it preferable when all ranks share a CPU.
         """
         if msg.message_type == MessageType.DATA:
-            with Timer(self._timing_data, "replay_add", enabled=self.timing):
-                self.replay_buffer.add(msg.message_data)
+            if self.store_locally:
+                with Timer(self._timing_data, "replay_add", enabled=self.timing):
+                    self.replay_buffer.add(msg.message_data)
             with Timer(self._timing_data, "scoring", enabled=self.timing):
                 score_dict = self.scoring_function(
                     msg.message_data, sender_rank=sender_rank
                 )
+            self._inject_baseline_log_reward(score_dict, msg.message_data)
             with Timer(self._timing_data, "send", enabled=self.timing):
                 message = Message(message_type=MessageType.DATA, message_data=score_dict)
                 message_tensor = message.serialize()

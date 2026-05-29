@@ -77,6 +77,9 @@ class ReplayBuffer:
         async_score: bool = False,
         async_comm: bool = False,
         lazy_sort: bool = False,
+        baseline_filtering: bool = False,
+        scoring_only: bool = False,
+        baseline_refresh_after: int = 10,
     ):
         """Initializes a ReplayBuffer instance.
 
@@ -105,6 +108,18 @@ class ReplayBuffer:
             lazy_sort: If True, defer concatenation and sorting until the
                 buffer reaches 2x capacity. Useful for buffer manager ranks
                 that only accumulate data and don't sample every iteration.
+            baseline_filtering: If True, only send containers whose
+                ``log_rewards`` exceed the baseline reported by the remote
+                manager. Requires ``remote_manager_rank`` and a
+                ``Trajectories`` or ``StatesContainer`` payload;
+                ``Transitions`` is rejected.
+            scoring_only: If True, convert payloads to a lightweight
+                ``StatesContainer`` (terminating states + log-rewards) before
+                sending. Local storage is unaffected.
+            baseline_refresh_after: When ``baseline_filtering`` is enabled,
+                bypass the filter on the next send after this many
+                consecutive fully-filtered batches so the baseline can
+                refresh.
         """
         self.env = env
         self.capacity = capacity
@@ -136,6 +151,25 @@ class ReplayBuffer:
         self._pending_batches: list[ContainerUnion] = []
         self._pending_len: int = 0
 
+        # Baseline filtering: skip sending containers worse than the
+        # baseline reported by the remote manager. Updated from score
+        # responses; bypasses itself after `baseline_refresh_after`
+        # consecutive fully-filtered batches so the baseline can refresh.
+        if baseline_filtering and remote_manager_rank is None:
+            raise ValueError(
+                "baseline_filtering=True requires remote_manager_rank to be set."
+            )
+        self.baseline_filtering = baseline_filtering
+        self.baseline_refresh_after = baseline_refresh_after
+        self._baseline_log_reward: float = float("-inf")
+        self._consecutive_filtered_empty: int = 0
+        self._baseline_total: int = 0
+        self._baseline_kept: int = 0
+        self._baseline_skipped_sends: int = 0
+
+        # Scoring-only: send only terminating states + log_rewards.
+        self.scoring_only = scoring_only
+
     @property
     def device(self) -> torch.device:
         """The device on which the buffer's data is stored.
@@ -156,6 +190,10 @@ class ReplayBuffer:
         call returns None (no pending score yet), and subsequent calls return the
         score from the *previous* submission.  This decouples training throughput
         from buffer scoring latency.
+
+        When ``baseline_filtering`` is enabled, only trajectories with log-reward
+        above the remote buffer's baseline are sent.  If all trajectories in the
+        pending batch are below the baseline, the send is skipped entirely.
 
         Args:
             training_container: The Trajectories, Transitions, or StatesContainer
@@ -191,26 +229,42 @@ class ReplayBuffer:
                         self.timing_data, "wait_pending_score", enabled=self.timing
                     ):
                         stale_score = self._collect_pending_score()
-
-                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
-                        self._isend_and_defer_score(self.pending_container)
-
+                    self._update_baseline(stale_score)
+                    self._filter_and_send(
+                        self.pending_container, self._isend_and_defer_score
+                    )
                     self.pending_container = None
-
                     return stale_score
                 elif self.async_score:
                     # Collect stale score from previous send (if any), then
                     # fire-and-forget the new batch.
                     stale_score = self._collect_pending_score()
-                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
-                        self._send_objs_async(self.pending_container)
+                    self._update_baseline(stale_score)
+                    self._filter_and_send(self.pending_container, self._send_objs_async)
                     self.pending_container = None
                     return stale_score
                 else:
-                    with Timer(self.timing_data, "send_objs", enabled=self.timing):
-                        score = self._send_objs(self.pending_container)
+                    score = self._filter_and_send(
+                        self.pending_container, self._send_objs
+                    )
+                    if score is not None:
+                        self._update_baseline(score)
                     self.pending_container = None
                     return score
+
+    def _filter_and_send(self, container, send_fn):
+        """Filter by baseline, prepare for remote, and send.
+
+        Returns whatever ``send_fn`` returns (a score dict for sync sends,
+        None for async sends), or None if baseline filtering drops everything.
+        """
+        filtered = self._filter_by_baseline(container)
+        if filtered is None:
+            return None
+        with Timer(self.timing_data, "prepare_for_remote", enabled=self.timing):
+            to_send = self._prepare_for_remote(filtered)
+        with Timer(self.timing_data, "send_objs", enabled=self.timing):
+            return send_fn(to_send)
 
     def _send_objs(self, training_container: ContainerUnion) -> dict[str, float]:
         """Sends a training container to the remote manager (synchronous)."""
@@ -235,6 +289,102 @@ class ReplayBuffer:
         score = self._recv_score()
         self._pending_score = False
         return score
+
+    def _update_baseline(self, score_dict: dict[str, float] | None) -> None:
+        """Extract and store the baseline log-reward from a score response.
+
+        Called after receiving a score dict from the buffer manager.
+        Only updates if baseline_filtering is enabled and the score dict
+        contains a ``baseline_log_reward`` key.
+        """
+        if not self.baseline_filtering or score_dict is None:
+            return
+        if "baseline_log_reward" in score_dict:
+            self._baseline_log_reward = score_dict["baseline_log_reward"]
+
+    def _filter_by_baseline(
+        self,
+        container: ContainerUnion,
+    ) -> ContainerUnion | None:
+        """Filter a container to keep only items with log_reward >= baseline.
+
+        Returns the (possibly subset) container, or None if every item is
+        below the baseline.  After ``baseline_refresh_after`` consecutive
+        fully-filtered batches, the next batch bypasses the filter so the
+        worker can receive a fresh baseline.  ``Transitions`` is not
+        supported (its log_rewards is per-transition with ``-inf`` for
+        non-terminating rows, so per-row filtering would break DB/SubTB).
+        """
+        if not self.baseline_filtering:
+            return container
+        assert isinstance(container, (Trajectories, StatesContainer)), (
+            "baseline_filtering supports Trajectories or StatesContainer only; "
+            f"got {type(container).__name__}"
+        )
+        if self._baseline_log_reward == float("-inf"):
+            return container  # No baseline yet — send everything.
+
+        log_rewards = container.log_rewards
+        if log_rewards is None:
+            return container  # e.g. backward trajectories — nothing to filter on.
+
+        n_total = len(container)
+        assert log_rewards.shape == (
+            n_total,
+        ), f"log_rewards shape {tuple(log_rewards.shape)} must equal ({n_total},)"
+        mask = log_rewards >= self._baseline_log_reward
+        n_kept = int(mask.sum().item())
+        self._baseline_total += n_total
+        self._baseline_kept += n_kept
+
+        if mask.all():
+            self._consecutive_filtered_empty = 0
+            return container
+        if not mask.any():
+            self._baseline_skipped_sends += 1
+            self._consecutive_filtered_empty += 1
+            if self._consecutive_filtered_empty >= self.baseline_refresh_after:
+                self._consecutive_filtered_empty = 0
+                return container  # Force a send to refresh the baseline.
+            return None
+
+        self._consecutive_filtered_empty = 0
+        indices = torch.where(mask)[0]
+        return container[indices]
+
+    def _prepare_for_remote(self, container: ContainerUnion) -> ContainerUnion:
+        """Convert a container to a lightweight form for remote scoring.
+
+        When ``scoring_only`` is True, extracts terminating states and
+        log-rewards into a ``StatesContainer``.  ``Transitions`` is
+        rejected because its ``log_rewards`` shape does not match
+        ``terminating_states`` (it is per-transition, not per-trajectory).
+        When ``scoring_only`` is False, returns the container unchanged.
+        """
+        if not self.scoring_only:
+            return container
+        if isinstance(container, StatesContainer):
+            return container
+        assert isinstance(container, Trajectories), (
+            "scoring_only supports Trajectories or StatesContainer only; "
+            f"got {type(container).__name__}"
+        )
+
+        terminating_states = container.terminating_states
+        log_rewards = container.log_rewards
+        n = len(terminating_states)
+        assert log_rewards is not None and log_rewards.shape == (n,), (
+            "Trajectories must have log_rewards of shape (batch_size,) for "
+            "scoring_only; backward trajectories are not supported."
+        )
+        return StatesContainer(
+            env=self.env,
+            states=terminating_states,
+            is_terminating=torch.ones(
+                n, dtype=torch.bool, device=terminating_states.device
+            ),
+            log_rewards=log_rewards,
+        )
 
     def _isend_and_defer_score(self, training_container: ContainerUnion) -> None:
         """Non-blocking send (isend), deferred score: fire-and-forget data, collect score on next add().
@@ -555,6 +705,15 @@ class ReplayBuffer:
             if total_time > 0:
                 bw = (total_bytes / 1e6) / total_time
                 log_str += f"  effective_send_bandwidth: {bw:.1f} MB/s\n"
+        # Baseline filtering stats.
+        if self._baseline_total > 0:
+            pct_filtered = 100.0 * (1.0 - self._baseline_kept / self._baseline_total)
+            log_str += (
+                f"  baseline_filtering: {self._baseline_kept}/{self._baseline_total} "
+                f"kept ({pct_filtered:.1f}% filtered), "
+                f"{self._baseline_skipped_sends} sends skipped entirely\n"
+            )
+
         return log_str
 
 
@@ -589,6 +748,9 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
         async_score: bool = False,
         async_comm: bool = False,
         lazy_sort: bool = False,
+        baseline_filtering: bool = False,
+        scoring_only: bool = False,
+        baseline_refresh_after: int = 10,
     ):
         """Initializes a NormBasedDiversePrioritizedReplayBuffer instance.
 
@@ -608,6 +770,9 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
                 are collected lazily on the next add() call.
             async_comm: If True, fully non-blocking send and recv.
             lazy_sort: If True, defer concatenation and sorting until 2x capacity.
+            baseline_filtering: See :class:`ReplayBuffer`.
+            scoring_only: See :class:`ReplayBuffer`.
+            baseline_refresh_after: See :class:`ReplayBuffer`.
         """
         super().__init__(
             env,
@@ -620,6 +785,9 @@ class NormBasedDiversePrioritizedReplayBuffer(ReplayBuffer):
             async_score=async_score,
             async_comm=async_comm,
             lazy_sort=lazy_sort,
+            baseline_filtering=baseline_filtering,
+            scoring_only=scoring_only,
+            baseline_refresh_after=baseline_refresh_after,
         )
         self.cutoff_distance = cutoff_distance
         self.p_norm_distance = p_norm_distance
