@@ -782,13 +782,17 @@ class GraphEdgeActionMLP(nn.Module):
         edge_actions = self.edge_mlp(embedding)
 
         action_type = torch.ones(len(states_tensor), 3, device=device) * float("-inf")
-        edge_class_logits = torch.zeros(
-            len(states_tensor), self.num_edge_classes, device=device
-        )
         lengths = states_tensor.ptr[1:] - states_tensor.ptr[:-1]
+
+        # Compute class logits unconditionally — backward masks will zero out
+        # entries that don't apply, but the tensors must exist with correct shape.
+        node_class_logits = self.node_class_mlp(embedding)
+        edge_class_logits = self.edge_class_mlp(embedding)
+
         if self.is_backward:
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
-            node_features = self.features_embedding(states_tensor.x)
+            # Squeeze x before embedding: x is (total_nodes, 1) integer indices.
+            node_features = self.features_embedding(states_tensor.x.squeeze(-1))
             node_index_logits = self.node_index_mlp(node_features).squeeze(-1)
             node_index_logits = torch.split(node_index_logits, lengths.tolist(), dim=0)
             node_index_logits = torch.nn.utils.rnn.pad_sequence(
@@ -798,8 +802,6 @@ class GraphEdgeActionMLP(nn.Module):
             exit_action = self.exit_mlp(embedding).squeeze(-1)
             action_type[..., GraphActionType.ADD_EDGE] = 0.0
             action_type[..., GraphActionType.EXIT] = exit_action
-            edge_class_logits = self.edge_class_mlp(embedding)
-            node_class_logits = self.node_class_mlp(embedding)
             node_index_logits = torch.zeros(
                 len(states_tensor), self.n_nodes + 1, device=device
             )
