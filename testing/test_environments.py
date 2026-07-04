@@ -19,9 +19,10 @@ from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.gym.graph_building import GraphBuilding
 from gfn.gym.perfect_tree import PerfectBinaryTree
 from gfn.gym.set_addition import SetAddition
+from gfn.gym.sidon import SidonSet
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import Sampler
-from gfn.states import GraphStates
+from gfn.states import DiscreteStates, GraphStates
 from gfn.utils.modules import DiffusionFixedBackwardModule, DiffusionPISGradNetForward
 
 
@@ -749,6 +750,148 @@ def test_set_addition_bwd_step():
     expected_states = torch.zeros((BATCH_SIZE, N_ITEMS), dtype=torch.get_default_dtype())
     assert torch.equal(states.tensor, expected_states)
     assert torch.all(states.is_initial_state)
+
+
+def _is_sidon_py(elements):
+    """Reference: True iff the set has all-distinct pairwise sums."""
+    elements = sorted(elements)
+    sums = [a + b for i, a in enumerate(elements) for b in elements[i:]]
+    return len(sums) == len(set(sums))
+
+
+def test_sidon_fwd_step():
+    N = 9
+    MAX_SIZE = 4
+    BATCH_SIZE = 2
+
+    env = SidonSet(n=N, max_size=MAX_SIZE, debug=True)
+    states = env.reset(batch_shape=BATCH_SIZE)
+    assert states.tensor.shape == (BATCH_SIZE, N)
+
+    # Empty set: every element and STOP are valid forward actions.
+    assert states.forward_masks[:, :N].all()
+    assert states.forward_masks[:, N].all()
+
+    # Insert element 1 (action 0) and element 4 (action 3): {1} and {4}.
+    states = env._step(states, env.actions_from_tensor(format_tensor([0, 3])))
+    expected = torch.zeros(BATCH_SIZE, N)
+    expected[0, 0] = 1.0
+    expected[1, 3] = 1.0
+    assert torch.equal(states.tensor, expected)
+
+    # Ordered construction: only elements strictly greater than the max are allowed.
+    fmask = states.forward_masks
+    assert not fmask[0, :1].any()  # nothing <= 1 for the first set
+    assert fmask[0, 1:N].any()
+    assert not fmask[1, :4].any()  # nothing <= 4 for the second set
+
+    # From {1}, element 2 (action 1) is a valid Sidon insertion -> {1, 2}.
+    # From {4}, element 9 (action 8) -> {4, 9}.
+    states = env._step(states, env.actions_from_tensor(format_tensor([1, 8])))
+    expected = torch.zeros(BATCH_SIZE, N)
+    expected[0, 0] = expected[0, 1] = 1.0
+    expected[1, 3] = expected[1, 8] = 1.0
+    assert torch.equal(states.tensor, expected)
+
+    # From {1, 2}: realized sums {2, 3, 4}. Adding 3 -> sums add {4, 5, 6}; 1+3=4
+    # collides with 2+2=4, so element 3 (action 2) must be masked out.
+    assert not states.forward_masks[0, 2]
+    # Element 5 (action 4) is fine for {1, 2} (new sums 6, 7, 10 are all distinct).
+    assert states.forward_masks[0, 4]
+
+    # Backward mask is deterministic: only the maximum element is removable.
+    bmask = states.backward_masks
+    assert bmask[0].nonzero().item() == 1  # max of {1, 2} is element 2 (index 1)
+    assert bmask[1].nonzero().item() == 8  # max of {4, 9} is element 9 (index 8)
+
+    # Adding an invalid (non-greater / non-Sidon) action raises in debug mode.
+    with pytest.raises(NonValidActionsError):
+        env._step(states, env.actions_from_tensor(format_tensor([2, 0])))
+
+
+def test_sidon_max_size_and_reward():
+    N = 9
+    MAX_SIZE = 3
+    env = SidonSet(n=N, max_size=MAX_SIZE, epsilon=1e-8, debug=True)
+
+    # A maximal set {1, 2, 5} (sums 2,3,4,6,7,10 all distinct) of size MAX_SIZE.
+    maximal = torch.zeros(1, N)
+    maximal[0, [0, 1, 4]] = 1.0
+    states = env.states_from_tensor(maximal)
+    # Full: no insertion allowed, only STOP.
+    assert not states.forward_masks[0, :N].any()
+    assert states.forward_masks[0, N]
+
+    # Reward is 1 for maximal sets, epsilon otherwise.
+    submaximal = torch.zeros(1, N)
+    submaximal[0, [0, 1]] = 1.0
+    both = env.states_from_tensor(torch.cat([maximal, submaximal]))
+    rewards = env.reward(both)
+    assert torch.allclose(rewards, torch.tensor([1.0, 1e-8]))
+
+
+def test_sidon_masks_match_bruteforce():
+    """Forward/backward masks must match an exhaustive reference on random states."""
+    torch.manual_seed(0)
+    for n, max_size, fixed_length in [(12, 4, False), (16, 5, True)]:
+        env = SidonSet(n=n, max_size=max_size, fixed_length=fixed_length, debug=True)
+        mats, expected = [], []
+        for _ in range(2000):
+            k = torch.randint(0, min(max_size, 5) + 1, (1,)).item()
+            elements = sorted(torch.randperm(n)[:k].add(1).tolist())  # values in 1..n
+            if not _is_sidon_py(elements):
+                continue
+            m = torch.zeros(n)
+            for v in elements:
+                m[v - 1] = 1.0
+            mats.append(m)
+
+            mask = [False] * (n + 1)
+            mx = max(elements) if elements else 0
+            full = len(elements) >= max_size
+            for v in range(1, n + 1):
+                if v <= mx or full:
+                    continue
+                if _is_sidon_py(set(elements) | {v}):
+                    mask[v - 1] = True
+            mask[n] = (not any(mask[:n])) if fixed_length else True
+            expected.append(mask)
+
+        states = env.states_from_tensor(torch.stack(mats))
+        assert torch.equal(states.forward_masks, torch.tensor(expected))
+
+        # Backward determinism: exactly the maximum element is removable.
+        bmask = states.backward_masks
+        for i, m in enumerate(mats):
+            present = (m > 0).nonzero().flatten().tolist()
+            expected_b = torch.zeros(n, dtype=torch.bool)
+            if present:
+                expected_b[max(present)] = True
+            assert torch.equal(bmask[i], expected_b)
+
+        # All constructed states are genuine Sidon sets.
+        assert env.is_sidon(states).all()
+
+
+def test_sidon_sampled_trajectories_are_sidon():
+    """End-to-end: every sampled terminal set is Sidon and within the size cap."""
+    from gfn.utils.modules import MLP
+
+    torch.manual_seed(0)
+    n, max_size = 30, 7
+    env = SidonSet(n=n, max_size=max_size, debug=True)
+    pf_module = MLP(input_dim=n, output_dim=n + 1)
+    estimator = DiscretePolicyEstimator(
+        pf_module,
+        n_actions=n + 1,
+        preprocessor=IdentityPreprocessor(output_dim=n),
+    )
+    trajectories = Sampler(estimator=estimator).sample_trajectories(env, n=256)
+    terminating = cast(DiscreteStates, trajectories.terminating_states)
+
+    assert env.is_sidon(terminating).all()
+    sizes = terminating.tensor.sum(-1)
+    assert int(sizes.max()) <= max_size
 
 
 def test_perfect_binary_tree_fwd_step():

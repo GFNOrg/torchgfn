@@ -11,6 +11,7 @@ from .hypergrid import ConditionalHyperGrid, HyperGrid
 from .line import Line
 from .perfect_tree import PerfectBinaryTree
 from .set_addition import SetAddition
+from .sidon import SidonSet
 
 # Backward compat: Box = BoxCartesian (matches current test/tutorial usage)
 Box = BoxCartesian
@@ -31,4 +32,5 @@ __all__ = [
     "GraphBuildingOnEdges",
     "PerfectBinaryTree",
     "SetAddition",
+    "SidonSet",
 ]
