@@ -1239,12 +1239,20 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
     per-step artifacts. Non-recurrent estimators should use the default PolicyMixin
     and the standard ``DiscretePolicyEstimator`` base class instead.
 
+    An optional, fixed-length-only performance mode (opt-in; the default leaves
+    behavior unchanged):
+
+    - ``use_kv_cache=True`` decodes one token per step against a persistent, in-place
+      preallocated KV-cache, cutting rollout cost from O(L^3) to O(L^2). The in-place
+      buffers cannot carry gradients, so cached sampling runs under ``no_grad`` -- it is
+      a sampling-time optimization, ideal for inference/rollout.
+
     Notes
     -----
-    - Forward is intended for on-policy generation; off-policy evaluation over
-      entire trajectories typically requires different batching and masking.
     - ``init_carry`` is a hard requirement for compatibility with the recurrent
       PolicyMixin.
+    - The cached fast path assumes fixed-length trajectories; see the Gap-2 TODO in
+      ``gfn/utils/prob_calculations.py``.
 
     Attributes:
         module: The neural network module to use.
@@ -1261,14 +1269,27 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         preprocessor: Preprocessor | None = None,
         is_backward: bool = False,
         debug: bool = False,
+        use_kv_cache: bool = False,
+        cache_max_len: int | None = None,
     ):
         """Initializes a RecurrentDiscretePolicyEstimator.
+
+        See the class docstring for what ``use_kv_cache`` does and why cached sampling
+        is ``no_grad``.
 
         Args:
             module: The neural network module to use.
             n_actions: Total number of actions in the discrete environment.
             preprocessor: Preprocessor object that transforms states to tensors.
+            is_backward: Flag indicating whether this estimator is for backward policy.
             debug: If True, enables expensive validation checks.
+            use_kv_cache: Opt into the O(L^2) in-place KV-cache sampling fast path.
+                Cached sampling runs under ``no_grad``, so it is a sampling-time
+                optimization (ideal for inference/rollout). If False (default), sampling
+                uses the corrected grad-bearing full-prefix forward each step.
+            cache_max_len: KV-cache preallocation length; defaults to the module's
+                ``max_position_embeddings``. Rarely set by hand; must be at least the
+                env horizon + 1 (the +1 is the BOS token).
         """
         if preprocessor is None:
             preprocessor = IdentityPreprocessor(output_dim=None)
@@ -1280,49 +1301,71 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
             is_backward=is_backward,
             debug=debug,
         )
+        self.use_kv_cache = use_kv_cache
+        # A preallocated in-place cache is only available for modules that expose a
+        # bounded position range (e.g. TransformerDiscreteSequenceModel). Modules
+        # without one (e.g. RNNs, whose carry is already fixed-size) decode one token
+        # per step with their ordinary carry.
+        max_positions = getattr(module, "max_position_embeddings", None)
+        if cache_max_len is None:
+            cache_max_len = max_positions
+        # Validate the cache budget eagerly (against the module's position range) so a
+        # too-small value fails here, not deep inside a rollout with a confusing error.
+        if (
+            cache_max_len is not None
+            and max_positions is not None
+            and cache_max_len > max_positions
+        ):
+            raise ValueError(
+                f"cache_max_len ({cache_max_len}) exceeds the module's "
+                f"max_position_embeddings ({max_positions})."
+            )
+        self._cache_max_len = cache_max_len
+
+    @property
+    def _bos_index(self) -> int:
+        """BOS token index (the sequence model reserves ``vocab_size`` for BOS)."""
+        return int(getattr(self.module, "vocab_size", self.n_actions - 1))
 
     def forward(
         self,
         states: States,
         carry: dict[str, torch.Tensor],
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Forward pass of the module.
+        """Per-step forward: next-action logits for the current rollout states.
+
+        Both paths build the same canonical token stream ``[BOS, w_0, ..., w_{t-1}]``
+        and take the logits at the last position, so they are numerically equivalent
+        to one teacher-forced forward over the full sequence:
+
+        - ``use_kv_cache=False`` (default): re-embed the whole committed prefix with a
+          fresh carry each step (grad-bearing, O(L^3) over a rollout). This is the
+          corrected baseline.
+        - ``use_kv_cache=True``: feed only the newest committed token against the
+          persistent carry (in-place KV-cache for transformers), under ``no_grad``.
 
         Args:
-            states: The input states.
-            carry: The carry from the previous step.
+            states: The current (active) rollout states, ``(B, W)`` word indices with
+                ``-1`` padding.
+            carry: The recurrent carry threaded from the previous step.
 
         Returns:
-            The output of the module, as a tensor of shape (*batch_shape, output_dim).
+            ``(logits (B, n_actions), updated carry)``.
         """
-        # Prepare integer token sequences without -1 padding and use a BOS index.
-        # We infer the active sequence length per row from (token != -1).
         tokens = states.tensor.long()
+        if tokens.dim() != 2:
+            raise ValueError(
+                "RecurrentDiscretePolicyEstimator expects 2D state tensors "
+                f"(batch, seq); got shape {tuple(tokens.shape)}."
+            )
+        lengths = (states.tensor >= 0).sum(dim=-1)  # committed words per row
 
-        # Replace padding (-1) with BOS index expected by the sequence model.
-        # RecurrentDiscreteSequenceModel reserves index == vocab_size for BOS.
-        bos_index = getattr(self.module, "vocab_size", self.n_actions - 1)
-        tokens = torch.where(
-            tokens < 0, torch.as_tensor(bos_index, device=tokens.device), tokens
-        )
-
-        # Determine a common prefix length across the (active) batch.
-        # Active rows in a rollout step share the same length; use max for safety.
-        # We still derive length from original states.tensor where -1 marks padding.
-        valid_mask = states.tensor >= 0
-        if valid_mask.ndim == 1:
-            max_len = int(valid_mask.sum().item())
+        if self.use_kv_cache:
+            logits, carry = self._forward_cached(tokens, lengths, carry)
         else:
-            max_len = int(valid_mask.sum(dim=-1).max().item())
-        if max_len == 0:
-            max_len = 1  # Ensure at least BOS is processed
+            logits, carry = self._forward_full_prefix(tokens, lengths)
 
-        # Trim to the common active prefix length and run the sequence model.
-        seq_input = tokens[..., :max_len]
-        logits, carry = self.module(seq_input, carry)
-
-        # Use the logits corresponding to the last processed token.
-        logits = logits[:, -1, :]  # (b, n_actions)
+        logits = logits[:, -1, :]  # (B, n_actions)
 
         if self.expected_output_dim is not None:
             assert logits.shape[-1] == self.expected_output_dim, (
@@ -1332,19 +1375,103 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
 
         return logits, carry
 
-    def init_carry(
+    def _canonical_sequence(
+        self, tokens: torch.Tensor, lengths: torch.Tensor
+    ) -> torch.Tensor:
+        """Build ``[BOS, w_0, ..., w_{L-1}]`` up to the longest committed length ``L``.
+
+        Used by the (no-cache) full-prefix path and the teacher-forced loss recompute.
+        """
+        bos = self._bos_index
+        max_len = int(lengths.max().item())
+        # Replace any -1 padding with BOS; unlike the cached path this one has no
+        # fixed-length guard, so shorter rows can carry padding inside [:max_len].
+        words = torch.where(tokens < 0, torch.full_like(tokens, bos), tokens)[
+            :, :max_len
+        ]
+        bos_col = torch.full(
+            (tokens.shape[0], 1), bos, dtype=torch.long, device=tokens.device
+        )
+        return torch.cat([bos_col, words], dim=1)  # (B, L + 1)
+
+    def _forward_full_prefix(
         self,
-        batch_size: int,
-        device: torch.device,
+        tokens: torch.Tensor,
+        lengths: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Grad-bearing baseline: full prefix + fresh carry each step."""
+        seq = self._canonical_sequence(tokens, lengths)
+        fresh = self._module_init_carry(seq.shape[0], seq.device, preallocate=False)
+        logits, new_carry = self.module(seq, fresh)
+        return logits, new_carry
+
+    def _forward_cached(
+        self,
+        tokens: torch.Tensor,
+        lengths: torch.Tensor,
+        carry: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Cached fast path: feed only the newest committed token, under ``no_grad``.
+
+        Assumes fixed-length rollouts (all active rows share a committed length). The
+        always-on backstop is the module's batch-size carry check (a masked, unsliced
+        carry mismatches the active batch); the stronger equal-length / cursor-sync
+        checks are gated behind ``debug`` so the hot path avoids per-step device syncs.
+        """
+        length0 = int(lengths[0].item()) if lengths.numel() > 0 else 0
+
+        if self.debug and lengths.numel() > 0:
+            if not bool(torch.all(lengths == length0)):
+                raise ValueError(
+                    "use_kv_cache=True requires equal-length active trajectories "
+                    "(fixed-length env). Variable-length carry slicing is out of scope "
+                    "(see the Gap-2 TODO in gfn/utils/prob_calculations.py)."
+                )
+            cursor = int(carry["cache_len"].item()) if "cache_len" in carry else 0
+            if cursor != length0:
+                raise ValueError(
+                    f"KV-cache cursor ({cursor}) is out of sync with the committed "
+                    f"length ({length0}); the carry must be threaded unmodified "
+                    "across steps."
+                )
+
+        # Feed the canonical stream [BOS, w_0, ..., w_{L-1}] one token per step: at a
+        # committed length of ``length0`` that is column ``length0 - 1``, or BOS when
+        # nothing is committed yet.
+        if length0 == 0:
+            step_tok = torch.full(
+                (tokens.shape[0], 1),
+                self._bos_index,
+                dtype=torch.long,
+                device=tokens.device,
+            )
+        else:
+            step_tok = tokens[:, length0 - 1 : length0]
+
+        with torch.no_grad():
+            logits, new_carry = self.module(step_tok, carry)
+        return logits, new_carry
+
+    def _module_init_carry(
+        self, batch_size: int, device: torch.device, preallocate: bool
     ) -> dict[str, torch.Tensor]:
         init_carry = getattr(self.module, "init_carry", None)
         if not callable(init_carry):
             raise NotImplementedError(
                 "Module does not implement init_carry(batch_size, device)."
             )
-        init_carry_fn = cast(Callable[[int, torch.device], Any], init_carry)
-
+        init_carry_fn = cast(Callable[..., dict[str, torch.Tensor]], init_carry)
+        if preallocate and self._cache_max_len is not None:
+            return init_carry_fn(batch_size, device, max_len=self._cache_max_len)
         return init_carry_fn(batch_size, device)
+
+    def init_carry(
+        self,
+        batch_size: int,
+        device: torch.device,
+    ) -> dict[str, torch.Tensor]:
+        # Preallocate an in-place cache only for the cached fast path.
+        return self._module_init_carry(batch_size, device, preallocate=self.use_kv_cache)
 
 
 class DiffusionPolicyEstimator(PolicyMixin, Estimator):
