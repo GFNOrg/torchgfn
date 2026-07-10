@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 import torch
@@ -143,6 +143,246 @@ def average_models(model, training_group=None):
         param.data = param_tensor / world_size
 
 
+def _split_ceil_floor(total: int, n: int) -> List[int]:
+    """Split *total* into *n* parts; first (total % n) get ceil, rest get floor."""
+    base, rem = divmod(total, n)
+    return [base + (1 if i < rem else 0) for i in range(n)]
+
+
+class RankLayout:
+    """Rank layout for distributed training with optional buffer managers.
+
+    Each buffer group is a set of contiguous agent ranks plus one manager rank
+    (the last rank in the group).  Use :meth:`build` for arithmetic assignment
+    or :meth:`from_hostnames` for hostname-aware node-local assignment.
+    """
+
+    def __init__(
+        self,
+        training_ranks: List[int],
+        buffer_ranks: List[int],
+        agents_per_buffer_group: List[int],
+        buffer_group_starts: List[int],
+        num_agent_groups: int,
+    ):
+        self.training_ranks = training_ranks
+        self.buffer_ranks = buffer_ranks
+        self.agents_per_buffer_group = agents_per_buffer_group
+        self.buffer_group_starts = buffer_group_starts
+        self.num_training_ranks = len(training_ranks)
+        self.agent_group_size = self.num_training_ranks // num_agent_groups
+        self.buffer_rank_set = set(buffer_ranks)
+        self.agent_group_rank_list = [
+            training_ranks[i * self.agent_group_size : (i + 1) * self.agent_group_size]
+            for i in range(num_agent_groups)
+        ]
+        # Map each rank → its buffer-group index.
+        self._rank_to_group: Dict[int, int] = {}
+        for g, (start, n) in enumerate(
+            zip(buffer_group_starts, agents_per_buffer_group)
+        ):
+            for j in range(n):
+                self._rank_to_group[start + j] = g
+            if g < len(buffer_ranks):
+                self._rank_to_group[buffer_ranks[g]] = g
+
+    # --- Per-rank queries ------------------------------------------------
+
+    def assigned_buffer(self, rank: int) -> Optional[int]:
+        """Buffer manager rank for a training rank, or ``None``."""
+        if rank in self.buffer_rank_set or rank not in self._rank_to_group:
+            return None
+        return self.buffer_ranks[self._rank_to_group[rank]]
+
+    def assigned_training_ranks(self, rank: int) -> Optional[List[int]]:
+        """Training ranks managed by a buffer rank, or ``None``."""
+        if rank not in self.buffer_rank_set:
+            return None
+        g = self._rank_to_group[rank]
+        return list(
+            range(
+                self.buffer_group_starts[g],
+                self.buffer_group_starts[g] + self.agents_per_buffer_group[g],
+            )
+        )
+
+    def agent_group_id(self, rank: int) -> int:
+        """Agent-group ID for *rank*."""
+        if rank in self.buffer_rank_set:
+            return self._rank_to_group[rank]
+        if rank not in self._rank_to_group:
+            return 0  # coordinator or unassigned
+        g = self._rank_to_group[rank]
+        offset = rank - self.buffer_group_starts[g]
+        global_idx = sum(self.agents_per_buffer_group[:g]) + offset
+        return global_idx // self.agent_group_size
+
+    def summary(self, num_nodes: int) -> str:
+        """Human-readable layout summary for logging."""
+        num_buffers = len(self.buffer_ranks)
+        lines = [
+            f"Total {num_nodes} node(s), {self.num_training_ranks} training rank(s), "
+            f"{num_buffers} buffer manager(s)."
+        ]
+        if num_buffers == 0:
+            for i, (start, n) in enumerate(
+                zip(self.buffer_group_starts, self.agents_per_buffer_group)
+            ):
+                lines.append(f"  Node {i}: Training ranks {start} to {start + n - 1}.")
+        else:
+            for g in range(num_buffers):
+                start = self.buffer_group_starts[g]
+                n = self.agents_per_buffer_group[g]
+                lines.append(
+                    f"  Group {g}: Training ranks {start} to {start + n - 1}. "
+                    f"Buffer manager rank {self.buffer_ranks[g]}."
+                )
+        return "\n".join(lines)
+
+    # --- Constructors ----------------------------------------------------
+
+    @classmethod
+    def _from_chunks(
+        cls,
+        chunks: List[List[int]],
+        num_agent_groups: int,
+        no_buffers: bool = False,
+    ) -> "RankLayout":
+        """Build from rank chunks (last rank per chunk is manager unless *no_buffers*)."""
+        training_ranks: List[int] = []
+        buffer_ranks: List[int] = []
+        buffer_group_starts: List[int] = []
+        agents_per_buffer_group: List[int] = []
+        for chunk in chunks:
+            if no_buffers:
+                buffer_group_starts.append(chunk[0])
+                agents_per_buffer_group.append(len(chunk))
+                training_ranks.extend(chunk)
+            else:
+                buffer_group_starts.append(chunk[0])
+                agents_per_buffer_group.append(len(chunk) - 1)
+                training_ranks.extend(chunk[:-1])
+                buffer_ranks.append(chunk[-1])
+        num_training = len(training_ranks)
+        assert num_training % num_agent_groups == 0, (
+            f"num_training_ranks ({num_training}) must be divisible by "
+            f"num_agent_groups ({num_agent_groups})"
+        )
+        return cls(
+            training_ranks,
+            buffer_ranks,
+            agents_per_buffer_group,
+            buffer_group_starts,
+            num_agent_groups,
+        )
+
+    @classmethod
+    def build(
+        cls,
+        world_size: int,
+        num_remote_buffers: int,
+        num_nodes: int,
+        num_agent_groups: int,
+        num_coordinators: int,
+    ) -> "RankLayout":
+        """Build layout using arithmetic rank assignment."""
+        num_training = world_size - num_remote_buffers - num_coordinators
+        assert num_training > 0, (
+            f"Not enough ranks: world_size={world_size}, buffers={num_remote_buffers}, "
+            f"coordinators={num_coordinators}"
+        )
+        if num_remote_buffers > 0 and num_agent_groups % num_nodes != 0:
+            logger.warning(
+                "num_agent_groups (%d) is not a multiple of num_nodes (%d): "
+                "some selective-averaging groups will span physical node boundaries.",
+                num_agent_groups,
+                num_nodes,
+            )
+        if num_remote_buffers == 0:
+            sizes = _split_ceil_floor(num_training, num_nodes)
+            chunks: List[List[int]] = []
+            pos = 0
+            for sz in sizes:
+                chunks.append(list(range(pos, pos + sz)))
+                pos += sz
+            return cls._from_chunks(chunks, num_agent_groups, no_buffers=True)
+
+        assert (
+            num_training >= num_remote_buffers
+        ), f"num_training_ranks ({num_training}) < num_remote_buffers ({num_remote_buffers})"
+        sizes = _split_ceil_floor(num_training, num_remote_buffers)
+        chunks = []
+        pos = 0
+        for n_agents in sizes:
+            chunks.append(list(range(pos, pos + n_agents + 1)))
+            pos += n_agents + 1
+        return cls._from_chunks(chunks, num_agent_groups)
+
+    @classmethod
+    def from_hostnames(
+        cls,
+        world_size: int,
+        num_remote_buffers: int,
+        num_agent_groups: int,
+        num_coordinators: int,
+        all_hostnames: List[str],
+    ) -> "RankLayout":
+        """Build layout using actual hostname topology.
+
+        When ``num_remote_buffers`` is a multiple of ``num_nodes``, assigns
+        managers to node-local ranks.  Otherwise falls back to :meth:`build`.
+        """
+        node_to_ranks: Dict[str, List[int]] = {}
+        for rank, hostname in enumerate(all_hostnames):
+            node_to_ranks.setdefault(hostname, []).append(rank)
+        sorted_nodes = sorted(node_to_ranks, key=lambda h: node_to_ranks[h][0])
+        num_nodes = len(sorted_nodes)
+
+        if num_remote_buffers % num_nodes != 0:
+            logger.warning(
+                "num_remote_buffers (%d) is not a multiple of num_nodes (%d): "
+                "managers may be placed on different nodes than their agents. "
+                "For node-local placement, use num_remote_buffers = k * num_nodes.",
+                num_remote_buffers,
+                num_nodes,
+            )
+            return cls.build(
+                world_size,
+                num_remote_buffers,
+                num_nodes,
+                num_agent_groups,
+                num_coordinators,
+            )
+
+        managers_per_node = num_remote_buffers // num_nodes
+        logger.info(
+            "Hostname-based layout: %d node(s), %d manager(s)/node.",
+            num_nodes,
+            managers_per_node,
+        )
+
+        per_node = [sorted(node_to_ranks[h]) for h in sorted_nodes]
+        if num_coordinators > 0:
+            per_node[-1] = per_node[-1][
+                :-num_coordinators
+            ]  # Remove coordinator ranks from the last node's training ranks.
+
+        chunks: List[List[int]] = []
+        for node_idx, node_ranks in enumerate(per_node):
+            if len(node_ranks) < managers_per_node * 2:
+                raise ValueError(
+                    f"Node {sorted_nodes[node_idx]} has only {len(node_ranks)} rank(s), "
+                    f"need at least {managers_per_node * 2} (1 agent + 1 manager per "
+                    f"sub-group, {managers_per_node} sub-group(s))."
+                )
+            sub_sizes = _split_ceil_floor(len(node_ranks), managers_per_node)
+            pos = 0
+            for sz in sub_sizes:
+                chunks.append(node_ranks[pos : pos + sz])
+                pos += sz
+        return cls._from_chunks(chunks, num_agent_groups)
+
+
 @dataclass
 class DistributedContextMPI4Py:
     """Holds all distributed training/replay buffer groups and ranks."""
@@ -157,27 +397,36 @@ class DistributedContextMPI4Py:
     assigned_buffer: Optional[int] = None
     buffer_group: Optional[MPI.Comm] = None
     assigned_training_ranks: Optional[List[int]] = None
+    buffer_rank_set: set = field(default_factory=set)
 
     def is_buffer_rank(self) -> bool:
         """Check if the current rank is part of the buffer group."""
-        return self.my_rank >= self.num_training_ranks
+        return self.my_rank in self.buffer_rank_set
 
     def is_training_rank(self) -> bool:
         """Check if the current rank is part of the training group."""
-        return self.my_rank < self.num_training_ranks
+        return self.my_rank not in self.buffer_rank_set
 
 
 def initialize_distributed_compute_mpi4py(
     num_remote_buffers: int,
-    num_agent_groups: int,
+    num_agent_groups: int = 1,
     num_coordinators: int = 0,
+    layout: Optional[RankLayout] = None,
 ) -> DistributedContextMPI4Py:
     """Initializes distributed compute using mpi4py.
 
     Args:
         num_remote_buffers: The number of remote buffers to use.
-        num_agent_groups: The number of agent groups.
+        num_agent_groups: Number of selective-averaging groups.  Must divide
+            ``num_training_ranks``.  For node-local groups, use a multiple of
+            the number of physical nodes (e.g. 4 nodes × 4 groups/node = 16
+            total). The number of physical nodes is always detected by
+            exchanging MPI hostnames across all ranks.
         num_coordinators: Number of coordinator ranks (0 or 1).
+        layout: Pre-computed :class:`RankLayout`.  When provided, skips
+            hostname gathering and layout computation (avoids a redundant
+            allgather when called from :func:`initialize_distributed_compute`).
     """
     MPI = _get_MPI()
 
@@ -205,82 +454,81 @@ def initialize_distributed_compute_mpi4py(
     dist.barrier()
     logger.info("Distributed compute initialized")
 
-    my_rank = rank  # dist.get_rank()  # Global!
-    # world_size = dist.get_world_size()  # Global!
+    my_rank = rank
 
-    num_training_ranks = world_size - num_remote_buffers - num_coordinators
+    if layout is None:
+        # Standalone call — gather hostnames and compute layout.
+        comm = MPI.COMM_WORLD
+        all_hostnames: List[str] = comm.allgather(MPI.Get_processor_name())
+        num_nodes = len(set(all_hostnames))
+        logger.info("Detected num_nodes=%d via MPI hostname exchange", num_nodes)
 
-    # make sure that we have atmost 1 remote buffer per training rank.
-    assert num_training_ranks >= num_remote_buffers
-    logger.info("num_train = %d", num_training_ranks)
-    logger.info("num_remote_buffers = %d", num_remote_buffers)
-    logger.info("num_coordinators = %d", num_coordinators)
+        if num_remote_buffers > 0:
+            layout = RankLayout.from_hostnames(
+                world_size=world_size,
+                num_remote_buffers=num_remote_buffers,
+                num_agent_groups=num_agent_groups,
+                num_coordinators=num_coordinators,
+                all_hostnames=all_hostnames,
+            )
+        else:
+            layout = RankLayout.build(
+                world_size=world_size,
+                num_remote_buffers=num_remote_buffers,
+                num_nodes=num_nodes,
+                num_agent_groups=num_agent_groups,
+                num_coordinators=num_coordinators,
+            )
+        logger.info("num_train = %d", layout.num_training_ranks)
+        logger.info("num_remote_buffers = %d", num_remote_buffers)
+        logger.info("num_nodes = %d", num_nodes)
+        logger.info("num_agent_groups = %d", num_agent_groups)
+        logger.info("num_coordinators = %d", num_coordinators)
+        logger.info("Agent group ranks: %s", layout.agent_group_rank_list)
+        if rank == 0:
+            logger.info(layout.summary(num_nodes))
 
-    # for now, let us enforce that each agent gets equal number of ranks.
-    # TODO: later, we can relax this condition.
-    assert num_training_ranks % num_agent_groups == 0
-    agent_group_size = num_training_ranks // num_agent_groups
-    agent_group_rank_list = [
-        list(range(i * agent_group_size, (i + 1) * agent_group_size))
-        for i in range(num_agent_groups)
-    ]
-    logger.info("Agent group ranks: %s", agent_group_rank_list)
     world_group = MPI.COMM_WORLD.Get_group()
     agent_group_list = []
-    for i in range(num_agent_groups):
-        grp = world_group.Incl(agent_group_rank_list[i])
+    for ranks in layout.agent_group_rank_list:
+        grp = world_group.Incl(ranks)
         agent_group_list.append(MPI.COMM_WORLD.Create(grp))
 
-    # all training ranks in one global group
-    training_ranks = [
-        r for r in range(num_training_ranks)
-    ]  # e.g., 0..num_training_ranks-1
-
-    grp = world_group.Incl(training_ranks)
+    grp = world_group.Incl(layout.training_ranks)
     train_global_group = MPI.COMM_WORLD.Create(grp)
 
     buffer_group = None
-    assigned_buffer = None
-    assigned_training_ranks = {}
-    if num_remote_buffers > 0:
-        buffer_ranks = list(
-            range(num_training_ranks, num_training_ranks + num_remote_buffers)
-        )
-        grp = world_group.Incl(buffer_ranks)
+    if layout.buffer_ranks:
+        grp = world_group.Incl(layout.buffer_ranks)
         buffer_group = MPI.COMM_WORLD.Create(grp)
-        logger.info("Buffer group ranks: %s, %s", buffer_ranks, buffer_group)
+        logger.info("Buffer group ranks: %s", layout.buffer_ranks)
 
-        # Each training rank gets assigned to a buffer rank
-        if my_rank < (num_training_ranks):
-            assigned_buffer = num_training_ranks + (my_rank % num_remote_buffers)
-        else:
-            assigned_training_ranks[my_rank] = [
-                ranks
-                for ranks in range(num_training_ranks)
-                if (ranks % num_remote_buffers) == (my_rank - num_training_ranks)
-            ]
-
-        logger.info("My rank: %d size: %d", my_rank, world_size)
-        if my_rank < (num_training_ranks):
-            logger.info(
-                "  -> Training group, assigned buffer rank = %s", assigned_buffer
-            )
-        else:
-            logger.info("  -> Buffer group")
+    logger.info("My rank: %d size: %d", my_rank, world_size)
+    if my_rank in layout.buffer_rank_set:
+        logger.info(
+            "  -> Buffer group, assigned training ranks = %s",
+            layout.assigned_training_ranks(my_rank),
+        )
+    else:
+        logger.info(
+            "  -> Training group, assigned buffer rank = %s",
+            layout.assigned_buffer(my_rank),
+        )
 
     logger.info("Distributed compute initialized (mpi4py), rank = %d", my_rank)
 
     return DistributedContextMPI4Py(
         my_rank=my_rank,
         world_size=world_size,
-        num_training_ranks=num_training_ranks,
-        agent_group_size=agent_group_size,
+        num_training_ranks=layout.num_training_ranks,
+        agent_group_size=layout.agent_group_size,
         agent_groups=agent_group_list,
-        agent_group_id=my_rank // agent_group_size,
+        agent_group_id=layout.agent_group_id(my_rank),
         train_global_group=train_global_group,
-        assigned_buffer=assigned_buffer,
+        assigned_buffer=layout.assigned_buffer(my_rank),
         buffer_group=buffer_group,
-        assigned_training_ranks=assigned_training_ranks.get(my_rank, None),
+        assigned_training_ranks=layout.assigned_training_ranks(my_rank),
+        buffer_rank_set=layout.buffer_rank_set,
     )
 
 
@@ -300,16 +548,22 @@ class DistributedContext:
     assigned_training_ranks: Optional[List[int]] = None
     dc_mpi4py: Optional[DistributedContextMPI4Py] = None
     coordinator_rank: Optional[int] = None  # Global rank of the coordinator, if any.
+    buffer_rank_set: set = field(default_factory=set)
+    training_ranks: List[int] = field(
+        default_factory=list
+    )  # All global training rank IDs.
 
     def is_buffer_rank(self) -> bool:
         """Check if the current rank is part of the buffer group."""
         if self.coordinator_rank is not None and self.my_rank == self.coordinator_rank:
             return False
-        return self.my_rank >= self.num_training_ranks
+        return self.my_rank in self.buffer_rank_set
 
     def is_training_rank(self) -> bool:
         """Check if the current rank is part of the training group."""
-        return self.my_rank < self.num_training_ranks
+        if self.coordinator_rank is not None and self.my_rank == self.coordinator_rank:
+            return False
+        return self.my_rank not in self.buffer_rank_set
 
     def is_coordinator_rank(self) -> bool:
         """Check if the current rank is the coordinator."""
@@ -343,7 +597,7 @@ class DistributedContext:
 def initialize_distributed_compute(
     dist_backend: str,
     num_remote_buffers: int,
-    num_agent_groups: int,
+    num_agent_groups: int = 1,
     use_coordinator: bool = False,
 ) -> DistributedContext:
     """Initializes distributed compute using ccl, mpi, or gloo backends.
@@ -351,7 +605,12 @@ def initialize_distributed_compute(
     Args:
         dist_backend: The backend to use for distributed compute.
         num_remote_buffers: The number of remote buffers to use.
-        num_agent_groups: The number of agent groups.
+        num_agent_groups: Number of selective-averaging groups.  Must divide
+            ``num_training_ranks``.  For node-local groups, use a multiple of
+            the number of physical nodes (e.g. 4 nodes × 4 groups/node = 16
+            total). The number of physical nodes is always detected by
+            exchanging hostnames across all ranks.
+            Defaults to 1 (all agents in one group).
         use_coordinator: If True, the last rank becomes a coordinator that
             aggregates mode discoveries across buffer managers.
     """
@@ -378,7 +637,11 @@ def initialize_distributed_compute(
     if pmi_size <= 1:
         logger.info("PMI_SIZE <= 1, running in single process mode.")
         return DistributedContext(
-            my_rank=0, world_size=1, num_training_ranks=1, agent_group_size=1
+            my_rank=0,
+            world_size=1,
+            num_training_ranks=1,
+            agent_group_size=1,
+            training_ranks=[0],
         )
 
     if dist_backend == "ccl":
@@ -449,88 +712,88 @@ def initialize_distributed_compute(
     world_size = dist.get_world_size()  # Global!
 
     num_coordinators = 1 if use_coordinator else 0
-    num_training_ranks = world_size - num_remote_buffers - num_coordinators
 
-    # make sure that we have atmost 1 remote buffer per training rank.
-    assert num_training_ranks >= num_remote_buffers
-    assert num_training_ranks > 0, (
-        f"Not enough ranks for training: world_size={world_size}, "
-        f"buffers={num_remote_buffers}, coordinators={num_coordinators}"
-    )
-    logger.info("num_train = %d", num_training_ranks)
+    # Gather hostnames for node-local manager placement (using torch.distributed).
+    # This reflects actual process placement, so it is the sole source of
+    # truth for num_nodes (no env-var or caller override needed).
+    import socket
+
+    all_hostnames: List[str] = [None] * world_size  # type: ignore[list-item]
+    dist.all_gather_object(all_hostnames, socket.gethostname())
+    num_nodes = len(set(all_hostnames))
+    logger.info("Detected num_nodes=%d via hostname exchange", num_nodes)
+
+    if num_remote_buffers > 0:
+        layout = RankLayout.from_hostnames(
+            world_size=world_size,
+            num_remote_buffers=num_remote_buffers,
+            num_agent_groups=num_agent_groups,
+            num_coordinators=num_coordinators,
+            all_hostnames=all_hostnames,
+        )
+    else:
+        layout = RankLayout.build(
+            world_size=world_size,
+            num_remote_buffers=num_remote_buffers,
+            num_nodes=num_nodes,
+            num_agent_groups=num_agent_groups,
+            num_coordinators=num_coordinators,
+        )
+    logger.info("num_train = %d", layout.num_training_ranks)
     logger.info("num_remote_buffers = %d", num_remote_buffers)
+    logger.info("num_nodes = %d", num_nodes)
+    logger.info("num_agent_groups = %d", num_agent_groups)
     logger.info("num_coordinators = %d", num_coordinators)
+    logger.info("Agent group ranks: %s", layout.agent_group_rank_list)
+    if my_rank == 0:
+        logger.info(layout.summary(num_nodes))
 
-    # for now, let us enforce that each agent gets equal number of ranks.
-    # TODO: later, we can relax this condition.
-    assert num_training_ranks % num_agent_groups == 0
-    agent_group_size = num_training_ranks // num_agent_groups
-    agent_group_rank_list = [
-        list(range(i * agent_group_size, (i + 1) * agent_group_size))
-        for i in range(num_agent_groups)
-    ]
-    logger.info("Agent group ranks: %s", agent_group_rank_list)
     agent_group_list = [
         cast(
             dist.ProcessGroup,
             dist.new_group(
-                agent_group_rank_list[i],
+                layout.agent_group_rank_list[i],
                 backend=dist_backend,
                 timeout=datetime.timedelta(minutes=5),
             ),
         )
-        for i in range(num_agent_groups)
+        for i in range(len(layout.agent_group_rank_list))
     ]
 
-    # all training ranks in one global group
-    training_ranks = [
-        r for r in range(num_training_ranks)
-    ]  # e.g., 0..num_training_ranks-1
     train_global_group = cast(
         dist.ProcessGroup,
         dist.new_group(
-            ranks=training_ranks,
+            ranks=layout.training_ranks,
             backend=dist_backend,
             timeout=datetime.timedelta(minutes=5),
         ),
     )
 
     buffer_group = None
-    assigned_buffer = None
-    assigned_training_ranks = {}
-    if num_remote_buffers > 0:
-        buffer_ranks = list(
-            range(num_training_ranks, num_training_ranks + num_remote_buffers)
-        )
+    if layout.buffer_ranks:
         buffer_group = cast(
             dist.ProcessGroup,
             dist.new_group(
-                buffer_ranks,
+                layout.buffer_ranks,
                 backend=dist_backend,
                 timeout=datetime.timedelta(minutes=5),
             ),
         )
-        logger.info("Buffer group ranks: %s", buffer_ranks)
+        logger.info("Buffer group ranks: %s", layout.buffer_ranks)
 
-        # Each training rank gets assigned to a buffer rank
-        if my_rank < (num_training_ranks):
-            assigned_buffer = num_training_ranks + (my_rank % num_remote_buffers)
-        else:
-            assigned_training_ranks[my_rank] = [
-                ranks
-                for ranks in range(num_training_ranks)
-                if (ranks % num_remote_buffers) == (my_rank - num_training_ranks)
-            ]
-
-        logger.info("My rank: %d size: %d", my_rank, world_size)
-        if my_rank < (num_training_ranks):
-            logger.info(
-                "  -> Training group, assigned buffer rank = %s", assigned_buffer
-            )
-        elif use_coordinator and my_rank == world_size - 1:
-            logger.info("  -> Coordinator rank")
-        else:
-            logger.info("  -> Buffer group")
+    logger.info("My rank: %d size: %d", my_rank, world_size)
+    if my_rank in layout.buffer_rank_set:
+        logger.info(
+            "  -> Buffer group, assigned training ranks = %s",
+            layout.assigned_training_ranks(my_rank),
+        )
+    elif use_coordinator and my_rank == world_size - 1:
+        logger.info("  -> Coordinator rank")
+    else:
+        logger.info(
+            "  -> Training group, assigned buffer rank = %s",
+            layout.assigned_buffer(my_rank),
+        )
 
     coordinator_rank = (world_size - 1) if use_coordinator else None
     if use_coordinator:
@@ -543,21 +806,24 @@ def initialize_distributed_compute(
         num_remote_buffers=num_remote_buffers,
         num_agent_groups=num_agent_groups,
         num_coordinators=num_coordinators,
+        layout=layout,
     )
 
     return DistributedContext(
         my_rank=my_rank,
         world_size=world_size,
-        num_training_ranks=num_training_ranks,
-        agent_group_size=agent_group_size,
+        num_training_ranks=layout.num_training_ranks,
+        agent_group_size=layout.agent_group_size,
         agent_groups=agent_group_list,
-        agent_group_id=my_rank // agent_group_size,
+        agent_group_id=layout.agent_group_id(my_rank),
         train_global_group=train_global_group,
-        assigned_buffer=assigned_buffer,
+        assigned_buffer=layout.assigned_buffer(my_rank),
         buffer_group=buffer_group,
-        assigned_training_ranks=assigned_training_ranks.get(my_rank, None),
+        assigned_training_ranks=layout.assigned_training_ranks(my_rank),
         dc_mpi4py=dc,
         coordinator_rank=coordinator_rank,
+        buffer_rank_set=layout.buffer_rank_set,
+        training_ranks=layout.training_ranks,
     )
 
 

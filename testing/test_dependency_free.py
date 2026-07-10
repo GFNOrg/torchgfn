@@ -392,6 +392,15 @@ class TestDistributedReports:
         monkeypatch.setattr(distributed_utils.dist, "get_rank", lambda: 2)
         monkeypatch.setattr(distributed_utils.dist, "get_world_size", lambda: 4)
 
+        def _fake_all_gather_object(object_list, obj):
+            # Simulate all ranks reporting the same hostname (single node).
+            for i in range(len(object_list)):
+                object_list[i] = obj
+
+        monkeypatch.setattr(
+            distributed_utils.dist, "all_gather_object", _fake_all_gather_object
+        )
+
         def _fake_new_group(ranks, backend, timeout):
             group_calls.append((tuple(ranks), backend))
             return tuple(ranks)
