@@ -6,9 +6,9 @@ Run me:
     python tutorials/examples/benchmark_kv_cache.py
     python tutorials/examples/benchmark_kv_cache.py --seq_sizes 16 32 64 128 --plot out.png
 
-I sample the *same* transformer policy on ``BitSequence`` two ways and time both, so the
-wall-clock difference is exactly the KV-cache. No GPU needed -- the win is a FLOP
-reduction and shows up on CPU (and grows with sequence length).
+I train/sample the *same* transformer policy on ``BitSequence`` two ways and time
+both, so the wall-clock difference is exactly the KV-cache. No GPU needed -- the win
+is a FLOP reduction and shows up on CPU (and grows with sequence length).
 
 ================================================================================
 WHY KV-CACHING HELPS
@@ -52,20 +52,26 @@ to one full-sequence forward):
     buffer at the cursor (no ``torch.cat``, no realloc) and attends against the filled
     prefix. This is the O(L^2) fast path.
 
-The autograd catch: writing K/V in place mutates a buffer whose earlier slice was saved
-for a previous step's backward, which invalidates the autograd graph. So the cached path
-runs under ``torch.no_grad()`` -- which is fine, because *sampling only needs sampled
-actions, not gradients*. This makes ``use_kv_cache=True`` ideal for inference/rollout;
-to *train* with it, recompute the loss log-probs with a grad-bearing forward
-(``recalculate_all_logprobs=True``). A companion "teacher-forced" parallel recompute
-makes that efficient and turns this sampling win into an end-to-end training win.
+The autograd catch (and why the design is split): writing K/V in place mutates a buffer
+whose earlier slice was saved for a previous step's backward, which invalidates the
+autograd graph. So the cached path runs under ``torch.no_grad()`` -- which is fine,
+because *sampling only needs sampled actions, not gradients*. Gradients are instead
+produced at loss time by a single **teacher-forced** (parallel, causal-masked) forward
+over each committed trajectory. ``use_kv_cache=True`` auto-enables this recompute
+(``teacher_forced_loss``); you just request it with
+``loss(..., recalculate_all_logprobs=True)``. That recompute is grad-safe and itself
+cheaper than back-propagating through an ``L``-step sequential rollout.
+
+    sampling (no_grad, cached, O(L^2))   +   loss (teacher-forced, grad, one forward)
 
 ================================================================================
 WHAT THIS SCRIPT MEASURES
 ================================================================================
-For each sequence length it (1) asserts the two configs produce identical per-step
-logits (``|Δ logits| ~ 1e-7`` -- proof it is the same model), then times pure rollout
-under ``no_grad`` for each -- isolating the cache (O(L^3) vs O(L^2)).
+For each sequence length it (1) asserts the two configs score identical log-probs
+(``|Δ log_pf| ~ 1e-7`` -- proof it is the same model), then times:
+  * **pure sampling** under ``no_grad`` -- isolates the cache (O(L^3) vs O(L^2));
+  * **full training step** (sample + loss + backward + optimizer) -- the realistic
+    cost, which also folds in the teacher-forced loss on the cached side.
 """
 
 from __future__ import annotations
@@ -100,13 +106,15 @@ def build(args, seq_size: int, use_kv_cache: bool, device: torch.device):
     """Construct ``(env, gflownet)`` for one benchmark configuration.
 
     This is the only place the KV-cache API appears -- everything else (sampler, loss,
-    optimizer) is the ordinary torchgfn stack, unchanged.
+    optimizer) is the ordinary torchgfn training stack, unchanged.
 
     Args:
         args: Parsed CLI arguments (model/env hyperparameters).
         seq_size: BitSequence length; with ``word_size=1`` this equals the number of
             autoregressive decode steps per trajectory (the ``L`` in the docstring).
-        use_kv_cache: Selects the sampling path (see module docstring).
+        use_kv_cache: Selects the sampling path (see module docstring). It also
+            auto-enables the teacher-forced loss recompute, since cached sampling is
+            ``no_grad`` and gradients must come from that recompute.
         device: Torch device.
 
     Returns:
@@ -136,7 +144,9 @@ def build(args, seq_size: int, use_kv_cache: bool, device: torch.device):
         module=model,
         n_actions=env.n_actions,
         is_backward=False,
-        # The single switch that turns on the in-place, feed-newest-token fast path.
+        # The single switch: turns on the in-place, feed-newest-token fast path and,
+        # because cached sampling is no_grad, auto-enables the teacher-forced loss
+        # recompute so the policy stays trainable.
         use_kv_cache=use_kv_cache,
     )
     # Tree-structured DAG (each string has a unique parent) => backward policy is
@@ -181,56 +191,86 @@ def time_sampling(gflownet, env, batch: int, device, warmup, iters):
     return _median_ms(_step, device, warmup, iters)
 
 
-def check_equivalence(args, seq_size: int, device: torch.device) -> float:
-    """Prove the cache changes speed, not results, at the per-step logit level.
+def time_training_step(
+    gflownet, env, batch: int, use_kv_cache: bool, device, warmup, iters
+):
+    """Time a full training step: sample + loss + backward + optimizer step.
 
-    We reconstruct the states at every decode step of a fixed batch and run the
-    estimator over them both ways (``use_kv_cache`` False and True). Because the cached
-    incremental decode equals the full-prefix forward, the logits must agree to
-    floating-point tolerance; a large gap would mean the cache computes the wrong thing.
-    Returns the max absolute logit difference.
+    The two realistic end-to-end configurations differ in *how gradients are obtained*:
+
+      * baseline: grad-bearing sequential sampling saves per-step log-probs, and the
+        loss reuses them (``save_logprobs=True``, ``recalculate_all_logprobs=False``);
+      * cached: ``no_grad`` cached sampling saves nothing differentiable, so the loss
+        recomputes log-probs with the teacher-forced parallel forward
+        (``recalculate_all_logprobs=True``; teacher forcing is auto-enabled by
+        ``use_kv_cache``).
     """
+    optimizer = torch.optim.Adam(gflownet.pf_pb_parameters(), lr=1e-3)
+    optimizer.add_param_group({"params": gflownet.logz_parameters(), "lr": 1e-1})
+
+    def _step():
+        trajectories = gflownet.sample_trajectories(
+            env,
+            n=batch,
+            # Cached sampling is no_grad, so saving its log-probs would be pointless
+            # (they carry no gradient); recompute them in the loss instead.
+            save_logprobs=not use_kv_cache,
+            save_estimator_outputs=False,
+        )
+        optimizer.zero_grad()
+        loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=use_kv_cache)
+        loss.backward()
+        optimizer.step()
+
+    return _median_ms(_step, device, warmup, iters)
+
+
+def check_equivalence(args, seq_size: int, device: torch.device) -> float:
+    """Prove the cache changes speed, not results, by scoring one batch two ways.
+
+    We sample a batch once, then recompute its forward log-probs with (a) the per-step
+    path and (b) the teacher-forced path over the *same* module weights. Because the
+    module's parallel forward equals its incremental decode, these must agree to
+    floating-point tolerance; a large gap would mean the cache is computing the wrong
+    thing. Returns the max absolute difference in per-step ``log P_F``.
+    """
+    from gfn.utils.prob_calculations import get_trajectory_pfs
+
     set_seed(args.seed)
     env, gflownet = build(args, seq_size, use_kv_cache=False, device=device)
-    # Both estimators wrap the SAME module weights, so the only difference is the path.
-    model = gflownet.pf.module
-    est_off = RecurrentDiscretePolicyEstimator(
-        module=model, n_actions=env.n_actions, use_kv_cache=False
+    est = gflownet.pf
+    trajectories = gflownet.sample_trajectories(
+        env, n=args.batch_size, save_logprobs=False, save_estimator_outputs=False
     )
-    est_on = RecurrentDiscretePolicyEstimator(
-        module=model, n_actions=env.n_actions, use_kv_cache=True
+    # Per-step recompute (baseline scoring): est has teacher_forced_loss=False.
+    log_pf_baseline = get_trajectory_pfs(
+        est, trajectories, recalculate_all_logprobs=True
     )
-
-    batch, L = args.batch_size, env.words_per_seq
-    words = torch.randint(0, env.n_actions - 1, (batch, L), device=device)
-
-    def per_step_logits(est) -> torch.Tensor:
-        carry = est.init_carry(batch, device)
-        out = []
-        with torch.no_grad():
-            for t in range(L + 1):  # steps 0..L (L+1 decode steps)
-                tensor = words.clone()
-                tensor[:, t:] = -1  # only first t words committed
-                logits, carry = est(env.States(tensor), carry)
-                out.append(logits)
-        return torch.stack(out, dim=0)
-
-    return (per_step_logits(est_off) - per_step_logits(est_on)).abs().max().item()
+    # Teacher-forced recompute (cached scoring): a sibling estimator over the SAME
+    # module weights, so the only difference is the recompute path.
+    est_tf = RecurrentDiscretePolicyEstimator(
+        module=est.module, n_actions=env.n_actions, teacher_forced_loss=True
+    )
+    log_pf_cached = get_trajectory_pfs(
+        est_tf, trajectories, recalculate_all_logprobs=True
+    )
+    return (log_pf_baseline - log_pf_cached).abs().max().item()
 
 
 def main(args) -> None:
     device = torch.device(args.device)
+    torch.set_grad_enabled(True)
     print(
         f"device={device}  batch={args.batch_size}  "
         f"model=(dim={args.embedding_dim}, heads={args.num_heads}, "
         f"layers={args.num_layers})  word_size={args.word_size}\n"
     )
 
-    # Columns: sampling base/cache + speedup, and the equivalence residual proving both
-    # columns describe the same model.
+    # Columns: sampling base/cache + speedup, training base/cache + speedup, and the
+    # equivalence residual proving both columns describe the same model.
     header = (
-        f"{'seq_len':>7} | {'sample base':>12} {'sample cache':>13} "
-        f"{'speedup':>8} | {'|Δlogits|':>10}"
+        f"{'seq_len':>7} | {'sample base':>12} {'sample cache':>13} {'x':>5} | "
+        f"{'train base':>11} {'train cache':>12} {'x':>5} | {'|Δlogpf|':>9}"
     )
     print(header)
     print("-" * len(header))
@@ -243,7 +283,7 @@ def main(args) -> None:
         max_delta = check_equivalence(args, seq_size, device)
         assert (
             max_delta < 1e-4
-        ), f"baseline vs cached logits differ by {max_delta} at seq_size={seq_size}"
+        ), f"baseline vs cached log_pf differ by {max_delta} at seq_size={seq_size}"
 
         # Fresh models per config so neither warms the other's caches/allocator.
         env_b, gfn_b = build(args, seq_size, use_kv_cache=False, device=device)
@@ -255,18 +295,36 @@ def main(args) -> None:
         s_cache = time_sampling(
             gfn_c, env_c, args.batch_size, device, args.warmup, args.iters
         )
-        speedup = s_base[0] / s_cache[0]
-        rows.append((seq_size, s_base[0], s_cache[0], speedup))
+        t_base = time_training_step(
+            gfn_b, env_b, args.batch_size, False, device, args.warmup, args.iters
+        )
+        t_cache = time_training_step(
+            gfn_c, env_c, args.batch_size, True, device, args.warmup, args.iters
+        )
+
+        sample_speedup = s_base[0] / s_cache[0]
+        train_speedup = t_base[0] / t_cache[0]
+        rows.append(
+            (
+                seq_size,
+                s_base[0],
+                s_cache[0],
+                sample_speedup,
+                t_base[0],
+                t_cache[0],
+                train_speedup,
+            )
+        )
         print(
             f"{seq_size:>7} | {s_base[0]:>10.2f}ms {s_cache[0]:>11.2f}ms "
-            f"{speedup:>7.1f}x | {max_delta:>10.1e}"
+            f"{sample_speedup:>4.1f}x | {t_base[0]:>9.2f}ms {t_cache[0]:>10.2f}ms "
+            f"{train_speedup:>4.1f}x | {max_delta:>9.1e}"
         )
 
     print(
-        "\nBoth configs are numerically identical (see |Δlogits|); the speedup is the "
-        "KV-cache.\nIt isolates the sampling win (O(L^3)->O(L^2)) and widens with "
-        "seq_len -- that is the point.\nTo turn this into an end-to-end training "
-        "speedup, pair it with the teacher-forced loss recompute."
+        "\nBoth configs are numerically identical (see |Δlogpf|); the speedup is the "
+        "KV-cache.\nSampling isolates the cache (O(L^3)->O(L^2)); training-step folds in "
+        "the teacher-forced loss. The gap widens with seq_len -- that is the point."
     )
 
     if args.plot:
@@ -274,7 +332,7 @@ def main(args) -> None:
 
 
 def _save_plot(rows, path: str) -> None:
-    """Optionally save a sampling-time / speedup figure (requires matplotlib)."""
+    """Optionally save a speedup-vs-length figure (requires matplotlib)."""
     try:
         import matplotlib
 
@@ -295,13 +353,13 @@ def _save_plot(rows, path: str) -> None:
     )
     ax1.legend()
     ax1.grid(alpha=0.3)
-    ax2.plot(seq, [r[3] for r in rows], "o-")
+    ax2.plot(seq, [r[3] for r in rows], "o-", label="sampling")
+    ax2.plot(seq, [r[6] for r in rows], "s-", label="training step")
     ax2.axhline(1.0, color="gray", ls="--", lw=0.8)
     ax2.set(
-        xlabel="sequence length (steps)",
-        ylabel="speedup (x)",
-        title="KV-cache sampling speedup",
+        xlabel="sequence length (steps)", ylabel="speedup (x)", title="KV-cache speedup"
     )
+    ax2.legend()
     ax2.grid(alpha=0.3)
     fig.tight_layout()
     fig.savefig(path, dpi=120)

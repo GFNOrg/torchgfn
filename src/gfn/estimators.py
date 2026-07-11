@@ -1239,19 +1239,23 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
     per-step artifacts. Non-recurrent estimators should use the default PolicyMixin
     and the standard ``DiscretePolicyEstimator`` base class instead.
 
-    An optional, fixed-length-only performance mode (opt-in; the default leaves
+    Two optional, fixed-length-only performance modes (both opt-in; defaults leave
     behavior unchanged):
 
     - ``use_kv_cache=True`` decodes one token per step against a persistent, in-place
       preallocated KV-cache, cutting rollout cost from O(L^3) to O(L^2). The in-place
       buffers cannot carry gradients, so cached sampling runs under ``no_grad`` -- it is
       a sampling-time optimization, ideal for inference/rollout.
+    - ``teacher_forced_loss=True`` recomputes PF log-probs in the loss with a single
+      parallel forward per trajectory (grad-bearing). It is auto-enabled by
+      ``use_kv_cache`` so a cached policy stays trainable via
+      ``loss(..., recalculate_all_logprobs=True)``.
 
     Notes
     -----
     - ``init_carry`` is a hard requirement for compatibility with the recurrent
       PolicyMixin.
-    - The cached fast path assumes fixed-length trajectories; see the Gap-2 TODO in
+    - Both performance modes assume fixed-length trajectories; see the Gap-2 TODO in
       ``gfn/utils/prob_calculations.py``.
 
     Attributes:
@@ -1271,11 +1275,12 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         debug: bool = False,
         use_kv_cache: bool = False,
         cache_max_len: int | None = None,
+        teacher_forced_loss: bool = False,
     ):
         """Initializes a RecurrentDiscretePolicyEstimator.
 
-        See the class docstring for what ``use_kv_cache`` does and why cached sampling
-        is ``no_grad``.
+        See the class docstring for what the two performance modes do and why cached
+        sampling is ``no_grad``.
 
         Args:
             module: The neural network module to use.
@@ -1284,12 +1289,15 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
             is_backward: Flag indicating whether this estimator is for backward policy.
             debug: If True, enables expensive validation checks.
             use_kv_cache: Opt into the O(L^2) in-place KV-cache sampling fast path.
-                Cached sampling runs under ``no_grad``, so it is a sampling-time
-                optimization (ideal for inference/rollout). If False (default), sampling
-                uses the corrected grad-bearing full-prefix forward each step.
+                Sampling then runs under ``no_grad``, so ``teacher_forced_loss`` is
+                enabled automatically to keep the policy trainable. If False (default),
+                sampling uses the corrected grad-bearing full-prefix forward each step.
             cache_max_len: KV-cache preallocation length; defaults to the module's
                 ``max_position_embeddings``. Rarely set by hand; must be at least the
                 env horizon + 1 (the +1 is the BOS token).
+            teacher_forced_loss: Recompute PF log-probs in the loss with one parallel
+                forward per trajectory instead of the per-step loop. Auto-enabled by
+                ``use_kv_cache``. Fixed-length trajectories only.
         """
         if preprocessor is None:
             preprocessor = IdentityPreprocessor(output_dim=None)
@@ -1321,6 +1329,9 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
                 f"max_position_embeddings ({max_positions})."
             )
         self._cache_max_len = cache_max_len
+        # Cached sampling is no_grad, so training needs a grad-bearing loss recompute;
+        # auto-enable teacher forcing (it is inert for sampling-only / inference use).
+        self.teacher_forced_loss = teacher_forced_loss or use_kv_cache
 
     @property
     def _bos_index(self) -> int:

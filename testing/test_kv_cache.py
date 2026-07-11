@@ -1,6 +1,6 @@
 """Correctness gates for the fixed-length KV-cache sampling optimization.
 
-Covers two layers:
+Covers three layers:
 
 - The transformer module's in-place preallocated carry (PR1a): incremental decode
   equals a single full-sequence forward, the buffers are preallocated and mutated in
@@ -8,6 +8,8 @@ Covers two layers:
 - The recurrent estimator's ``use_kv_cache`` toggle (PR1b): the cached fast path and
   the corrected full-prefix baseline produce identical per-step logits, both equal to
   a teacher-forced forward, and the fixed-length guard fires on ragged batches.
+- The teacher-forced (vectorized) loss recompute (PR2): equals the per-step recompute
+  and carries gradients.
 
 These are the gates the spec calls "load-bearing": they turn red on the previous
 (grow-both) recurrent path and green on the corrected implementation.
@@ -22,6 +24,7 @@ from gfn.estimators import RecurrentDiscretePolicyEstimator
 from gfn.gym.bitSequence import BitSequence
 from gfn.samplers import Sampler
 from gfn.utils.modules import TransformerDiscreteSequenceModel
+from gfn.utils.prob_calculations import get_trajectory_pfs
 
 ATOL = 1e-5
 
@@ -236,3 +239,70 @@ def test_sampling_runs_in_both_modes() -> None:
             )
         # Fixed-length: every trajectory has the same number of steps.
         assert trajs.max_length == env.words_per_seq + 1
+
+
+# --------------------------------------------------------------------------------
+# PR2: teacher-forced (vectorized) loss recompute
+# --------------------------------------------------------------------------------
+
+
+def test_teacher_forced_matches_per_step() -> None:
+    """Teacher-forced log_pf equals the per-step recompute (equivalence gate)."""
+    env, model = _env_and_model()
+    est = RecurrentDiscretePolicyEstimator(module=model, n_actions=env.n_actions)
+    trajs = Sampler(estimator=est).sample_trajectories(
+        env, n=8, save_logprobs=False, save_estimator_outputs=False
+    )
+
+    est.teacher_forced_loss = False
+    log_pf_perstep = get_trajectory_pfs(est, trajs, recalculate_all_logprobs=True)
+    est.teacher_forced_loss = True
+    log_pf_tf = get_trajectory_pfs(est, trajs, recalculate_all_logprobs=True)
+
+    assert log_pf_perstep.shape == log_pf_tf.shape
+    assert torch.allclose(log_pf_perstep, log_pf_tf, atol=ATOL)
+
+
+def test_teacher_forced_carries_gradients() -> None:
+    """The teacher-forced recompute is grad-bearing (loss can backprop through it)."""
+    env, model = _env_and_model()
+    est = RecurrentDiscretePolicyEstimator(module=model, n_actions=env.n_actions)
+    est.teacher_forced_loss = True
+    trajs = Sampler(estimator=est).sample_trajectories(
+        env, n=8, save_logprobs=False, save_estimator_outputs=False
+    )
+    model.zero_grad()
+    get_trajectory_pfs(est, trajs, recalculate_all_logprobs=True).sum().backward()
+    grad_total = sum(
+        p.grad.abs().sum().item() for p in model.parameters() if p.grad is not None
+    )
+    assert grad_total > 0.0
+
+
+def test_use_kv_cache_auto_enables_teacher_forcing() -> None:
+    """use_kv_cache=True auto-enables teacher_forced_loss so cached policies train."""
+    env, model = _env_and_model()
+    cached = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, use_kv_cache=True
+    )
+    assert cached.teacher_forced_loss is True  # auto-coupled
+    explicit = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, teacher_forced_loss=True
+    )
+    assert explicit.teacher_forced_loss is True  # standalone opt-in still works
+    default = RecurrentDiscretePolicyEstimator(module=model, n_actions=env.n_actions)
+    assert default.teacher_forced_loss is False  # off by default
+
+
+def test_detached_logprobs_guard() -> None:
+    """Reusing detached (no_grad cached) log-probs under a live graph fails fast."""
+    env, model = _env_and_model()
+    est = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, use_kv_cache=True
+    )
+    trajs = Sampler(estimator=est).sample_trajectories(
+        env, n=4, save_logprobs=True, save_estimator_outputs=False
+    )
+    assert trajs.log_probs is not None and not trajs.log_probs.requires_grad
+    with pytest.raises(RuntimeError, match="detached"):
+        get_trajectory_pfs(est, trajs, recalculate_all_logprobs=False)

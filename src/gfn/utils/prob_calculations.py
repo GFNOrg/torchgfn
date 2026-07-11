@@ -6,6 +6,7 @@ from gfn.containers import Trajectories, Transitions
 from gfn.estimators import (
     Estimator,
     PolicyEstimatorProtocol,
+    RecurrentDiscretePolicyEstimator,
     RecurrentPolicyMixin,
     validate_policy_estimator,
 )
@@ -53,6 +54,93 @@ def get_trajectory_pfs_and_pbs(
     return log_pf_trajectories, log_pb_trajectories
 
 
+def _pf_valid_masks(
+    trajectories: Trajectories,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Masks selecting the valid PF steps: non-sink states and non-dummy actions.
+
+    Returns ``(state_mask (T+1, N), action_mask (T, N))``; boolean indexing with these
+    flattens the batch row-major, which is how the vectorized/teacher-forced paths line
+    logits up with actions.
+    """
+    state_mask = ~trajectories.states.is_sink_state
+    action_mask = ~trajectories.actions.is_dummy
+    assert (
+        state_mask[:-1] == action_mask
+    ).all(), "state/action mask misalignment in PF evaluation"
+    return state_mask, action_mask
+
+
+def _scatter_pf(action_mask: torch.Tensor, valid_log_pf: torch.Tensor) -> torch.Tensor:
+    """Scatter per-step log-probs back into a dense ``(T, N)`` tensor (0 where masked)."""
+    out = torch.full(
+        action_mask.shape,
+        0.0,
+        dtype=torch.get_default_dtype(),
+        device=valid_log_pf.device,
+    )
+    out[action_mask] = valid_log_pf.to(out.dtype)
+    return out
+
+
+def _recurrent_teacher_forced_pfs(
+    policy_pf: Any,  # a RecurrentDiscretePolicyEstimator (Any avoids protected-access noise)
+    trajectories: Trajectories,
+    **policy_kwargs: Any,
+) -> torch.Tensor:
+    """Teacher-forced (parallel) PF log-probs for a recurrent estimator.
+
+    Instead of the per-step recompute (which re-runs the sequence model once per
+    timestep, re-paying the sequential rollout cost inside the loss), this runs a
+    **single** causal forward over the whole committed trajectory
+    ``[BOS, w_0, ..., w_{L-1}]`` and gathers the per-step action log-probs. Because
+    the sequence model's parallel forward is equal to its incremental decode
+    (proven by the module tests), the result matches the per-step path to numerical
+    tolerance — but with one grad-bearing forward and a shallow autograd graph.
+
+    Only **fixed-length** trajectories are supported (every trajectory terminates at
+    the same step); variable-length teacher forcing is out of scope (Gap 2).
+
+    Args:
+        policy_pf: The recurrent forward policy estimator.
+        trajectories: Forward trajectories to score.
+        **policy_kwargs: Forwarded to ``to_probability_distribution``.
+
+    Returns:
+        ``log_pf`` of shape ``(T, N)``.
+    """
+    T = trajectories.max_length
+    N = trajectories.batch_size
+
+    # Fixed-length guard: a sink state may appear only at the final state index.
+    if bool(trajectories.states.is_sink_state[:-1].any()):
+        raise NotImplementedError(
+            "Teacher-forced recompute (teacher_forced_loss=True) supports only "
+            "fixed-length trajectories; got variable-length trajectories. See the "
+            "Gap-2 TODO in this module for the variable-length follow-up."
+        )
+
+    # Reuse the estimator's own full-prefix forward so the teacher-forcing input is
+    # built identically to sampling (same [BOS, w_0, ...] construction) rather than
+    # re-derived here. The last committed state (index -2; -1 is the sink) holds the
+    # whole word sequence, and _forward_full_prefix returns the full-sequence logits.
+    terminal = trajectories.states[-2]
+    tokens = terminal.tensor.long()
+    lengths = (terminal.tensor >= 0).sum(dim=-1)
+    logits, _ = policy_pf._forward_full_prefix(tokens, lengths)  # (N, T, n_actions)
+    # Transpose (N, T, ·) -> (T, N, ·) then row-major flatten, matching the flattened
+    # valid states/actions below (which also flatten (T, N) row-major).
+    logits = logits.transpose(0, 1).reshape(T * N, -1)
+
+    state_mask, action_mask = _pf_valid_masks(trajectories)
+    valid_states = trajectories.states[state_mask]
+    valid_actions = trajectories.actions[action_mask]
+
+    dist = policy_pf.to_probability_distribution(valid_states, logits, **policy_kwargs)
+    valid_log_pf = dist.log_prob(valid_actions.tensor)  # (T*N,)
+    return _scatter_pf(action_mask, valid_log_pf)
+
+
 def get_trajectory_pfs(
     pf: Estimator,
     trajectories: Trajectories,
@@ -88,6 +176,16 @@ def get_trajectory_pfs(
     if trajectories.has_log_probs and not recalculate_all_logprobs:
         log_pf_trajectories = trajectories.log_probs
         assert log_pf_trajectories is not None
+        # Guard the KV-cache footgun: cached sampling runs under no_grad, so its saved
+        # log-probs are detached. Reusing them under an active graph would make
+        # loss.backward() fail with an opaque autograd error; fail fast instead.
+        if torch.is_grad_enabled() and not log_pf_trajectories.requires_grad:
+            raise RuntimeError(
+                "Reusing saved log-probs that are detached from the autograd graph "
+                "(sampling ran under no_grad, e.g. use_kv_cache=True), so backprop "
+                "would fail. Pass recalculate_all_logprobs=True to recompute them "
+                "(the estimator's teacher-forced loss recomputes them efficiently)."
+            )
     else:
 
         # Decide vectorized vs non-vectorized based on estimator capability
@@ -96,7 +194,19 @@ def get_trajectory_pfs(
         validate_policy_estimator(policy_pf, "pf")
         is_vectorized = bool(getattr(policy_pf, "is_vectorized", True))
 
-        if not is_vectorized:
+        # Opt-in teacher-forced (parallel) recompute: one causal forward over the whole
+        # trajectory instead of the per-step loop. Must be tested BEFORE the per-step
+        # branch, since recurrent estimators always report is_vectorized=False.
+        use_teacher_forcing = (
+            isinstance(policy_pf, RecurrentDiscretePolicyEstimator)
+            and policy_pf.teacher_forced_loss
+        )
+
+        if use_teacher_forcing:
+            log_pf_trajectories = _recurrent_teacher_forced_pfs(
+                policy_pf, trajectories, **policy_kwargs
+            )
+        elif not is_vectorized:
             # Per-step path.
             N = trajectories.batch_size
             device = trajectories.states.device
@@ -158,27 +268,18 @@ def get_trajectory_pfs(
                 log_pf_trajectories[t] = step_log_probs
 
         else:
-            state_mask = ~trajectories.states.is_sink_state
-            action_mask = ~trajectories.actions.is_dummy
-            # state_mask[-1] is all False
-            assert (
-                state_mask[:-1] == action_mask
-            ).all(), "Something wrong happening with log_pf evaluations"
-
+            # Vectorized path.
+            state_mask, action_mask = _pf_valid_masks(trajectories)
             valid_states = trajectories.states[state_mask]
             valid_actions = trajectories.actions[action_mask]
 
-            # Vectorized path.
-            # Allocate log_pf explicitly as floating point to avoid silent int casts.
-            log_pf_trajectories = torch.full(
-                trajectories.actions.tensor[..., 0].shape,
-                fill_value=0.0,
-                dtype=torch.get_default_dtype(),
-                device=trajectories.states.device,
-            )
-
             if len(valid_states) == 0:
-                return log_pf_trajectories
+                return torch.full(
+                    action_mask.shape,
+                    0.0,
+                    dtype=torch.get_default_dtype(),
+                    device=trajectories.states.device,
+                )
 
             # Build conditions per-step shape to align with valid_states
             masked_cond = None
@@ -209,9 +310,7 @@ def get_trajectory_pfs(
             )
 
             # Pad back to full batch size.
-            log_pf_trajectories[action_mask] = valid_log_pf_actions.to(
-                log_pf_trajectories.dtype, copy=False
-            )
+            log_pf_trajectories = _scatter_pf(action_mask, valid_log_pf_actions)
 
     assert log_pf_trajectories.shape == (
         trajectories.max_length,
