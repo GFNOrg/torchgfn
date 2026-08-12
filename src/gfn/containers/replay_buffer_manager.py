@@ -75,8 +75,14 @@ class ReplayBufferManager:
         # managers on its own (it only knows about the senders assigned to
         # *it*), so callers running a multi-manager setup must say so
         # explicitly if they want the footgun below to be caught.
-        if num_buffer_managers > 1 and store_locally and baseline_strategy in (
-            "min", "percentile",
+        if (
+            num_buffer_managers > 1
+            and store_locally
+            and baseline_strategy
+            in (
+                "min",
+                "percentile",
+            )
         ):
             warnings.warn(
                 f"ReplayBufferManager configured with num_buffer_managers="
