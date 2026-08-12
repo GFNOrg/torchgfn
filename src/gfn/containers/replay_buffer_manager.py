@@ -1,4 +1,5 @@
 import math
+import warnings
 from collections import defaultdict
 from typing import Callable, Optional
 
@@ -35,6 +36,17 @@ class ReplayBufferManager:
     - ``"ema"`` (and any strategy when the buffer is unavailable, e.g.
       ``store_locally=False``) reads from a running EMA of incoming
       batch minima.
+
+    This class has no built-in way to detect whether other
+    ``ReplayBufferManager`` instances are running alongside it (each
+    instance only knows about the senders assigned to itself). Pass
+    ``num_buffer_managers`` if you're running more than one — with
+    ``store_locally=True`` and a local-buffer-derived ``baseline_strategy``
+    (``"min"``/``"percentile"``), each manager's baseline is computed from
+    only its own shard's stored items and will silently diverge across
+    managers unless an external sync mechanism updates ``_baseline_ema``
+    directly (e.g. by delivering a ``MessageType.BASELINE_SYNC`` message,
+    handled generically below).
     """
 
     def __init__(
@@ -52,12 +64,33 @@ class ReplayBufferManager:
         baseline_strategy: str = "min",
         baseline_percentile: float = 0.1,
         baseline_ema_alpha: float = 0.1,
+        num_buffer_managers: int = 1,
     ):
         if baseline_strategy not in ("min", "percentile", "ema"):
             raise ValueError(
                 "baseline_strategy must be one of 'min', 'percentile', 'ema'; "
                 f"got {baseline_strategy!r}"
             )
+        # Purely descriptive — this class has no way to detect sibling
+        # managers on its own (it only knows about the senders assigned to
+        # *it*), so callers running a multi-manager setup must say so
+        # explicitly if they want the footgun below to be caught.
+        if num_buffer_managers > 1 and store_locally and baseline_strategy in (
+            "min", "percentile",
+        ):
+            warnings.warn(
+                f"ReplayBufferManager configured with num_buffer_managers="
+                f"{num_buffer_managers} and baseline_strategy={baseline_strategy!r} "
+                "(store_locally=True). Each manager computes this baseline from "
+                "only its own locally-stored items, so with multiple managers "
+                "the baseline will silently diverge across shards unless you "
+                "wire up an external sync mechanism (e.g. deliver a "
+                "MessageType.BASELINE_SYNC message to update _baseline_ema). "
+                "Use baseline_strategy='ema' plus an external sync, or a single "
+                "manager, to avoid shard-inconsistent filtering.",
+                stacklevel=2,
+            )
+        self.num_buffer_managers = num_buffer_managers
         self.store_locally = store_locally
         self.baseline_strategy = baseline_strategy
         self.baseline_percentile = baseline_percentile
@@ -218,6 +251,20 @@ class ReplayBufferManager:
             )
             self._pending_sends.append(handle)
 
+        elif msg.message_type == MessageType.BASELINE_SYNC:
+            # Externally-supplied baseline (e.g. from a coordinator aggregating
+            # multiple buffer managers). Adopt it directly; the manager doesn't
+            # need to know who sent it or why.
+            global_baseline = msg.message_data.get("global_baseline_log_reward")
+            print(
+                f"Manager - Replay buffer {self.rank}: received BASELINE_SYNC "
+                f"from rank {sender_rank}: global_baseline_log_reward="
+                f"{global_baseline}",
+                flush=True,
+            )
+            if global_baseline is not None:
+                self._baseline_ema = float(global_baseline)
+
         elif msg.message_type == MessageType.EXIT:
             self.exit_counter = self.exit_counter + 1
             if self.exit_counter == self.num_training_ranks:
@@ -277,6 +324,17 @@ class ReplayBufferManager:
                 backend=self.communication_backend,
                 tag=METADATA_TAG,
             )
+
+        elif msg.message_type == MessageType.BASELINE_SYNC:
+            global_baseline = msg.message_data.get("global_baseline_log_reward")
+            print(
+                f"Manager - Replay buffer {self.rank}: received BASELINE_SYNC "
+                f"from rank {sender_rank}: global_baseline_log_reward="
+                f"{global_baseline}",
+                flush=True,
+            )
+            if global_baseline is not None:
+                self._baseline_ema = float(global_baseline)
 
         elif msg.message_type == MessageType.EXIT:
             self.exit_counter = self.exit_counter + 1

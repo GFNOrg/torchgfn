@@ -13,6 +13,8 @@ class MessageType(Enum):
     EXIT = auto()
     MODE_REPORT = auto()  # Buffer -> Coordinator: new mode hashes + training rank
     GET_POPULATION_STATS = auto()  # Training rank -> Coordinator: request stats
+    BASELINE_REPORT = auto()  # Buffer -> Coordinator: push local baseline EMA
+    BASELINE_SYNC = auto()  # Coordinator -> Buffer: reply with global baseline EMA
 
 
 class Message:
