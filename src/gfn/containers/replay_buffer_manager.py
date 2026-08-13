@@ -262,12 +262,6 @@ class ReplayBufferManager:
             # multiple buffer managers). Adopt it directly; the manager doesn't
             # need to know who sent it or why.
             global_baseline = msg.message_data.get("global_baseline_log_reward")
-            print(
-                f"Manager - Replay buffer {self.rank}: received BASELINE_SYNC "
-                f"from rank {sender_rank}: global_baseline_log_reward="
-                f"{global_baseline}",
-                flush=True,
-            )
             if global_baseline is not None:
                 self._baseline_ema = float(global_baseline)
 
@@ -333,12 +327,6 @@ class ReplayBufferManager:
 
         elif msg.message_type == MessageType.BASELINE_SYNC:
             global_baseline = msg.message_data.get("global_baseline_log_reward")
-            print(
-                f"Manager - Replay buffer {self.rank}: received BASELINE_SYNC "
-                f"from rank {sender_rank}: global_baseline_log_reward="
-                f"{global_baseline}",
-                flush=True,
-            )
             if global_baseline is not None:
                 self._baseline_ema = float(global_baseline)
 
