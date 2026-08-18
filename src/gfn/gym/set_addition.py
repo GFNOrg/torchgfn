@@ -1,3 +1,4 @@
+import math
 from typing import Callable, Literal
 
 import torch
@@ -21,6 +22,8 @@ class SetAddition(DiscreteEnv):
         reward_fn (Callable): The reward function.
         fixed_length (bool): Whether the trajectories have a fixed length.
     """
+
+    supports_enumeration = True
 
     def __init__(
         self,
@@ -46,6 +49,7 @@ class SetAddition(DiscreteEnv):
         device = torch.device(device)
         self.n_items = n_items
         self.reward_fn = reward_fn
+        self._terminating_positions: torch.Tensor | None = None
         self.max_traj_len = max_items
         self.fixed_length = fixed_length
         n_actions = n_items + 1
@@ -175,11 +179,64 @@ class SetAddition(DiscreteEnv):
 
     @property
     def terminating_states(self) -> DiscreteStates:
-        """Returns the terminating states of the environment."""
-        if self.fixed_length:
-            return self.all_states[
-                self.all_states.tensor.sum(dim=1) == self.max_traj_len
-            ]
+        """Returns the terminating states of the environment.
 
-        else:
-            return self.all_states[1:]  # Remove initial state s_0
+        A state terminates a trajectory if it is *reachable* from $s_0$ and its forward
+        mask permits the exit action. Reachability matters here: ``all_states`` is the
+        full binary cube, but the forward masks forbid adding an item once
+        ``max_items`` are present, so any state with more than ``max_items`` items is
+        unreachable and carries no probability mass.
+
+        With ``fixed_length``, only sets of exactly ``max_items`` items terminate.
+        Otherwise every reachable state does — including the empty set $s_0$, which the
+        forward masks do allow the policy to exit from immediately.
+        """
+        return self.all_states[self._terminating_mask]
+
+    @property
+    def _terminating_mask(self) -> torch.Tensor:
+        """Boolean mask over ``all_states`` selecting the reachable terminating states."""
+        sizes = self.all_states.tensor.sum(dim=1)
+        if self.fixed_length:
+            return sizes == self.max_traj_len
+        return sizes <= self.max_traj_len
+
+    @property
+    def n_states(self) -> int:
+        """Returns the number of states, i.e. the size of the binary cube."""
+        return 2**self.n_items
+
+    @property
+    def n_terminating_states(self) -> int:
+        """Returns the number of reachable states that can terminate a trajectory."""
+        if self.fixed_length:
+            return math.comb(self.n_items, self.max_traj_len)
+        return sum(math.comb(self.n_items, k) for k in range(self.max_traj_len + 1))
+
+    def get_terminating_states_indices(self, states: DiscreteStates) -> torch.Tensor:
+        """Returns positions in the canonical terminating-state ordering.
+
+        The ordering is the one induced by ``terminating_states``, i.e. the order the
+        terminating states appear in ``all_states``.
+
+        Args:
+            states: The terminating states to index.
+
+        Returns:
+            A tensor of shape (*batch_shape,) of indices into ``terminating_states``.
+        """
+        if self._terminating_positions is None:
+            positions = torch.full(
+                (self.n_states,), -1, dtype=torch.long, device=self.device
+            )
+            mask = self._terminating_mask
+            positions[mask] = torch.arange(int(mask.sum()), device=self.device)
+            self._terminating_positions = positions
+
+        indices = self._terminating_positions[self.get_states_indices(states)]
+        if self.debug:
+            assert bool((indices >= 0).all()), (
+                "get_terminating_states_indices was given states that cannot terminate "
+                "a trajectory (they are unreachable, or their forward mask forbids exit)."
+            )
+        return indices

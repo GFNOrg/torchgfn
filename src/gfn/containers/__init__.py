@@ -1,4 +1,5 @@
 from .base import Container
+from .policy_gradient import PolicyGradientTrajectories
 from .replay_buffer import (
     NormBasedDiversePrioritizedReplayBuffer,
     ReplayBuffer,
@@ -10,6 +11,7 @@ from .transitions import Transitions
 
 __all__ = [
     "NormBasedDiversePrioritizedReplayBuffer",
+    "PolicyGradientTrajectories",
     "ReplayBuffer",
     "StatesContainer",
     "TerminatingStateBuffer",

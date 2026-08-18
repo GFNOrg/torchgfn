@@ -78,6 +78,8 @@ class DiscreteEBM(DiscreteEnv):
         alpha (float): Interaction strength the EBM.
     """
 
+    supports_enumeration = True
+
     def __init__(
         self,
         ndim: int,
