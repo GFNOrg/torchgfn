@@ -432,6 +432,302 @@ class TestDistributedReports:
         assert ctx.assigned_buffer == 3
         assert ctx.assigned_training_ranks is None
 
+    def test_initialize_distributed_compute_without_remote_buffers(self, monkeypatch):
+        """Regression: the no-remote-buffer path must not touch buffer_ranks."""
+        try:
+            from gfn.utils import distributed as distributed_utils
+        except (ImportError, RuntimeError):
+            pytest.skip("mpi4py / MPI library not available")
+
+        for name in (
+            "PMI_SIZE",
+            "PMI_RANK",
+            "MV2_COMM_WORLD_SIZE",
+            "MV2_COMM_WORLD_RANK",
+            "WORLD_SIZE",
+            "RANK",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("OMPI_COMM_WORLD_SIZE", "4")
+        monkeypatch.setenv("OMPI_COMM_WORLD_RANK", "2")
+
+        monkeypatch.setattr(distributed_utils.dist, "is_gloo_available", lambda: True)
+        monkeypatch.setattr(
+            distributed_utils.dist, "init_process_group", lambda **kwargs: None
+        )
+        monkeypatch.setattr(distributed_utils.dist, "barrier", lambda: None)
+        monkeypatch.setattr(distributed_utils.dist, "get_rank", lambda: 2)
+        monkeypatch.setattr(distributed_utils.dist, "get_world_size", lambda: 4)
+
+        def _fake_all_gather_object(object_list, obj):
+            for i in range(len(object_list)):
+                object_list[i] = obj
+
+        monkeypatch.setattr(
+            distributed_utils.dist, "all_gather_object", _fake_all_gather_object
+        )
+        monkeypatch.setattr(
+            distributed_utils.dist,
+            "new_group",
+            lambda ranks=None, backend=None, timeout=None: tuple(ranks or []),
+        )
+        monkeypatch.setattr(
+            distributed_utils, "initialize_distributed_compute_mpi4py", lambda **kw: None
+        )
+
+        ctx = distributed_utils.initialize_distributed_compute(
+            dist_backend="gloo",
+            num_remote_buffers=0,
+            num_agent_groups=1,
+        )
+        assert ctx.num_training_ranks == 4
+        assert ctx.training_ranks == [0, 1, 2, 3]
+        assert ctx.assigned_buffer is None
+        assert ctx.assigned_training_ranks is None
+        assert ctx.is_training_rank()
+        assert not ctx.is_buffer_rank()
+
+
+# ===========================================================================
+# utils/distributed.py — RankLayout (pure python, no MPI)
+# ===========================================================================
+
+
+def _rank_layout():
+    """Import RankLayout, skipping if the MPI-backed module cannot load."""
+    try:
+        from gfn.utils.distributed import RankLayout
+    except (ImportError, RuntimeError):
+        pytest.skip("mpi4py / MPI library not available")
+    return RankLayout
+
+
+def _served_by(layout, manager):
+    """``assigned_training_ranks`` for a manager, asserted non-``None``."""
+    served = layout.assigned_training_ranks(manager)
+    assert served is not None, f"manager {manager} has no assigned training ranks"
+    return served
+
+
+def _check_layout_invariants(layout, world_size, num_coordinators, num_agent_groups):
+    """Assert the invariants every layout must satisfy, however it was built.
+
+    1. Training, buffer and coordinator ranks partition ``range(world_size)``.
+    2. Agent/manager assignment round-trips: every agent's manager lists that
+       agent, and every rank a manager lists is actually assigned to it.
+    3. ``agent_group_id`` is always a valid index into ``agent_group_rank_list``.
+    """
+    coordinator_ranks = set(range(world_size - num_coordinators, world_size))
+    training = set(layout.training_ranks)
+    buffers = set(layout.buffer_ranks)
+
+    assert len(layout.training_ranks) == len(training), "duplicate training ranks"
+    assert len(layout.buffer_ranks) == len(buffers), "duplicate buffer ranks"
+    assert not training & buffers, "rank is both a training and a buffer rank"
+    assert not (training | buffers) & coordinator_ranks, "coordinator rank in use"
+    assert training | buffers | coordinator_ranks == set(
+        range(world_size)
+    ), "layout does not cover every rank"
+
+    for agent in layout.training_ranks:
+        manager = layout.assigned_buffer(agent)
+        if not layout.buffer_ranks:
+            assert manager is None
+            continue
+        assert manager in buffers, f"agent {agent} has no valid manager"
+        assert agent in _served_by(
+            layout, manager
+        ), f"manager {manager} does not list agent {agent} it is assigned"
+
+    for manager in layout.buffer_ranks:
+        for agent in _served_by(layout, manager):
+            assert (
+                layout.assigned_buffer(agent) == manager
+            ), f"manager {manager} lists agent {agent}, which sends elsewhere"
+
+    assert len(layout.agent_group_rank_list) == num_agent_groups
+    assert sorted(r for g in layout.agent_group_rank_list for r in g) == sorted(training)
+    for rank in range(world_size):
+        assert (
+            0 <= layout.agent_group_id(rank) < num_agent_groups
+        ), f"rank {rank} has out-of-range agent_group_id"
+
+
+class TestRankLayoutBuild:
+    """Arithmetic (hostname-free) rank assignment."""
+
+    def test_no_buffers_has_no_assignment(self):
+        layout = _rank_layout().build(
+            world_size=8,
+            num_remote_buffers=0,
+            num_nodes=2,
+            num_agent_groups=2,
+            num_coordinators=0,
+        )
+        assert layout.training_ranks == [0, 1, 2, 3, 4, 5, 6, 7]
+        assert layout.buffer_ranks == []
+        assert layout.assigned_buffer(0) is None
+        assert layout.assigned_training_ranks(0) is None
+        _check_layout_invariants(layout, 8, 0, 2)
+
+    def test_contiguous_groups_with_buffers(self):
+        layout = _rank_layout().build(
+            world_size=8,
+            num_remote_buffers=2,
+            num_nodes=2,
+            num_agent_groups=2,
+            num_coordinators=0,
+        )
+        assert layout.buffer_ranks == [3, 7]
+        assert layout.assigned_training_ranks(3) == [0, 1, 2]
+        assert layout.assigned_training_ranks(7) == [4, 5, 6]
+        _check_layout_invariants(layout, 8, 0, 2)
+
+    def test_coordinator_is_excluded(self):
+        layout = _rank_layout().build(
+            world_size=9,
+            num_remote_buffers=2,
+            num_nodes=2,
+            num_agent_groups=2,
+            num_coordinators=1,
+        )
+        assert 8 not in layout.training_ranks
+        assert 8 not in layout.buffer_ranks
+        _check_layout_invariants(layout, 9, 1, 2)
+
+
+class TestRankLayoutFromHostnames:
+    """Hostname-aware node-local rank assignment."""
+
+    @staticmethod
+    def _block(nodes):
+        """Block placement: consecutive ranks fill each node in turn."""
+        return [f"node{i}" for i, n in enumerate(nodes) for _ in range(n)]
+
+    @staticmethod
+    def _cyclic(num_nodes, world_size):
+        """Cyclic placement: rank r lands on node r % num_nodes."""
+        return [f"node{r % num_nodes}" for r in range(world_size)]
+
+    def _assert_managers_are_node_local(self, layout, hostnames):
+        for manager in layout.buffer_ranks:
+            served = _served_by(layout, manager)
+            assert served, f"manager {manager} serves nobody"
+            assert {hostnames[a] for a in served} == {
+                hostnames[manager]
+            }, f"manager {manager} is not colocated with its agents"
+
+    def test_block_placement_is_node_local(self):
+        hostnames = self._block([4, 4])
+        layout = _rank_layout().from_hostnames(
+            world_size=8,
+            num_remote_buffers=2,
+            num_agent_groups=2,
+            num_coordinators=0,
+            all_hostnames=hostnames,
+        )
+        assert layout.buffer_ranks == [3, 7]
+        self._assert_managers_are_node_local(layout, hostnames)
+        _check_layout_invariants(layout, 8, 0, 2)
+
+    def test_cyclic_placement_is_node_local(self):
+        """Non-contiguous groups must not be flattened back to ``range()``."""
+        hostnames = self._cyclic(2, 8)  # evens on node0, odds on node1
+        layout = _rank_layout().from_hostnames(
+            world_size=8,
+            num_remote_buffers=2,
+            num_agent_groups=2,
+            num_coordinators=0,
+            all_hostnames=hostnames,
+        )
+        assert sorted(_served_by(layout, layout.buffer_ranks[0])) == [
+            0,
+            2,
+            4,
+        ]
+        self._assert_managers_are_node_local(layout, hostnames)
+        _check_layout_invariants(layout, 8, 0, 2)
+
+    def test_cyclic_placement_excludes_coordinator(self):
+        """The coordinator is the top global rank, wherever hostnames put it."""
+        hostnames = self._cyclic(2, 9)  # rank 8 -> node0, which sorts first
+        layout = _rank_layout().from_hostnames(
+            world_size=9,
+            num_remote_buffers=2,
+            num_agent_groups=2,
+            num_coordinators=1,
+            all_hostnames=hostnames,
+        )
+        assert 8 not in layout.training_ranks
+        assert 8 not in layout.buffer_ranks
+        self._assert_managers_are_node_local(layout, hostnames)
+        _check_layout_invariants(layout, 9, 1, 2)
+
+    def test_multiple_managers_per_node(self):
+        hostnames = self._block([6, 6])
+        layout = _rank_layout().from_hostnames(
+            world_size=12,
+            num_remote_buffers=4,
+            num_agent_groups=2,
+            num_coordinators=0,
+            all_hostnames=hostnames,
+        )
+        assert len(layout.buffer_ranks) == 4
+        self._assert_managers_are_node_local(layout, hostnames)
+        _check_layout_invariants(layout, 12, 0, 2)
+
+    def test_uneven_nodes(self):
+        hostnames = self._block([5, 3])
+        layout = _rank_layout().from_hostnames(
+            world_size=8,
+            num_remote_buffers=2,
+            num_agent_groups=2,
+            num_coordinators=0,
+            all_hostnames=hostnames,
+        )
+        self._assert_managers_are_node_local(layout, hostnames)
+        _check_layout_invariants(layout, 8, 0, 2)
+
+    def test_falls_back_when_managers_not_divisible_by_nodes(self, caplog):
+        hostnames = self._block([4, 4])
+        with caplog.at_level(logging.WARNING):
+            layout = _rank_layout().from_hostnames(
+                world_size=8,
+                num_remote_buffers=3,
+                num_agent_groups=1,
+                num_coordinators=0,
+                all_hostnames=hostnames,
+            )
+        assert "not a multiple of num_nodes" in caplog.text
+        assert len(layout.buffer_ranks) == 3
+        _check_layout_invariants(layout, 8, 0, 1)
+
+    def test_node_too_small_to_host_its_managers(self):
+        hostnames = self._block([7, 1])
+        with pytest.raises(ValueError, match="need at least"):
+            _rank_layout().from_hostnames(
+                world_size=8,
+                num_remote_buffers=2,
+                num_agent_groups=1,
+                num_coordinators=0,
+                all_hostnames=hostnames,
+            )
+
+    def test_managers_serve_disjoint_agents(self):
+        """A production-shaped layout: 4 nodes, 4 managers, 1 coordinator."""
+        hostnames = self._block([32, 32, 32, 31])
+        layout = _rank_layout().from_hostnames(
+            world_size=127,
+            num_remote_buffers=4,
+            num_agent_groups=2,
+            num_coordinators=1,
+            all_hostnames=hostnames,
+        )
+        served = [r for m in layout.buffer_ranks for r in _served_by(layout, m)]
+        assert sorted(served) == sorted(layout.training_ranks)
+        self._assert_managers_are_node_local(layout, hostnames)
+        _check_layout_invariants(layout, 127, 1, 2)
+
 
 # ===========================================================================
 # utils/graphs.py — edge index functions (pure torch)

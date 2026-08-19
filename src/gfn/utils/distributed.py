@@ -3,8 +3,9 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import socket
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, cast
 
 import torch
 import torch.distributed as dist
@@ -152,23 +153,23 @@ def _split_ceil_floor(total: int, n: int) -> List[int]:
 class RankLayout:
     """Rank layout for distributed training with optional buffer managers.
 
-    Each buffer group is a set of contiguous agent ranks plus one manager rank
-    (the last rank in the group).  Use :meth:`build` for arithmetic assignment
-    or :meth:`from_hostnames` for hostname-aware node-local assignment.
+    Each buffer group is a set of agent ranks plus one manager rank (the last
+    rank in the group).  Group members are stored explicitly rather than as
+    ``(start, count)``, because :meth:`from_hostnames` can produce groups whose
+    ranks are not contiguous.  Use :meth:`build` for arithmetic assignment or
+    :meth:`from_hostnames` for hostname-aware node-local assignment.
     """
 
     def __init__(
         self,
         training_ranks: List[int],
         buffer_ranks: List[int],
-        agents_per_buffer_group: List[int],
-        buffer_group_starts: List[int],
+        agent_ranks_per_group: List[List[int]],
         num_agent_groups: int,
     ):
         self.training_ranks = training_ranks
         self.buffer_ranks = buffer_ranks
-        self.agents_per_buffer_group = agents_per_buffer_group
-        self.buffer_group_starts = buffer_group_starts
+        self.agent_ranks_per_group = agent_ranks_per_group
         self.num_training_ranks = len(training_ranks)
         self.agent_group_size = self.num_training_ranks // num_agent_groups
         self.buffer_rank_set = set(buffer_ranks)
@@ -178,11 +179,9 @@ class RankLayout:
         ]
         # Map each rank → its buffer-group index.
         self._rank_to_group: Dict[int, int] = {}
-        for g, (start, n) in enumerate(
-            zip(buffer_group_starts, agents_per_buffer_group)
-        ):
-            for j in range(n):
-                self._rank_to_group[start + j] = g
+        for g, members in enumerate(agent_ranks_per_group):
+            for r in members:
+                self._rank_to_group[r] = g
             if g < len(buffer_ranks):
                 self._rank_to_group[buffer_ranks[g]] = g
 
@@ -190,6 +189,8 @@ class RankLayout:
 
     def assigned_buffer(self, rank: int) -> Optional[int]:
         """Buffer manager rank for a training rank, or ``None``."""
+        if not self.buffer_ranks:
+            return None
         if rank in self.buffer_rank_set or rank not in self._rank_to_group:
             return None
         return self.buffer_ranks[self._rank_to_group[rank]]
@@ -198,24 +199,22 @@ class RankLayout:
         """Training ranks managed by a buffer rank, or ``None``."""
         if rank not in self.buffer_rank_set:
             return None
-        g = self._rank_to_group[rank]
-        return list(
-            range(
-                self.buffer_group_starts[g],
-                self.buffer_group_starts[g] + self.agents_per_buffer_group[g],
-            )
-        )
+        return list(self.agent_ranks_per_group[self._rank_to_group[rank]])
 
     def agent_group_id(self, rank: int) -> int:
         """Agent-group ID for *rank*."""
-        if rank in self.buffer_rank_set:
-            return self._rank_to_group[rank]
         if rank not in self._rank_to_group:
             return 0  # coordinator or unassigned
         g = self._rank_to_group[rank]
-        offset = rank - self.buffer_group_starts[g]
-        global_idx = sum(self.agents_per_buffer_group[:g]) + offset
-        return global_idx // self.agent_group_size
+        members = self.agent_ranks_per_group[g]
+        if rank in self.buffer_rank_set:
+            # A manager is not itself in an agent group; report the group of
+            # the agents it serves so the ID is always a valid group index.
+            if not members:
+                return 0
+            rank = members[0]
+        preceding = sum(len(m) for m in self.agent_ranks_per_group[:g])
+        return (preceding + members.index(rank)) // self.agent_group_size
 
     def summary(self, num_nodes: int) -> str:
         """Human-readable layout summary for logging."""
@@ -225,16 +224,12 @@ class RankLayout:
             f"{num_buffers} buffer manager(s)."
         ]
         if num_buffers == 0:
-            for i, (start, n) in enumerate(
-                zip(self.buffer_group_starts, self.agents_per_buffer_group)
-            ):
-                lines.append(f"  Node {i}: Training ranks {start} to {start + n - 1}.")
+            for i, members in enumerate(self.agent_ranks_per_group):
+                lines.append(f"  Node {i}: Training ranks {members}.")
         else:
             for g in range(num_buffers):
-                start = self.buffer_group_starts[g]
-                n = self.agents_per_buffer_group[g]
                 lines.append(
-                    f"  Group {g}: Training ranks {start} to {start + n - 1}. "
+                    f"  Group {g}: Training ranks {self.agent_ranks_per_group[g]}. "
                     f"Buffer manager rank {self.buffer_ranks[g]}."
                 )
         return "\n".join(lines)
@@ -251,17 +246,12 @@ class RankLayout:
         """Build from rank chunks (last rank per chunk is manager unless *no_buffers*)."""
         training_ranks: List[int] = []
         buffer_ranks: List[int] = []
-        buffer_group_starts: List[int] = []
-        agents_per_buffer_group: List[int] = []
+        agent_ranks_per_group: List[List[int]] = []
         for chunk in chunks:
-            if no_buffers:
-                buffer_group_starts.append(chunk[0])
-                agents_per_buffer_group.append(len(chunk))
-                training_ranks.extend(chunk)
-            else:
-                buffer_group_starts.append(chunk[0])
-                agents_per_buffer_group.append(len(chunk) - 1)
-                training_ranks.extend(chunk[:-1])
+            agents = chunk if no_buffers else chunk[:-1]
+            agent_ranks_per_group.append(list(agents))
+            training_ranks.extend(agents)
+            if not no_buffers:
                 buffer_ranks.append(chunk[-1])
         num_training = len(training_ranks)
         assert num_training % num_agent_groups == 0, (
@@ -271,8 +261,7 @@ class RankLayout:
         return cls(
             training_ranks,
             buffer_ranks,
-            agents_per_buffer_group,
-            buffer_group_starts,
+            agent_ranks_per_group,
             num_agent_groups,
         )
 
@@ -361,11 +350,14 @@ class RankLayout:
             managers_per_node,
         )
 
-        per_node = [sorted(node_to_ranks[h]) for h in sorted_nodes]
-        if num_coordinators > 0:
-            per_node[-1] = per_node[-1][
-                :-num_coordinators
-            ]  # Remove coordinator ranks from the last node's training ranks.
+        # Coordinators are the top `num_coordinators` global ranks; drop them by
+        # identity, since hostname order does not guarantee they land on the
+        # last node.
+        coordinator_ranks = set(range(world_size - num_coordinators, world_size))
+        per_node = [
+            [r for r in sorted(node_to_ranks[h]) if r not in coordinator_ranks]
+            for h in sorted_nodes
+        ]
 
         chunks: List[List[int]] = []
         for node_idx, node_ranks in enumerate(per_node):
@@ -380,7 +372,18 @@ class RankLayout:
             for sz in sub_sizes:
                 chunks.append(node_ranks[pos : pos + sz])
                 pos += sz
-        return cls._from_chunks(chunks, num_agent_groups)
+        layout = cls._from_chunks(chunks, num_agent_groups)
+        if any(
+            len({all_hostnames[r] for r in group}) > 1
+            for group in layout.agent_group_rank_list
+        ):
+            logger.warning(
+                "Some selective-averaging groups span physical node boundaries "
+                "(num_agent_groups=%d, num_nodes=%d, uneven ranks per node).",
+                num_agent_groups,
+                num_nodes,
+            )
+        return layout
 
 
 @dataclass
@@ -397,14 +400,19 @@ class DistributedContextMPI4Py:
     assigned_buffer: Optional[int] = None
     buffer_group: Optional[MPI.Comm] = None
     assigned_training_ranks: Optional[List[int]] = None
-    buffer_rank_set: set = field(default_factory=set)
+    buffer_rank_set: Set[int] = field(default_factory=set)
+    coordinator_rank: Optional[int] = None  # Global rank of the coordinator, if any.
 
     def is_buffer_rank(self) -> bool:
         """Check if the current rank is part of the buffer group."""
+        if self.my_rank == self.coordinator_rank:
+            return False
         return self.my_rank in self.buffer_rank_set
 
     def is_training_rank(self) -> bool:
         """Check if the current rank is part of the training group."""
+        if self.my_rank == self.coordinator_rank:
+            return False
         return self.my_rank not in self.buffer_rank_set
 
 
@@ -529,6 +537,7 @@ def initialize_distributed_compute_mpi4py(
         buffer_group=buffer_group,
         assigned_training_ranks=layout.assigned_training_ranks(my_rank),
         buffer_rank_set=layout.buffer_rank_set,
+        coordinator_rank=(world_size - 1) if num_coordinators > 0 else None,
     )
 
 
@@ -548,7 +557,7 @@ class DistributedContext:
     assigned_training_ranks: Optional[List[int]] = None
     dc_mpi4py: Optional[DistributedContextMPI4Py] = None
     coordinator_rank: Optional[int] = None  # Global rank of the coordinator, if any.
-    buffer_rank_set: set = field(default_factory=set)
+    buffer_rank_set: Set[int] = field(default_factory=set)
     training_ranks: List[int] = field(
         default_factory=list
     )  # All global training rank IDs.
@@ -716,8 +725,6 @@ def initialize_distributed_compute(
     # Gather hostnames for node-local manager placement (using torch.distributed).
     # This reflects actual process placement, so it is the sole source of
     # truth for num_nodes (no env-var or caller override needed).
-    import socket
-
     all_hostnames: List[str] = [None] * world_size  # type: ignore[list-item]
     dist.all_gather_object(all_hostnames, socket.gethostname())
     num_nodes = len(set(all_hostnames))
