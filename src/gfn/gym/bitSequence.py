@@ -464,12 +464,29 @@ class BitSequence(DiscreteEnv):
                 ]
             )
 
-        m = self.seq_size // self.H.shape[-1]
+        motif_size = int(self.H.shape[-1])
+        # Modes are built by tiling `m` motifs of width `motif_size`, so they are
+        # `m * motif_size` bits wide. Unless that divides evenly the modes come out
+        # narrower than the states, and every reward comparison against them fails --
+        # previously not here, but much later and far from the cause, as a broadcast
+        # error inside log_reward. Fail at construction instead.
+        if self.seq_size % motif_size != 0:
+            raise ValueError(
+                f"seq_size ({self.seq_size}) must be a multiple of the mode motif "
+                f"width ({motif_size}); otherwise the generated modes are "
+                f"{(self.seq_size // motif_size) * motif_size} bits wide and cannot be "
+                f"compared against {self.seq_size}-bit states. Either pick a seq_size "
+                f"that is a multiple of {motif_size}, or pass H with a motif width "
+                "that divides seq_size (e.g. H of shape (n_modes, seq_size))."
+            )
+        m = self.seq_size // motif_size
 
         num_possible = self.H.shape[0] ** m
         if self.n_modes > num_possible:
             raise ValueError(
-                "Not enough unique sequences available for the set of modes."
+                f"Not enough unique sequences available for the set of modes: "
+                f"{self.H.shape[0]} motifs over {m} slot(s) give {num_possible} "
+                f"distinct sequences, but n_modes={self.n_modes} were requested."
             )
 
         g = torch.Generator(device=self.device)

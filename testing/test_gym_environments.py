@@ -753,6 +753,50 @@ class TestBoxCartesian:
 # ===========================================================================
 
 
+class TestBitSequenceModeWidth:
+    """seq_size must be compatible with the width of the mode motifs in H."""
+
+    def test_incompatible_seq_size_raises_at_construction(self):
+        """A seq_size the motif width does not divide fails immediately.
+
+        Modes are built by tiling motifs from H, so an indivisible seq_size yields
+        modes narrower than the states. That used to surface only when log_reward was
+        called, as a broadcast error far from its cause.
+        """
+        from gfn.gym.bitSequence import BitSequence
+
+        with pytest.raises(ValueError, match="must be a multiple of the mode motif"):
+            BitSequence(word_size=2, seq_size=12, n_modes=2, seed=0)
+
+    @pytest.mark.parametrize("seq_size", [8, 16, 24])
+    def test_compatible_seq_size_yields_usable_rewards(self, seq_size: int):
+        """With a compatible seq_size the modes match the states and rewards work."""
+        from gfn.gym.bitSequence import BitSequence
+
+        env = BitSequence(word_size=2, seq_size=seq_size, n_modes=2, seed=0)
+        assert env.modes.shape == (2, seq_size)
+        states = env.States(torch.randint(0, env.n_actions - 1, (3, env.words_per_seq)))
+        assert env.log_reward(states).shape == (3,)
+
+    @pytest.mark.parametrize("seq_size", [12, 20])
+    def test_explicit_H_permits_any_seq_size(self, seq_size: int):
+        """Supplying H of width seq_size is the escape hatch, as train scripts do."""
+        from gfn.gym.bitSequence import BitSequence
+
+        H = torch.randint(0, 2, (2, seq_size), dtype=torch.long)
+        env = BitSequence(word_size=2, seq_size=seq_size, n_modes=2, H=H, seed=0)
+        assert env.modes.shape == (2, seq_size)
+        states = env.States(torch.randint(0, env.n_actions - 1, (3, env.words_per_seq)))
+        assert env.log_reward(states).shape == (3,)
+
+    def test_too_many_modes_reports_the_numbers(self):
+        """The n_modes error names the actual counts rather than just asserting."""
+        from gfn.gym.bitSequence import BitSequence
+
+        with pytest.raises(ValueError, match="distinct sequences"):
+            BitSequence(word_size=2, seq_size=8, n_modes=99, seed=0)
+
+
 class TestBitSequence:
     def test_init(self):
         from gfn.gym.bitSequence import BitSequence
