@@ -1248,9 +1248,14 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
       buffers cannot carry gradients, so cached sampling runs under ``no_grad`` -- it is
       a sampling-time optimization, ideal for inference/rollout.
     - ``teacher_forced_loss=True`` recomputes PF log-probs in the loss with a single
-      parallel forward per trajectory (grad-bearing). It is auto-enabled by
-      ``use_kv_cache`` so a cached policy stays trainable via
-      ``loss(..., recalculate_all_logprobs=True)``.
+      parallel forward per trajectory (grad-bearing). Left unset it defaults to
+      ``use_kv_cache``, so a cached policy is trainable out of the box via
+      ``loss(..., recalculate_all_logprobs=True)``; an explicit value always wins.
+
+    These are performance modes, not correctness modes: a cached policy trains
+    correctly either way. The per-step recompute temporarily restores the full-prefix
+    forward (see ``grad_bearing_forward``), so it is slower than teacher forcing but
+    never silently gradient-free.
 
     Notes
     -----
@@ -1290,9 +1295,10 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
             is_backward: Flag indicating whether this estimator is for backward policy.
             debug: If True, enables expensive validation checks.
             use_kv_cache: Opt into the O(L^2) in-place KV-cache sampling fast path.
-                Sampling then runs under ``no_grad``, so ``teacher_forced_loss`` is
-                enabled automatically to keep the policy trainable. If False (default),
-                sampling uses the corrected grad-bearing full-prefix forward each step.
+                Sampling then runs under ``no_grad``, so ``teacher_forced_loss``
+                defaults to True to keep the policy trainable efficiently. If False
+                (default), sampling uses the corrected grad-bearing full-prefix
+                forward each step. Not supported for backward policies.
             cache_max_len: KV-cache preallocation length; defaults to the module's
                 ``max_position_embeddings``. Rarely set by hand. It must be at least
                 the env horizon + 1 (the +1 is the BOS token); that lower bound
