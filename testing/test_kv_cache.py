@@ -21,6 +21,7 @@ import pytest
 import torch
 
 from gfn.estimators import RecurrentDiscretePolicyEstimator
+from gfn.gflownet import TBGFlowNet
 from gfn.gym.bitSequence import BitSequence
 from gfn.samplers import Sampler
 from gfn.utils.modules import (
@@ -144,7 +145,14 @@ def test_decode_position_is_load_bearing() -> None:
 # --------------------------------------------------------------------------------
 
 
-def _env_and_model(word_size: int = 2, seq_size: int = 12):
+def _env_and_model(word_size: int = 2, seq_size: int = 16):
+    """Build a BitSequence env and a transformer sequence model for it.
+
+    ``seq_size`` must be a multiple of 8: BitSequence tiles 8-bit motifs to build its
+    modes, so any other length yields modes narrower than the states and makes
+    ``env.log_reward`` unusable -- which would silently confine these tests to
+    ``get_trajectory_pfs`` and prevent asserting a real GFlowNet loss.
+    """
     env = BitSequence(
         word_size=word_size,
         seq_size=seq_size,
@@ -230,7 +238,7 @@ def test_cached_rnn_carry_accepts_debug() -> None:
     and report a bogus desync on the first committed step.
     """
     env = BitSequence(
-        word_size=2, seq_size=12, n_modes=2, device_str="cpu", seed=0, debug=False
+        word_size=2, seq_size=16, n_modes=2, device_str="cpu", seed=0, debug=False
     )
     rnn = RecurrentDiscreteSequenceModel(
         vocab_size=env.n_actions,
@@ -513,7 +521,7 @@ def test_cached_sampling_from_non_initial_state_with_rnn() -> None:
     bookkeeping to tell a primed carry from a fresh one.
     """
     env = BitSequence(
-        word_size=2, seq_size=12, n_modes=2, device_str="cpu", seed=0, debug=False
+        word_size=2, seq_size=16, n_modes=2, device_str="cpu", seed=0, debug=False
     )
     rnn = RecurrentDiscreteSequenceModel(
         vocab_size=env.n_actions,
@@ -614,7 +622,7 @@ def test_cache_max_len_rejected_for_module_without_position_range() -> None:
     Otherwise it surfaces much later as a TypeError from the module's init_carry.
     """
     env = BitSequence(
-        word_size=2, seq_size=12, n_modes=2, device_str="cpu", seed=0, debug=False
+        word_size=2, seq_size=16, n_modes=2, device_str="cpu", seed=0, debug=False
     )
     rnn = RecurrentDiscreteSequenceModel(
         vocab_size=env.n_actions,
@@ -627,3 +635,67 @@ def test_cache_max_len_rejected_for_module_without_position_range() -> None:
         RecurrentDiscretePolicyEstimator(
             module=rnn, n_actions=env.n_actions, use_kv_cache=True, cache_max_len=32
         )
+
+
+# --------------------------------------------------------------------------------
+# End-to-end: a real GFlowNet loss, not just get_trajectory_pfs
+# --------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("teacher_forced_loss", [False, True])
+def test_cached_policy_trains_through_real_tb_loss(teacher_forced_loss: bool) -> None:
+    """A KV-cached policy produces a finite, grad-bearing TBGFlowNet loss.
+
+    Everything else here stops at ``get_trajectory_pfs``; this drives the actual loss
+    object, so the reward path and logZ are in the loop too. Requires an env whose
+    ``log_reward`` works -- see ``_env_and_model`` on why seq_size must be a multiple
+    of 8.
+    """
+    env, model = _env_and_model()
+    pf = RecurrentDiscretePolicyEstimator(
+        module=model,
+        n_actions=env.n_actions,
+        use_kv_cache=True,
+        teacher_forced_loss=teacher_forced_loss,
+    )
+    gflownet = TBGFlowNet(pf=pf, pb=None, constant_pb=True)
+    trajectories = gflownet.sample_trajectories(
+        env, n=8, save_logprobs=False, save_estimator_outputs=False
+    )
+    loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=True)
+
+    assert torch.isfinite(loss)
+    assert loss.requires_grad
+    loss.backward()
+    params = list(model.parameters())
+    assert all(p.grad is not None and bool(p.grad.abs().sum()) for p in params)
+
+
+def test_cached_and_uncached_training_agree_end_to_end() -> None:
+    """Cached and uncached training steps are the same computation, not just close.
+
+    This is the headline claim of the optimization: the cache changes speed, not
+    results. Same seed, same weights -> same trajectories, same loss, same gradients.
+    """
+    losses, grad_norms = [], []
+    for use_kv_cache in (False, True):
+        torch.manual_seed(0)
+        env, model = _env_and_model()
+        pf = RecurrentDiscretePolicyEstimator(
+            module=model, n_actions=env.n_actions, use_kv_cache=use_kv_cache
+        )
+        gflownet = TBGFlowNet(pf=pf, pb=None, constant_pb=True)
+        torch.manual_seed(42)
+        trajectories = gflownet.sample_trajectories(
+            env, n=8, save_logprobs=not use_kv_cache, save_estimator_outputs=False
+        )
+        model.zero_grad()
+        loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=use_kv_cache)
+        loss.backward()
+        losses.append(loss.item())
+        grad_norms.append(
+            sum(p.grad.norm().item() for p in model.parameters() if p.grad is not None)
+        )
+
+    assert abs(losses[0] - losses[1]) < 1e-4, losses
+    assert abs(grad_norms[0] - grad_norms[1]) < 1e-3, grad_norms
