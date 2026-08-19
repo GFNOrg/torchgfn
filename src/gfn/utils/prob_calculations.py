@@ -136,7 +136,29 @@ def _recurrent_teacher_forced_pfs(
     terminal = trajectories.states[-2]
     tokens = terminal.tensor.long()
     lengths = (terminal.tensor >= 0).sum(dim=-1)
-    logits, _ = policy_pf._forward_full_prefix(tokens, lengths)  # (N, T, n_actions)
+
+    # Trajectories need not begin at s0 -- Sampler.sample_trajectories(states=...)
+    # resumes from a partial state, which is how LocalSearchSampler reconstructs from a
+    # junction. Such a rollout has T steps but a terminal sequence of L >= T - 1 words,
+    # so the forward covers canonical positions 0..L while only the last T of them
+    # (start..L) correspond to actual steps. Slice to those before flattening;
+    # otherwise the reshape below fails with an opaque size error.
+    lo, hi = torch.stack([lengths.min(), lengths.max()]).tolist()
+    if lo != hi:
+        raise NotImplementedError(
+            "Teacher-forced recompute (teacher_forced_loss=True) supports only "
+            f"fixed-length trajectories; terminal lengths span [{lo}, {hi}]."
+        )
+    start = int(hi) - (T - 1)
+    if start < 0:
+        raise ValueError(
+            f"Teacher-forced recompute got {T} steps but a terminal sequence of only "
+            f"{hi} words; the trajectories and the estimator disagree about the "
+            "sequence layout."
+        )
+
+    logits, _ = policy_pf._forward_full_prefix(tokens, lengths)  # (N, L + 1, n_actions)
+    logits = logits[:, start:, :]  # (N, T, n_actions)
     # Transpose (N, T, ·) -> (T, N, ·) then row-major flatten, matching the flattened
     # valid states/actions below (which also flatten (T, N) row-major).
     logits = logits.transpose(0, 1).reshape(T * N, -1)
@@ -154,6 +176,12 @@ def _recurrent_teacher_forced_pfs(
     # be resolved against (states, estimator_outputs) before building the dist. We
     # bypass compute_dist here (it would re-run the estimator per step), so the
     # resolution has to be repeated.
+    #
+    # Note the call shape differs from the per-step path by construction: there the
+    # schedule is invoked once per timestep on (N, n_actions); here once on
+    # (T*N, n_actions). Pointwise schedules agree, but one that reduces over the batch
+    # (or is stateful / counts calls) will not -- teacher forcing is not appropriate
+    # for those.
     if callable(policy_kwargs.get("temperature")):
         policy_kwargs = dict(policy_kwargs)
         policy_kwargs["temperature"] = policy_kwargs["temperature"](valid_states, logits)

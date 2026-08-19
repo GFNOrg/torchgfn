@@ -460,3 +460,170 @@ def test_detached_logprobs_guard_does_not_fire_without_cache() -> None:
     assert trajs.log_probs is not None and not trajs.log_probs.requires_grad
     log_pf = get_trajectory_pfs(est, trajs, recalculate_all_logprobs=False)
     assert log_pf.shape == (trajs.max_length, trajs.batch_size)
+
+
+# --------------------------------------------------------------------------------
+# Rollouts that do not start at s0 (Sampler(states=...), used by LocalSearchSampler)
+# --------------------------------------------------------------------------------
+
+
+def _states_with_prefix(env, n_rows: int, n_words: int):
+    """Build ``n_rows`` states that already have ``n_words`` words committed."""
+    tensor = torch.full((n_rows, env.words_per_seq), -1, dtype=torch.long)
+    if n_words:
+        tensor[:, :n_words] = torch.randint(0, env.n_actions - 1, (n_rows, n_words))
+    return env.States(tensor)
+
+
+@pytest.mark.parametrize("start_words", [0, 1, 3, 5])
+def test_cached_sampling_matches_from_non_initial_state(start_words: int) -> None:
+    """Cached sampling equals uncached when the rollout resumes mid-trajectory.
+
+    ``Sampler.sample_trajectories(states=...)`` starts from a state that already has a
+    committed prefix, while ``init_carry`` hands back an empty cache. Decoding only the
+    newest token there would attend against an empty prefix and shift every absolute
+    position, silently sampling from the wrong distribution -- so the cache has to be
+    primed with the whole committed prefix on its first step.
+    """
+    env, model = _env_and_model()
+    torch.manual_seed(0)
+    start = _states_with_prefix(env, 4, start_words)
+
+    results = []
+    for use_kv_cache in (False, True):
+        est = RecurrentDiscretePolicyEstimator(
+            module=model, n_actions=env.n_actions, use_kv_cache=use_kv_cache
+        )
+        torch.manual_seed(123)
+        with torch.no_grad():
+            trajs = Sampler(estimator=est).sample_trajectories(
+                env, states=start, save_logprobs=True, save_estimator_outputs=False
+            )
+        assert trajs.log_probs is not None
+        results.append((trajs.log_probs.clone(), trajs.actions.tensor.clone()))
+
+    assert torch.allclose(results[0][0], results[1][0], atol=ATOL)
+    assert torch.equal(results[0][1], results[1][1])
+
+
+def test_cached_sampling_from_non_initial_state_with_rnn() -> None:
+    """The same, for a module whose carry tracks no cursor of its own.
+
+    An RNN/GRU/LSTM carry has no ``cache_len``, so the estimator attaches its own
+    bookkeeping to tell a primed carry from a fresh one.
+    """
+    env = BitSequence(
+        word_size=2, seq_size=12, n_modes=2, device_str="cpu", seed=0, debug=False
+    )
+    rnn = RecurrentDiscreteSequenceModel(
+        vocab_size=env.n_actions,
+        embedding_dim=16,
+        hidden_size=16,
+        num_layers=1,
+        rnn_type="gru",
+    )
+    torch.manual_seed(0)
+    start = _states_with_prefix(env, 4, 3)
+
+    results = []
+    for use_kv_cache in (False, True):
+        est = RecurrentDiscretePolicyEstimator(
+            module=rnn, n_actions=env.n_actions, use_kv_cache=use_kv_cache
+        )
+        torch.manual_seed(123)
+        with torch.no_grad():
+            trajs = Sampler(estimator=est).sample_trajectories(
+                env, states=start, save_logprobs=True, save_estimator_outputs=False
+            )
+        assert trajs.log_probs is not None
+        results.append(trajs.log_probs.clone())
+
+    assert torch.allclose(results[0], results[1], atol=ATOL)
+
+
+@pytest.mark.parametrize("start_words", [0, 1, 3, 5])
+def test_teacher_forced_matches_per_step_from_non_initial_state(
+    start_words: int,
+) -> None:
+    """Teacher forcing handles trajectories whose terminal sequence is longer than T.
+
+    A rollout resumed from ``K`` committed words has ``T = L - K + 1`` steps but a
+    terminal sequence of ``L`` words, so only the last ``T`` positions of the full
+    forward correspond to real steps.
+    """
+    env, model = _env_and_model()
+    per_step = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, teacher_forced_loss=False
+    )
+    teacher_forced = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, teacher_forced_loss=True
+    )
+    torch.manual_seed(0)
+    start = _states_with_prefix(env, 4, start_words)
+    torch.manual_seed(7)
+    with torch.no_grad():
+        trajs = Sampler(estimator=per_step).sample_trajectories(
+            env, states=start, save_logprobs=False, save_estimator_outputs=False
+        )
+
+    log_pf_per_step = get_trajectory_pfs(per_step, trajs, recalculate_all_logprobs=True)
+    log_pf_tf = get_trajectory_pfs(teacher_forced, trajs, recalculate_all_logprobs=True)
+    assert torch.allclose(log_pf_per_step, log_pf_tf, atol=ATOL)
+
+    model.zero_grad()
+    log_pf_tf.sum().backward()
+    params = list(model.parameters())
+    assert all(p.grad is not None and bool(p.grad.abs().sum()) for p in params)
+
+
+def test_cache_cursor_ahead_of_states_is_rejected() -> None:
+    """A carry that has consumed more than the states have committed fails loudly."""
+    env, model = _env_and_model()
+    est = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, use_kv_cache=True
+    )
+    carry = est.init_carry(4, torch.device("cpu"))
+    words = torch.randint(0, env.n_actions - 1, (4, env.words_per_seq))
+    # Advance the carry past what the next call will claim is committed.
+    primed = words.clone()
+    primed[:, 5:] = -1
+    _, carry = est(env.States(primed), carry)
+    stale = words.clone()
+    stale[:, 2:] = -1
+    with pytest.raises(ValueError, match="ahead of the committed length"):
+        est(env.States(stale), carry)
+
+
+def test_backward_policy_rejects_kv_cache_set_after_construction() -> None:
+    """The backward rejection is not bypassable by assigning the public attribute."""
+    env, model = _env_and_model()
+    est = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, is_backward=True
+    )
+    est.use_kv_cache = True  # bypasses the constructor guard
+    carry = est.init_carry(4, torch.device("cpu"))
+    words = torch.randint(0, env.n_actions - 1, (4, env.words_per_seq))
+    words[:, 1:] = -1
+    with pytest.raises(ValueError, match="backward"):
+        est(env.States(words), carry)
+
+
+def test_cache_max_len_rejected_for_module_without_position_range() -> None:
+    """cache_max_len on a module that cannot preallocate fails at construction.
+
+    Otherwise it surfaces much later as a TypeError from the module's init_carry.
+    """
+    env = BitSequence(
+        word_size=2, seq_size=12, n_modes=2, device_str="cpu", seed=0, debug=False
+    )
+    rnn = RecurrentDiscreteSequenceModel(
+        vocab_size=env.n_actions,
+        embedding_dim=16,
+        hidden_size=16,
+        num_layers=1,
+        rnn_type="gru",
+    )
+    with pytest.raises(ValueError, match="max_position_embeddings"):
+        RecurrentDiscretePolicyEstimator(
+            module=rnn, n_actions=env.n_actions, use_kv_cache=True, cache_max_len=32
+        )
