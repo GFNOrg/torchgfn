@@ -1,4 +1,5 @@
 import math
+import warnings
 from collections import defaultdict
 from typing import Callable, Optional
 
@@ -35,6 +36,17 @@ class ReplayBufferManager:
     - ``"ema"`` (and any strategy when the buffer is unavailable, e.g.
       ``store_locally=False``) reads from a running EMA of incoming
       batch minima.
+
+    This class has no built-in way to detect whether other
+    ``ReplayBufferManager`` instances are running alongside it (each
+    instance only knows about the senders assigned to itself). Pass
+    ``num_buffer_managers`` if you're running more than one — with
+    ``store_locally=True`` and a local-buffer-derived ``baseline_strategy``
+    (``"min"``/``"percentile"``), each manager's baseline is computed from
+    only its own shard's stored items and will silently diverge across
+    managers unless an external sync mechanism delivers a
+    ``MessageType.BASELINE_SYNC`` message, which overrides the local estimate
+    for every strategy.
     """
 
     def __init__(
@@ -52,17 +64,41 @@ class ReplayBufferManager:
         baseline_strategy: str = "min",
         baseline_percentile: float = 0.1,
         baseline_ema_alpha: float = 0.1,
+        num_buffer_managers: int = 1,
     ):
         if baseline_strategy not in ("min", "percentile", "ema"):
             raise ValueError(
                 "baseline_strategy must be one of 'min', 'percentile', 'ema'; "
                 f"got {baseline_strategy!r}"
             )
+        # Purely descriptive — this class has no way to detect sibling
+        # managers on its own (it only knows about the senders assigned to
+        # *it*), so callers running a multi-manager setup must say so
+        # explicitly if they want the footgun below to be caught.
+        if (
+            num_buffer_managers > 1
+            and store_locally
+            and baseline_strategy in ("min", "percentile")
+        ):
+            warnings.warn(
+                f"ReplayBufferManager configured with num_buffer_managers="
+                f"{num_buffer_managers} and baseline_strategy={baseline_strategy!r} "
+                "(store_locally=True). Each manager computes this baseline from "
+                "only its own locally-stored items, so with multiple managers "
+                "the baseline will silently diverge across shards unless you "
+                "wire up an external sync mechanism (deliver a "
+                "MessageType.BASELINE_SYNC message carrying "
+                "'global_baseline_log_reward'). Use an external sync, or a "
+                "single manager, to avoid shard-inconsistent filtering.",
+                stacklevel=2,
+            )
+        self.num_buffer_managers = num_buffer_managers
         self.store_locally = store_locally
         self.baseline_strategy = baseline_strategy
         self.baseline_percentile = baseline_percentile
         self.baseline_ema_alpha = baseline_ema_alpha
         self._baseline_ema: float | None = None
+        self._global_baseline: float | None = None
         self.rank = rank
         self.is_running = True
         self.exit_counter = 0
@@ -101,6 +137,16 @@ class ReplayBufferManager:
         """Default score function if none provided, placeholder."""
         return {"score": math.inf}
 
+    def _apply_baseline_sync(self, msg) -> None:
+        """Adopt an externally-supplied global baseline from a BASELINE_SYNC message.
+
+        Sent by a coordinator aggregating local baselines across buffer
+        managers.  The manager doesn't need to know who sent it or why.
+        """
+        global_baseline = msg.message_data.get("global_baseline_log_reward")
+        if global_baseline is not None:
+            self._global_baseline = float(global_baseline)
+
     def _inject_baseline_log_reward(
         self, score_dict: dict[str, float], incoming
     ) -> None:
@@ -108,10 +154,11 @@ class ReplayBufferManager:
 
         Updates the EMA tracker from ``incoming.log_rewards`` (used as the
         source under ``"ema"`` and as a fallback when the local buffer is
-        unavailable), then picks a baseline from the buffer (``"min"`` /
-        ``"percentile"`` once at capacity) or the EMA.  Non-finite rewards
-        are excluded so containers with ``-inf`` (e.g. Transitions) do not
-        poison the statistics.
+        unavailable), then picks a baseline: an externally-synced global value
+        if one has been received, else the buffer (``"min"`` / ``"percentile"``
+        once at capacity), else the EMA.  Non-finite rewards are excluded so
+        containers with ``-inf`` (e.g. Transitions) do not poison the
+        statistics.
         """
         incoming_lr = getattr(incoming, "log_rewards", None)
         if incoming_lr is not None and incoming_lr.numel() > 0:
@@ -124,6 +171,13 @@ class ReplayBufferManager:
                     if self._baseline_ema is None
                     else a * batch_min + (1 - a) * self._baseline_ema
                 )
+
+        # An externally-synced global baseline (see ``MessageType.BASELINE_SYNC``)
+        # wins over any local estimate: the whole point of syncing is that every
+        # manager filters against the same threshold.
+        if self._global_baseline is not None:
+            score_dict["baseline_log_reward"] = self._global_baseline
+            return
 
         buf = self.replay_buffer
         tc = buf.training_container
@@ -218,6 +272,9 @@ class ReplayBufferManager:
             )
             self._pending_sends.append(handle)
 
+        elif msg.message_type == MessageType.BASELINE_SYNC:
+            self._apply_baseline_sync(msg)
+
         elif msg.message_type == MessageType.EXIT:
             self.exit_counter = self.exit_counter + 1
             if self.exit_counter == self.num_training_ranks:
@@ -277,6 +334,9 @@ class ReplayBufferManager:
                 backend=self.communication_backend,
                 tag=METADATA_TAG,
             )
+
+        elif msg.message_type == MessageType.BASELINE_SYNC:
+            self._apply_baseline_sync(msg)
 
         elif msg.message_type == MessageType.EXIT:
             self.exit_counter = self.exit_counter + 1

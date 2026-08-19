@@ -3,6 +3,7 @@ from tempfile import TemporaryDirectory
 import pytest
 import torch
 
+from gfn.containers.message import Message, MessageType
 from gfn.containers.replay_buffer import (
     NormBasedDiversePrioritizedReplayBuffer,
     ReplayBuffer,
@@ -762,6 +763,56 @@ def test_manager_baseline_ema_fallback_when_not_storing(simple_env, trajectories
     mgr._inject_baseline_log_reward(score, trajectories)
     # EMA initialised from this batch's min finite reward == 0.0.
     assert score["baseline_log_reward"] == pytest.approx(0.0)
+
+
+def test_manager_baseline_sync_overrides_local(simple_env, trajectories):
+    # A BASELINE_SYNC from a coordinator must win over the local buffer
+    # estimate, otherwise multi-manager filtering stays shard-inconsistent.
+    mgr = ReplayBufferManager(
+        simple_env,
+        rank=0,
+        num_training_ranks=1,
+        capacity=5,
+        baseline_strategy="min",
+    )
+    mgr.replay_buffer.add(trajectories)
+    mgr.replay_buffer._flush_pending()
+
+    score: dict = {"score": 0.0}
+    mgr._inject_baseline_log_reward(score, None)
+    assert score["baseline_log_reward"] == pytest.approx(0.0)  # local min.
+
+    mgr._apply_baseline_sync(
+        Message(MessageType.BASELINE_SYNC, {"global_baseline_log_reward": -7.5})
+    )
+    score = {"score": 0.0}
+    mgr._inject_baseline_log_reward(score, trajectories)
+    assert score["baseline_log_reward"] == pytest.approx(-7.5)
+
+
+def test_manager_baseline_sync_ignores_missing_payload(simple_env, trajectories):
+    mgr = ReplayBufferManager(
+        simple_env,
+        rank=0,
+        num_training_ranks=1,
+        capacity=5,
+        store_locally=False,
+    )
+    mgr._apply_baseline_sync(Message(MessageType.BASELINE_SYNC, {}))
+    score: dict = {"score": 0.0}
+    mgr._inject_baseline_log_reward(score, trajectories)
+    assert score["baseline_log_reward"] == pytest.approx(0.0)  # falls back to EMA.
+
+
+def test_manager_multi_manager_baseline_warning(simple_env):
+    with pytest.warns(UserWarning, match="BASELINE_SYNC"):
+        ReplayBufferManager(
+            simple_env,
+            rank=0,
+            num_training_ranks=1,
+            baseline_strategy="min",
+            num_buffer_managers=4,
+        )
 
 
 def test_manager_baseline_ema_skips_non_finite(simple_env, trajectories):
