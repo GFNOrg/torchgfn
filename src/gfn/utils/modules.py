@@ -1284,7 +1284,27 @@ class _AutoregressiveTransformerBlock(nn.Module):
         hidden: torch.Tensor,
         key_carry: torch.Tensor,
         value_carry: torch.Tensor,
+        cache_len: Optional[int] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Self-attention over the K/V carry, in one of two carry modes.
+
+        Args:
+            hidden: (batch, timesteps, embed_dim) block input.
+            key_carry: The running key cache.
+            value_carry: The running value cache.
+            cache_len: Selects the carry mode. When ``None`` (default) the block runs
+                in **grow-by-cat** mode: the new K/V are concatenated onto the carry
+                and freshly allocated buffers are returned. This is autograd-safe and
+                used by the full-sequence / no-cache paths. When an int, it is the
+                write cursor for **in-place** mode: ``key_carry`` / ``value_carry`` are
+                preallocated buffers, the new K/V are written at
+                ``[cache_len:cache_len+T]`` without reallocation, and the *same* buffer
+                objects are returned. In-place mutation is only version-counter-safe
+                under ``no_grad``.
+
+        Returns:
+            (block output, updated key carry, updated value carry).
+        """
         batch, timesteps, _ = hidden.size()
 
         normed_hidden = self.norm1(hidden)
@@ -1297,30 +1317,45 @@ class _AutoregressiveTransformerBlock(nn.Module):
         k = k.view(batch, timesteps, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch, timesteps, self.num_heads, self.head_dim).transpose(1, 2)
 
-        carry_length = key_carry.size(2)
-        updated_key_carry = torch.cat((key_carry, k), dim=2)
-        updated_value_carry = torch.cat((value_carry, v), dim=2)
+        if cache_len is None:
+            # Grow-by-cat mode (grad-safe): O(L^2) reallocation across a rollout.
+            prefix_length = key_carry.size(2)
+            updated_key_carry = torch.cat((key_carry, k), dim=2)
+            updated_value_carry = torch.cat((value_carry, v), dim=2)
+            keys = updated_key_carry
+            values = updated_value_carry
+        else:
+            # In-place mode: write the new K/V into the preallocated buffer at the
+            # current cursor without reallocating (narrow+copy_ is TorchScript-safe).
+            prefix_length = cache_len
+            end = cache_len + timesteps
+            key_carry.narrow(2, cache_len, timesteps).copy_(k)
+            value_carry.narrow(2, cache_len, timesteps).copy_(v)
+            updated_key_carry = key_carry
+            updated_value_carry = value_carry
+            keys = key_carry.narrow(2, 0, end)
+            values = value_carry.narrow(2, 0, end)
 
-        attn_scores = torch.matmul(q, updated_key_carry.transpose(-2, -1)) / math.sqrt(
+        attn_scores = torch.matmul(q, keys.transpose(-2, -1)) / math.sqrt(
             float(self.head_dim)
         )
 
-        if timesteps > 1 or carry_length > 0:
-            total_kv_length = carry_length + timesteps
+        if timesteps > 1 or prefix_length > 0:
+            total_kv_length = prefix_length + timesteps
             kv_positions = torch.arange(
                 total_kv_length, device=hidden.device, dtype=torch.long
             )
             query_positions = torch.arange(
                 timesteps, device=hidden.device, dtype=torch.long
             ).unsqueeze(1)
-            causal_mask = kv_positions.unsqueeze(0) <= (query_positions + carry_length)
+            causal_mask = kv_positions.unsqueeze(0) <= (query_positions + prefix_length)
             attn_scores = attn_scores.masked_fill(
                 ~causal_mask.unsqueeze(0).unsqueeze(0), float("-inf")
             )
 
         attn_weights = torch.softmax(attn_scores, dim=-1)
         attn_weights = self.attn_dropout(attn_weights)
-        attn_output = torch.matmul(attn_weights, updated_value_carry)
+        attn_output = torch.matmul(attn_weights, values)
         attn_output = attn_output.transpose(1, 2).reshape(
             batch, timesteps, self.embed_dim
         )
@@ -1406,20 +1441,57 @@ class TransformerDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
         self,
         batch_size: int,
         device: torch.device,
+        max_len: Optional[int] = None,
     ) -> dict[str, torch.Tensor]:
+        """Initialize the recurrent carry.
+
+        Args:
+            batch_size: Number of parallel rollouts.
+            device: Device to allocate the carry on.
+            max_len: If ``None`` (default), allocates length-0 K/V buffers that are
+                grown by concatenation each step (grad-safe; O(L^2) reallocation).
+                If an int, preallocates fixed ``[batch, n_heads, max_len, head_dim]``
+                K/V buffers plus a scalar ``cache_len`` write cursor, so the block
+                writes new K/V in place (O(L), ``no_grad`` only). ``max_len`` must be
+                at least the maximum number of tokens decoded in a rollout (the fixed
+                env horizon + 1 for the BOS token) and no larger than
+                ``max_position_embeddings``.
+
+        Returns:
+            The initialized carry dict.
+        """
         weight = self.token_embedding.weight
         carry: dict[str, torch.Tensor] = {
             "position": torch.zeros(batch_size, dtype=torch.long, device=device),
         }
-        empty_key = weight.new_empty(batch_size, self.num_heads, 0, self.head_dim).to(
-            device
-        )
-        empty_value = weight.new_empty(batch_size, self.num_heads, 0, self.head_dim).to(
-            device
-        )
-        for key_name, value_name in zip(self.key_names, self.value_names):
-            carry[key_name] = empty_key.clone()
-            carry[value_name] = empty_value.clone()
+        if max_len is None:
+            empty_key = weight.new_empty(
+                batch_size, self.num_heads, 0, self.head_dim
+            ).to(device)
+            empty_value = weight.new_empty(
+                batch_size, self.num_heads, 0, self.head_dim
+            ).to(device)
+            for key_name, value_name in zip(self.key_names, self.value_names):
+                carry[key_name] = empty_key.clone()
+                carry[value_name] = empty_value.clone()
+        else:
+            if max_len <= 0:
+                raise ValueError("max_len must be positive for a preallocated carry.")
+            if max_len > self.max_position_embeddings:
+                raise ValueError(
+                    "max_len exceeds max_position_embeddings; increase the model's "
+                    "max_position_embeddings to preallocate a carry of this length."
+                )
+            # Scalar cursor into the preallocated buffers (shared across rows, which
+            # advance in lockstep for the fixed-length fast path).
+            carry["cache_len"] = torch.zeros((), dtype=torch.long, device=device)
+            for key_name, value_name in zip(self.key_names, self.value_names):
+                carry[key_name] = weight.new_empty(
+                    batch_size, self.num_heads, max_len, self.head_dim
+                ).to(device)
+                carry[value_name] = weight.new_empty(
+                    batch_size, self.num_heads, max_len, self.head_dim
+                ).to(device)
 
         return carry
 
@@ -1462,6 +1534,13 @@ class TransformerDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
 
         updated_carry: dict[str, torch.Tensor] = {}
 
+        # An int cursor selects the in-place preallocated carry path in each block;
+        # None keeps the grow-by-cat path. The cursor is shared by all layers since
+        # they decode the same number of tokens.
+        cache_len: Optional[int] = None
+        if "cache_len" in carry:
+            cache_len = int(carry["cache_len"].item())
+
         for idx, layer in enumerate(self.layers):
             key_name = self.key_names[idx]
             value_name = self.value_names[idx]
@@ -1471,22 +1550,28 @@ class TransformerDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
                 )
             key_carry = carry[key_name]
             value_carry = carry[value_name]
-            if key_carry.size(0) != batch or key_carry.size(1) != self.num_heads:
-                raise ValueError(
-                    "Key carry shape is incompatible with the provided tokens."
-                )
-            if value_carry.size(0) != batch or value_carry.size(1) != self.num_heads:
-                raise ValueError(
-                    "Value carry shape is incompatible with the provided tokens."
-                )
-            if (key_carry.size(-1) != self.head_dim) or (
-                value_carry.size(-1) != self.head_dim
+            if (
+                key_carry.size(0) != batch
+                or value_carry.size(0) != batch
+                or key_carry.size(1) != self.num_heads
+                or value_carry.size(1) != self.num_heads
+                or key_carry.size(-1) != self.head_dim
+                or value_carry.size(-1) != self.head_dim
+                or key_carry.device != device
+                or value_carry.device != device
             ):
-                raise ValueError("Key/value carry head dimension mismatch detected.")
-            if key_carry.device != device or value_carry.device != device:
-                raise ValueError("Key/value carry tensors must share the input device.")
+                raise ValueError(
+                    "Key/value carry is incompatible with the provided tokens "
+                    "(batch, num_heads, head_dim, or device mismatch)."
+                )
+            # Actionable guard kept separate: overflow points the user at max_len.
+            if cache_len is not None and cache_len + timesteps > key_carry.size(2):
+                raise ValueError(
+                    "Preallocated carry is too short for the decoded sequence; "
+                    "increase max_len passed to init_carry."
+                )
             hidden, updated_key_carry, updated_value_carry = layer(
-                hidden, key_carry, value_carry
+                hidden, key_carry, value_carry, cache_len
             )
             updated_carry[key_name] = updated_key_carry
             updated_carry[value_name] = updated_value_carry
@@ -1495,6 +1580,8 @@ class TransformerDiscreteSequenceModel(AutoregressiveDiscreteSequenceModel):
         logits = self.output_projection(hidden)
 
         updated_carry["position"] = positions + timesteps
+        if "cache_len" in carry:
+            updated_carry["cache_len"] = carry["cache_len"] + timesteps
         return logits, updated_carry
 
     @property
