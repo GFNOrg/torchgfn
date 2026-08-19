@@ -1,6 +1,7 @@
 import math
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Protocol, cast, runtime_checkable
 
 import torch
@@ -1275,7 +1276,7 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         debug: bool = False,
         use_kv_cache: bool = False,
         cache_max_len: int | None = None,
-        teacher_forced_loss: bool = False,
+        teacher_forced_loss: bool | None = None,
     ):
         """Initializes a RecurrentDiscretePolicyEstimator.
 
@@ -1293,11 +1294,19 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
                 enabled automatically to keep the policy trainable. If False (default),
                 sampling uses the corrected grad-bearing full-prefix forward each step.
             cache_max_len: KV-cache preallocation length; defaults to the module's
-                ``max_position_embeddings``. Rarely set by hand; must be at least the
-                env horizon + 1 (the +1 is the BOS token).
+                ``max_position_embeddings``. Rarely set by hand. It must be at least
+                the env horizon + 1 (the +1 is the BOS token); that lower bound
+                depends on the env and so cannot be checked here -- an undersized
+                value raises from the module partway through the rollout. Only the
+                upper bound (``max_position_embeddings``) is validated eagerly.
             teacher_forced_loss: Recompute PF log-probs in the loss with one parallel
-                forward per trajectory instead of the per-step loop. Auto-enabled by
-                ``use_kv_cache``. Fixed-length trajectories only.
+                forward per trajectory instead of the per-step loop. Fixed-length
+                trajectories only. Left unset (``None``, the default) it follows
+                ``use_kv_cache``; pass an explicit bool to override that in either
+                direction. Explicit ``False`` alongside ``use_kv_cache=True`` is
+                supported and still trains correctly -- the per-step recompute
+                transparently falls back to the grad-bearing full-prefix forward --
+                it is simply slower.
         """
         if preprocessor is None:
             preprocessor = IdentityPreprocessor(output_dim=None)
@@ -1309,6 +1318,17 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
             is_backward=is_backward,
             debug=debug,
         )
+        # The cache assumes a monotonically growing committed prefix, so its write
+        # cursor advances in lockstep with the sequence length. A backward policy walks
+        # the trajectory in reverse -- the committed length *shrinks* while the cursor
+        # would still grow -- so every step after the first would attend to a stale
+        # prefix. Reject the combination rather than decode silently wrong logits.
+        if use_kv_cache and is_backward:
+            raise ValueError(
+                "use_kv_cache=True is not supported for backward policies "
+                "(is_backward=True): the cache assumes a growing committed prefix, "
+                "while backward rollouts shrink it. Use use_kv_cache=False for PB."
+            )
         self.use_kv_cache = use_kv_cache
         # A preallocated in-place cache is only available for modules that expose a
         # bounded position range (e.g. TransformerDiscreteSequenceModel). Modules
@@ -1317,8 +1337,9 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
         max_positions = getattr(module, "max_position_embeddings", None)
         if cache_max_len is None:
             cache_max_len = max_positions
-        # Validate the cache budget eagerly (against the module's position range) so a
-        # too-small value fails here, not deep inside a rollout with a confusing error.
+        # Only the upper bound is knowable here: the lower bound is the env horizon,
+        # which the estimator never sees. An undersized cache raises an actionable
+        # "preallocated carry is too short" from the module during the rollout.
         if (
             cache_max_len is not None
             and max_positions is not None
@@ -1329,9 +1350,12 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
                 f"max_position_embeddings ({max_positions})."
             )
         self._cache_max_len = cache_max_len
-        # Cached sampling is no_grad, so training needs a grad-bearing loss recompute;
-        # auto-enable teacher forcing (it is inert for sampling-only / inference use).
-        self.teacher_forced_loss = teacher_forced_loss or use_kv_cache
+        # Cached sampling is no_grad, so training needs a grad-bearing loss recompute.
+        # Default (None) follows use_kv_cache so a cached policy trains efficiently out
+        # of the box; an explicit bool is always honoured.
+        self.teacher_forced_loss = (
+            use_kv_cache if teacher_forced_loss is None else teacher_forced_loss
+        )
 
     @property
     def _bos_index(self) -> int:
@@ -1424,21 +1448,34 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Cached fast path: feed only the newest committed token, under ``no_grad``.
 
-        Assumes fixed-length rollouts (all active rows share a committed length). The
-        always-on backstop is the module's batch-size carry check (a masked, unsliced
-        carry mismatches the active batch); the stronger equal-length / cursor-sync
-        checks are gated behind ``debug`` so the hot path avoids per-step device syncs.
-        """
-        length0 = int(lengths[0].item()) if lengths.numel() > 0 else 0
+        Assumes fixed-length rollouts (all active rows share a committed length). That
+        assumption is checked unconditionally: a ragged active batch would decode the
+        wrong column for every row and produce silently wrong logits, which is far more
+        costly than the check. It is also nearly free -- the path already has to read
+        the committed length back to the host, so validating it folds into the same
+        device sync (min and max are read together).
 
-        if self.debug and lengths.numel() > 0:
-            if not bool(torch.all(lengths == length0)):
+        The cursor-sync check is gated behind ``debug``, since it only catches a caller
+        that mutated the carry between steps.
+        """
+        if lengths.numel() > 0:
+            # One host sync for both bounds, rather than one per `.item()` call.
+            lo, hi = torch.stack([lengths.min(), lengths.max()]).tolist()
+            if lo != hi:
                 raise ValueError(
                     "use_kv_cache=True requires equal-length active trajectories "
-                    "(fixed-length env). Variable-length carry slicing is out of scope "
-                    "(see the Gap-2 TODO in gfn/utils/prob_calculations.py)."
+                    f"(fixed-length env); got committed lengths spanning [{lo}, {hi}]. "
+                    "Variable-length carry slicing is out of scope (see the Gap-2 TODO "
+                    "in gfn/utils/prob_calculations.py)."
                 )
-            cursor = int(carry["cache_len"].item()) if "cache_len" in carry else 0
+            length0 = int(hi)
+        else:
+            length0 = 0
+
+        # Only a preallocated (transformer) carry has a cursor; RNN/LSTM/GRU carries
+        # are fixed-size and track no position, so there is nothing to compare against.
+        if self.debug and "cache_len" in carry:
+            cursor = int(carry["cache_len"].item())
             if cursor != length0:
                 raise ValueError(
                     f"KV-cache cursor ({cursor}) is out of sync with the committed "
@@ -1483,6 +1520,27 @@ class RecurrentDiscretePolicyEstimator(RecurrentPolicyMixin, DiscretePolicyEstim
     ) -> dict[str, torch.Tensor]:
         # Preallocate an in-place cache only for the cached fast path.
         return self._module_init_carry(batch_size, device, preallocate=self.use_kv_cache)
+
+    @contextmanager
+    def grad_bearing_forward(self):
+        """Temporarily force the grad-bearing full-prefix path.
+
+        The cached fast path runs under ``no_grad`` (its in-place K/V buffers cannot
+        carry gradients), which is correct for sampling but silently produces zero
+        gradients if the same estimator is re-run to recompute log-probs inside a loss.
+        Loss-time recomputation therefore enters this context, which restores the
+        ordinary full-prefix forward -- and, because ``init_carry`` keys off the same
+        flag, the non-preallocated (grad-safe) carry that goes with it.
+
+        Sampling never uses this; it is a loss-time escape hatch. Not thread-safe: it
+        toggles state on the estimator for the duration of the block.
+        """
+        previous = self.use_kv_cache
+        self.use_kv_cache = False
+        try:
+            yield
+        finally:
+            self.use_kv_cache = previous
 
 
 class DiffusionPolicyEstimator(PolicyMixin, Estimator):

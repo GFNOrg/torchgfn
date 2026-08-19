@@ -23,7 +23,10 @@ import torch
 from gfn.estimators import RecurrentDiscretePolicyEstimator
 from gfn.gym.bitSequence import BitSequence
 from gfn.samplers import Sampler
-from gfn.utils.modules import TransformerDiscreteSequenceModel
+from gfn.utils.modules import (
+    RecurrentDiscreteSequenceModel,
+    TransformerDiscreteSequenceModel,
+)
 from gfn.utils.prob_calculations import get_trajectory_pfs
 
 ATOL = 1e-5
@@ -200,18 +203,67 @@ def test_estimator_cache_equivalence() -> None:
     assert torch.allclose(logits_off, logits_on, atol=ATOL)
 
 
-def test_estimator_fixed_length_guard() -> None:
-    """The cached path rejects ragged (variable-length) active batches (debug on)."""
+@pytest.mark.parametrize("debug", [False, True])
+def test_estimator_fixed_length_guard(debug: bool) -> None:
+    """The cached path rejects ragged active batches -- with or without ``debug``.
+
+    A ragged batch decodes the wrong token column for every row, so this guard is
+    always on; gating it behind ``debug`` would let silently wrong logits through in
+    the configuration users actually run.
+    """
     env, model = _env_and_model()
-    # The equal-length check is gated behind debug (it forces a per-step device sync).
     est = RecurrentDiscretePolicyEstimator(
-        module=model, n_actions=env.n_actions, use_kv_cache=True, debug=True
+        module=model, n_actions=env.n_actions, use_kv_cache=True, debug=debug
     )
     carry = est.init_carry(3, torch.device("cpu"))
     ragged = torch.randint(0, env.n_actions - 1, (3, env.words_per_seq))
     ragged[0, 1:] = -1  # row 0 has a different committed length
     with pytest.raises(ValueError, match="equal-length"):
         est(env.States(ragged), carry)
+
+
+def test_cached_rnn_carry_accepts_debug() -> None:
+    """``debug=True`` with an RNN module does not trip the cursor check.
+
+    RNN/LSTM/GRU carries are fixed-size and expose no ``cache_len``, so the cursor has
+    nothing to compare against; the check must skip rather than read a missing key as 0
+    and report a bogus desync on the first committed step.
+    """
+    env = BitSequence(
+        word_size=2, seq_size=12, n_modes=2, device_str="cpu", seed=0, debug=False
+    )
+    rnn = RecurrentDiscreteSequenceModel(
+        vocab_size=env.n_actions,
+        embedding_dim=16,
+        hidden_size=16,
+        num_layers=1,
+        rnn_type="gru",
+    )
+    est = RecurrentDiscretePolicyEstimator(
+        module=rnn, n_actions=env.n_actions, use_kv_cache=True, debug=True
+    )
+    carry = est.init_carry(3, torch.device("cpu"))
+    words = torch.randint(0, env.n_actions - 1, (3, env.words_per_seq))
+    for t in range(3):  # step 1 is where the bogus desync used to fire
+        tokens = words.clone()
+        tokens[:, t:] = -1
+        _, carry = est(env.States(tokens), carry)
+
+
+def test_backward_policy_rejects_kv_cache() -> None:
+    """``use_kv_cache`` with a backward policy is rejected at construction.
+
+    Backward rollouts shrink the committed prefix while the cache cursor grows, so the
+    combination decodes against a stale prefix -- it must not be silently accepted.
+    """
+    env, model = _env_and_model()
+    with pytest.raises(ValueError, match="backward"):
+        RecurrentDiscretePolicyEstimator(
+            module=model,
+            n_actions=env.n_actions,
+            is_backward=True,
+            use_kv_cache=True,
+        )
 
 
 def test_cache_max_len_validated_eagerly() -> None:
@@ -280,18 +332,87 @@ def test_teacher_forced_carries_gradients() -> None:
 
 
 def test_use_kv_cache_auto_enables_teacher_forcing() -> None:
-    """use_kv_cache=True auto-enables teacher_forced_loss so cached policies train."""
+    """``teacher_forced_loss`` defaults to ``use_kv_cache`` but is never forced."""
     env, model = _env_and_model()
     cached = RecurrentDiscretePolicyEstimator(
         module=model, n_actions=env.n_actions, use_kv_cache=True
     )
-    assert cached.teacher_forced_loss is True  # auto-coupled
+    assert cached.teacher_forced_loss is True  # auto-coupled when left unset
     explicit = RecurrentDiscretePolicyEstimator(
         module=model, n_actions=env.n_actions, teacher_forced_loss=True
     )
     assert explicit.teacher_forced_loss is True  # standalone opt-in still works
     default = RecurrentDiscretePolicyEstimator(module=model, n_actions=env.n_actions)
     assert default.teacher_forced_loss is False  # off by default
+    # An explicit False is honoured even alongside the cache: the per-step recompute
+    # is slower but still correct, so opting out must remain possible.
+    opted_out = RecurrentDiscretePolicyEstimator(
+        module=model,
+        n_actions=env.n_actions,
+        use_kv_cache=True,
+        teacher_forced_loss=False,
+    )
+    assert opted_out.teacher_forced_loss is False
+    assert opted_out.use_kv_cache is True
+
+
+@pytest.mark.parametrize("teacher_forced_loss", [False, True])
+def test_cached_policy_recompute_carries_gradients(teacher_forced_loss: bool) -> None:
+    """A KV-cached policy trains through either loss-time recompute path.
+
+    Cached sampling runs under ``no_grad``. The teacher-forced path sidesteps that by
+    calling the full-prefix forward directly; the per-step path must temporarily turn
+    the cache off, or it silently re-runs the ``no_grad`` decode and every policy
+    gradient comes back zero while the loss still looks healthy.
+    """
+    env, model = _env_and_model()
+    est = RecurrentDiscretePolicyEstimator(
+        module=model,
+        n_actions=env.n_actions,
+        use_kv_cache=True,
+        teacher_forced_loss=teacher_forced_loss,
+    )
+    trajs = Sampler(estimator=est).sample_trajectories(
+        env, n=8, save_logprobs=False, save_estimator_outputs=False
+    )
+    model.zero_grad()
+    get_trajectory_pfs(est, trajs, recalculate_all_logprobs=True).sum().backward()
+
+    params = list(model.parameters())
+    with_grad = [p for p in params if p.grad is not None and bool(p.grad.abs().sum())]
+    assert len(with_grad) == len(params)
+    assert est.use_kv_cache is True  # the recompute restores the sampling path
+
+
+def test_teacher_forced_respects_callable_temperature() -> None:
+    """A callable ``temperature`` is resolved on the teacher-forced path too.
+
+    ``compute_dist`` resolves callable temperatures before building the distribution,
+    but the teacher-forced path bypasses ``compute_dist``; without repeating that
+    resolution the schedule reaches ``to_probability_distribution`` as a function.
+    """
+    env, model = _env_and_model()
+    per_step = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, teacher_forced_loss=False
+    )
+    teacher_forced = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, teacher_forced_loss=True
+    )
+    trajs = Sampler(estimator=per_step).sample_trajectories(
+        env, n=8, save_logprobs=False, save_estimator_outputs=False
+    )
+
+    def temperature(states, estimator_outputs):
+        return 2.0
+
+    kwargs = {"temperature": temperature}
+    log_pf_per_step = get_trajectory_pfs(
+        per_step, trajs, recalculate_all_logprobs=True, **kwargs
+    )
+    log_pf_tf = get_trajectory_pfs(
+        teacher_forced, trajs, recalculate_all_logprobs=True, **kwargs
+    )
+    assert torch.allclose(log_pf_per_step, log_pf_tf, atol=ATOL)
 
 
 def test_detached_logprobs_guard() -> None:
@@ -306,3 +427,36 @@ def test_detached_logprobs_guard() -> None:
     assert trajs.log_probs is not None and not trajs.log_probs.requires_grad
     with pytest.raises(RuntimeError, match="detached"):
         get_trajectory_pfs(est, trajs, recalculate_all_logprobs=False)
+
+
+def test_detached_logprobs_guard_does_not_fire_on_frozen_pf() -> None:
+    """Detached log-probs are legitimate when PF is not being trained.
+
+    Reusing saved log-probs is the normal path for e.g. a TB run that learns only PB
+    and logZ. The guard must key on "PF is cached *and* trainable", not merely on
+    "these log-probs carry no grad", or it breaks that pattern.
+    """
+    env, model = _env_and_model()
+    est = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, use_kv_cache=True
+    )
+    trajs = Sampler(estimator=est).sample_trajectories(
+        env, n=4, save_logprobs=True, save_estimator_outputs=False
+    )
+    for param in est.parameters():
+        param.requires_grad_(False)
+    log_pf = get_trajectory_pfs(est, trajs, recalculate_all_logprobs=False)
+    assert log_pf.shape == (trajs.max_length, trajs.batch_size)
+
+
+def test_detached_logprobs_guard_does_not_fire_without_cache() -> None:
+    """A non-cached policy sampled under ``no_grad`` may still reuse its log-probs."""
+    env, model = _env_and_model()
+    est = RecurrentDiscretePolicyEstimator(module=model, n_actions=env.n_actions)
+    with torch.no_grad():
+        trajs = Sampler(estimator=est).sample_trajectories(
+            env, n=4, save_logprobs=True, save_estimator_outputs=False
+        )
+    assert trajs.log_probs is not None and not trajs.log_probs.requires_grad
+    log_pf = get_trajectory_pfs(est, trajs, recalculate_all_logprobs=False)
+    assert log_pf.shape == (trajs.max_length, trajs.batch_size)

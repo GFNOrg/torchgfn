@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from typing import Any, Tuple, cast
 
 import torch
@@ -52,6 +53,14 @@ def get_trajectory_pfs_and_pbs(
     )
 
     return log_pf_trajectories, log_pb_trajectories
+
+
+def _is_kv_cached_recurrent(estimator: Any) -> bool:
+    """True for a recurrent estimator sampling through the ``no_grad`` KV-cache."""
+    return (
+        isinstance(estimator, RecurrentDiscretePolicyEstimator)
+        and estimator.use_kv_cache
+    )
 
 
 def _pf_valid_masks(
@@ -136,9 +145,101 @@ def _recurrent_teacher_forced_pfs(
     valid_states = trajectories.states[state_mask]
     valid_actions = trajectories.actions[action_mask]
 
+    assert len(valid_states) == logits.shape[0], (
+        f"teacher-forced logits ({logits.shape[0]}) do not line up with the valid "
+        f"states ({len(valid_states)})"
+    )
+
+    # Mirror PolicyMixin.compute_dist: a callable temperature is a schedule that must
+    # be resolved against (states, estimator_outputs) before building the dist. We
+    # bypass compute_dist here (it would re-run the estimator per step), so the
+    # resolution has to be repeated.
+    if callable(policy_kwargs.get("temperature")):
+        policy_kwargs = dict(policy_kwargs)
+        policy_kwargs["temperature"] = policy_kwargs["temperature"](valid_states, logits)
+
     dist = policy_pf.to_probability_distribution(valid_states, logits, **policy_kwargs)
     valid_log_pf = dist.log_prob(valid_actions.tensor)  # (T*N,)
     return _scatter_pf(action_mask, valid_log_pf)
+
+
+def _per_step_pfs(
+    policy_pf: Any,
+    trajectories: Trajectories,
+    recalculate_all_logprobs: bool,
+    **policy_kwargs: Any,
+) -> torch.Tensor:
+    """Per-step PF recompute: re-run the estimator once per timestep.
+
+    The general fallback for estimators that cannot be evaluated on a flattened batch
+    (``is_vectorized=False``), notably recurrent policies, whose carry must be threaded
+    step by step.
+
+    Args:
+        policy_pf: The forward policy estimator.
+        trajectories: Forward trajectories to score.
+        recalculate_all_logprobs: If False, reuse cached per-step estimator outputs
+            when the trajectories carry them.
+        **policy_kwargs: Forwarded to ``compute_dist``.
+
+    Returns:
+        ``log_pf`` of shape ``(T, N)``.
+    """
+    N = trajectories.batch_size
+    device = trajectories.states.device
+
+    if trajectories.states.conditions is not None:
+        cond = trajectories.states.conditions[0]  # shape (N, cond_dim)
+    else:
+        cond = None
+
+    ctx = policy_pf.init_context(int(N), device, cond)
+
+    T = trajectories.max_length
+    log_pf_trajectories = torch.full(
+        (T, N),
+        fill_value=0.0,
+        dtype=torch.get_default_dtype(),
+        device=device,
+    )
+
+    for t in range(T):
+        step_states = trajectories.states[t]
+        step_actions = trajectories.actions[t]
+
+        assert (step_states.is_sink_state == step_actions.is_dummy).all()
+        step_mask = ~step_states.is_sink_state
+
+        valid_step_states = step_states[step_mask]
+        valid_step_actions = step_actions[step_mask]
+
+        if not torch.any(step_mask):
+            continue
+
+        # Optimization: forward cached estimator outputs when available
+        if trajectories.estimator_outputs is not None and not recalculate_all_logprobs:
+            ctx.current_estimator_output = trajectories.estimator_outputs[t][step_mask]
+        else:
+            # Ensure we do not accidentally reuse estimator outputs from a
+            # previous time step. Precomputed outputs must be provided
+            # explicitly for the current step.
+            ctx.current_estimator_output = None
+
+        # Build distribution for active rows and compute step log-probs
+        # TODO: masking ctx with step_mask outside of compute_dist and log_probs,
+        # i.e., implement __getitem__ for ctx. (maybe we should contain only the
+        # tensors, and not additional metadata like the batch size, device, etc.)
+        dist, ctx = policy_pf.compute_dist(
+            valid_step_states, ctx, step_mask, **policy_kwargs
+        )
+        step_log_probs, ctx = policy_pf.log_probs(
+            valid_step_actions.tensor, dist, ctx, step_mask, vectorized=False
+        )
+
+        # Store in trajectory-level tensor.
+        log_pf_trajectories[t] = step_log_probs
+
+    return log_pf_trajectories
 
 
 def get_trajectory_pfs(
@@ -179,12 +280,25 @@ def get_trajectory_pfs(
         # Guard the KV-cache footgun: cached sampling runs under no_grad, so its saved
         # log-probs are detached. Reusing them under an active graph would make
         # loss.backward() fail with an opaque autograd error; fail fast instead.
-        if torch.is_grad_enabled() and not log_pf_trajectories.requires_grad:
+        #
+        # Scoped deliberately narrowly. Detached PF log-probs are legitimate whenever
+        # PF is not being trained -- e.g. TBGFlowNet with a frozen PF, learning only PB
+        # and logZ -- so the guard fires only for a KV-cached PF that still has
+        # trainable parameters, which is the one configuration where reuse is always a
+        # bug rather than a choice.
+        if (
+            torch.is_grad_enabled()
+            and not log_pf_trajectories.requires_grad
+            and _is_kv_cached_recurrent(pf)
+            and any(p.requires_grad for p in pf.parameters())
+        ):
             raise RuntimeError(
                 "Reusing saved log-probs that are detached from the autograd graph "
-                "(sampling ran under no_grad, e.g. use_kv_cache=True), so backprop "
-                "would fail. Pass recalculate_all_logprobs=True to recompute them "
-                "(the estimator's teacher-forced loss recomputes them efficiently)."
+                "(sampling ran under no_grad because use_kv_cache=True), so backprop "
+                "would not reach the forward policy. Pass "
+                "recalculate_all_logprobs=True to recompute them (the estimator's "
+                "teacher-forced loss recomputes them efficiently), or freeze the "
+                "forward policy if PF is intentionally not being trained."
             )
     else:
 
@@ -207,65 +321,20 @@ def get_trajectory_pfs(
                 policy_pf, trajectories, **policy_kwargs
             )
         elif not is_vectorized:
-            # Per-step path.
-            N = trajectories.batch_size
-            device = trajectories.states.device
-
-            if trajectories.states.conditions is not None:
-                cond = trajectories.states.conditions[0]  # shape (N, cond_dim)
-            else:
-                cond = None
-
-            ctx = policy_pf.init_context(int(N), device, cond)
-
-            T = trajectories.max_length
-            log_pf_trajectories = torch.full(
-                (T, N),
-                fill_value=0.0,
-                dtype=torch.get_default_dtype(),
-                device=device,
-            )
-
-            for t in range(T):
-                step_states = trajectories.states[t]
-                step_actions = trajectories.actions[t]
-
-                assert (step_states.is_sink_state == step_actions.is_dummy).all()
-                step_mask = ~step_states.is_sink_state
-
-                valid_step_states = step_states[step_mask]
-                valid_step_actions = step_actions[step_mask]
-
-                if not torch.any(step_mask):
-                    continue
-
-                # Optimization: forward cached estimator outputs when available
-                if (
-                    trajectories.estimator_outputs is not None
-                    and not recalculate_all_logprobs
-                ):
-                    ctx.current_estimator_output = trajectories.estimator_outputs[t][
-                        step_mask
-                    ]
-                else:
-                    # Ensure we do not accidentally reuse estimator outputs from a
-                    # previous time step. Precomputed outputs must be provided
-                    # explicitly for the current step.
-                    ctx.current_estimator_output = None
-
-                # Build distribution for active rows and compute step log-probs
-                # TODO: masking ctx with step_mask outside of compute_dist and log_probs,
-                # i.e., implement __getitem__ for ctx. (maybe we should contain only the
-                # tensors, and not additional metadata like the batch size, device, etc.)
-                dist, ctx = policy_pf.compute_dist(
-                    valid_step_states, ctx, step_mask, **policy_kwargs
+            # Per-step path. A KV-cached estimator samples under no_grad, so re-running
+            # it here as-is would return detached logits and silently zero the policy
+            # gradients; force the grad-bearing full-prefix forward for the recompute.
+            with (
+                policy_pf.grad_bearing_forward()  # type: ignore[attr-defined]
+                if _is_kv_cached_recurrent(policy_pf)
+                else nullcontext()
+            ):
+                log_pf_trajectories = _per_step_pfs(
+                    policy_pf,
+                    trajectories,
+                    recalculate_all_logprobs=recalculate_all_logprobs,
+                    **policy_kwargs,
                 )
-                step_log_probs, ctx = policy_pf.log_probs(
-                    valid_step_actions.tensor, dist, ctx, step_mask, vectorized=False
-                )
-
-                # Store in trajectory-level tensor.
-                log_pf_trajectories[t] = step_log_probs
 
         else:
             # Vectorized path.

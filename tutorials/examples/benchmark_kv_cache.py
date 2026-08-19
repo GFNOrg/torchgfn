@@ -67,8 +67,10 @@ cheaper than back-propagating through an ``L``-step sequential rollout.
 ================================================================================
 WHAT THIS SCRIPT MEASURES
 ================================================================================
-For each sequence length it (1) asserts the two configs score identical log-probs
-(``|Δ log_pf| ~ 1e-7`` -- proof it is the same model), then times:
+For each sequence length it (1) asserts both optimizations are numerically inert --
+``|Δcache|`` compares the cached decode against the full-prefix forward, ``|Δtf|``
+compares the teacher-forced recompute against the per-step one (both ~1e-7, proof it
+is the same model) -- then times:
   * **pure sampling** under ``no_grad`` -- isolates the cache (O(L^3) vs O(L^2));
   * **full training step** (sample + loss + backward + optimizer) -- the realistic
     cost, which also folds in the teacher-forced loss on the cached side.
@@ -225,36 +227,69 @@ def time_training_step(
     return _median_ms(_step, device, warmup, iters)
 
 
-def check_equivalence(args, seq_size: int, device: torch.device) -> float:
-    """Prove the cache changes speed, not results, by scoring one batch two ways.
+def check_equivalence(args, seq_size: int, device: torch.device) -> tuple[float, float]:
+    """Prove that neither optimization changes results -- only speed.
 
-    We sample a batch once, then recompute its forward log-probs with (a) the per-step
-    path and (b) the teacher-forced path over the *same* module weights. Because the
-    module's parallel forward equals its incremental decode, these must agree to
-    floating-point tolerance; a large gap would mean the cache is computing the wrong
-    thing. Returns the max absolute difference in per-step ``log P_F``.
+    There are *two* independent things to gate, and each needs its own comparison,
+    because the two columns of the table are produced by different code paths:
+
+    1. ``|Δcache|`` -- the cached incremental decode (``use_kv_cache=True``) against
+       the full-prefix forward, at the per-step logit level. This is the only check
+       that actually executes ``_forward_cached``, so it is what would catch a broken
+       cache. Comparing two *recompute* paths would not: both run with the cache off.
+    2. ``|Δtf|`` -- the teacher-forced parallel recompute against the per-step
+       recompute, at the ``log P_F`` level. This gates the loss-time path that the
+       ``train cache`` column depends on.
+
+    Every estimator below wraps the SAME module weights, so any gap is a bug in a
+    path, not a difference in models.
+
+    Returns:
+        ``(max |Δ logits| cached-vs-baseline, max |Δ log_pf| teacher-forced-vs-per-step)``
     """
     from gfn.utils.prob_calculations import get_trajectory_pfs
 
     set_seed(args.seed)
     env, gflownet = build(args, seq_size, use_kv_cache=False, device=device)
-    est = gflownet.pf
+    model = gflownet.pf.module
+
+    # (1) Cached decode vs full-prefix forward, step by step over a fixed batch.
+    est_off = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, use_kv_cache=False
+    )
+    est_on = RecurrentDiscretePolicyEstimator(
+        module=model, n_actions=env.n_actions, use_kv_cache=True
+    )
+    batch, n_words = args.batch_size, env.words_per_seq
+    words = torch.randint(0, env.n_actions - 1, (batch, n_words), device=device)
+
+    def per_step_logits(est) -> torch.Tensor:
+        carry = est.init_carry(batch, device)
+        out = []
+        with torch.no_grad():
+            for t in range(n_words + 1):  # steps 0..L (L+1 decode steps)
+                tensor = words.clone()
+                tensor[:, t:] = -1  # only the first t words committed
+                logits, carry = est(env.States(tensor), carry)
+                out.append(logits)
+        return torch.stack(out, dim=0)
+
+    delta_cache = (per_step_logits(est_off) - per_step_logits(est_on)).abs().max().item()
+
+    # (2) Teacher-forced vs per-step recompute over a sampled batch.
     trajectories = gflownet.sample_trajectories(
         env, n=args.batch_size, save_logprobs=False, save_estimator_outputs=False
     )
-    # Per-step recompute (baseline scoring): est has teacher_forced_loss=False.
-    log_pf_baseline = get_trajectory_pfs(
-        est, trajectories, recalculate_all_logprobs=True
-    )
-    # Teacher-forced recompute (cached scoring): a sibling estimator over the SAME
-    # module weights, so the only difference is the recompute path.
     est_tf = RecurrentDiscretePolicyEstimator(
-        module=est.module, n_actions=env.n_actions, teacher_forced_loss=True
+        module=model, n_actions=env.n_actions, teacher_forced_loss=True
     )
-    log_pf_cached = get_trajectory_pfs(
-        est_tf, trajectories, recalculate_all_logprobs=True
+    log_pf_per_step = get_trajectory_pfs(
+        est_off, trajectories, recalculate_all_logprobs=True
     )
-    return (log_pf_baseline - log_pf_cached).abs().max().item()
+    log_pf_tf = get_trajectory_pfs(est_tf, trajectories, recalculate_all_logprobs=True)
+    delta_tf = (log_pf_per_step - log_pf_tf).abs().max().item()
+
+    return delta_cache, delta_tf
 
 
 def main(args) -> None:
@@ -267,10 +302,12 @@ def main(args) -> None:
     )
 
     # Columns: sampling base/cache + speedup, training base/cache + speedup, and the
-    # equivalence residual proving both columns describe the same model.
+    # two equivalence residuals -- one per optimization -- proving that every column
+    # describes the same model (see check_equivalence).
     header = (
         f"{'seq_len':>7} | {'sample base':>12} {'sample cache':>13} {'x':>5} | "
-        f"{'train base':>11} {'train cache':>12} {'x':>5} | {'|Δlogpf|':>9}"
+        f"{'train base':>11} {'train cache':>12} {'x':>5} | "
+        f"{'|Δcache|':>9} {'|Δtf|':>9}"
     )
     print(header)
     print("-" * len(header))
@@ -280,10 +317,16 @@ def main(args) -> None:
         set_seed(args.seed)
 
         # Correctness gate first: never report a speedup for a model that changed.
-        max_delta = check_equivalence(args, seq_size, device)
-        assert (
-            max_delta < 1e-4
-        ), f"baseline vs cached log_pf differ by {max_delta} at seq_size={seq_size}"
+        # Each optimization is gated separately, so a failure names the culprit.
+        delta_cache, delta_tf = check_equivalence(args, seq_size, device)
+        assert delta_cache < 1e-4, (
+            f"cached vs full-prefix logits differ by {delta_cache} "
+            f"at seq_size={seq_size}"
+        )
+        assert delta_tf < 1e-4, (
+            f"teacher-forced vs per-step log_pf differ by {delta_tf} "
+            f"at seq_size={seq_size}"
+        )
 
         # Fresh models per config so neither warms the other's caches/allocator.
         env_b, gfn_b = build(args, seq_size, use_kv_cache=False, device=device)
@@ -318,13 +361,15 @@ def main(args) -> None:
         print(
             f"{seq_size:>7} | {s_base[0]:>10.2f}ms {s_cache[0]:>11.2f}ms "
             f"{sample_speedup:>4.1f}x | {t_base[0]:>9.2f}ms {t_cache[0]:>10.2f}ms "
-            f"{train_speedup:>4.1f}x | {max_delta:>9.1e}"
+            f"{train_speedup:>4.1f}x | {delta_cache:>9.1e} {delta_tf:>9.1e}"
         )
 
     print(
-        "\nBoth configs are numerically identical (see |Δlogpf|); the speedup is the "
-        "KV-cache.\nSampling isolates the cache (O(L^3)->O(L^2)); training-step folds in "
-        "the teacher-forced loss. The gap widens with seq_len -- that is the point."
+        "\nBoth configs are numerically identical (|Δcache| gates the cached decode, "
+        "|Δtf| the\nteacher-forced recompute); the speedup is the optimization, not a "
+        "different model.\nSampling isolates the cache (O(L^3)->O(L^2)); training-step "
+        "folds in the teacher-forced\nloss. The gap widens with seq_len -- that is the "
+        "point."
     )
 
     if args.plot:
