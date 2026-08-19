@@ -47,6 +47,7 @@ from tutorials.examples.train_hypergrid_gafn import main as train_hypergrid_gafn
 from tutorials.examples.train_hypergrid_local_search import (
     main as train_hypergrid_local_search_main,
 )
+from tutorials.examples.train_hypergrid_ppo import main as train_hypergrid_ppo_main
 from tutorials.examples.train_hypergrid_simple import main as train_hypergrid_simple_main
 from tutorials.examples.train_ising import main as train_ising_main
 from tutorials.examples.train_line import main as train_line_main
@@ -542,6 +543,54 @@ def test_bayesian_structure_smoke():
     args_dict = asdict(args)
     namespace_args = Namespace(**args_dict)
     train_bayesian_structure_main(namespace_args)  # Just ensure it runs without errors.
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},  # Ent-PPO with the paper's defaults.
+        {"method": "vpg", "advantage": "reward_to_go", "K": 1},
+        {"no_kl": True},  # Naive-PPO ablation (their Fig. 7).
+        {"no_clip": True},  # No-clipping ablation (their Fig. 8).
+        {"critic": "sub_eb"},  # Sub-EB critic (their Eqs. 14-15).
+        {"kl_estimator": "importance"},
+        {"learn_pb": "tlm"},  # Backward-policy learning (their Eq. 24).
+    ],
+)
+def test_hypergrid_ppo_smoke(overrides):
+    """Smoke test for the soft policy-gradient training script and its ablations."""
+    args = Namespace(
+        no_cuda=True,
+        seed=0,
+        ndim=2,
+        height=8,
+        R0=0.1,
+        R1=0.5,
+        R2=2.0,
+        method="ent_ppo",
+        advantage="gae",
+        gae_lambda=0.7,
+        clip_eps=0.2,
+        no_kl=False,
+        no_clip=False,
+        kl_estimator="analytic",
+        critic="mse",
+        batch_size=4,
+        K=2,
+        E=1,
+        S=2,
+        lr=1e-3,
+        lr_value=None,
+        n_iterations=5,
+        epsilon=0.0,
+        uniform_pb=False,
+        learn_pb="none",
+        validation_interval=5,
+        validation_samples=100,
+    )
+    logs = train_hypergrid_ppo_main(Namespace(**{**vars(args), **overrides}))
+    assert "l1_dist" in logs
+    assert logs["reward_evaluations"] == args.batch_size * args.n_iterations
 
 
 def test_hypergrid_simple_smoke():

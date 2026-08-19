@@ -8,6 +8,13 @@ from .losses import (
     ShiftedCoshLoss,
     SquaredLoss,
 )
+from .policy_gradient import (
+    EntPPOGFlowNet,
+    PolicyGradientGFlowNet,
+    masked_categorical_kl,
+    ppo_clip,
+    tlm_loss,
+)
 from .sub_trajectory_balance import SubTBGFlowNet
 from .trajectory_balance import (
     LogPartitionVarianceGFlowNet,
@@ -25,6 +32,11 @@ __all__ = [
     "DBGFlowNet",
     "ModifiedDBGFlowNet",
     "FMGFlowNet",
+    "PolicyGradientGFlowNet",
+    "EntPPOGFlowNet",
+    "ppo_clip",
+    "masked_categorical_kl",
+    "tlm_loss",
     "SubTBGFlowNet",
     "LogPartitionVarianceGFlowNet",
     "RelativeLogPartitionVarianceGFlowNet",

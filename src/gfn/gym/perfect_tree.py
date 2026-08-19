@@ -38,6 +38,8 @@ class PerfectBinaryTree(DiscreteEnv):
         term_states (DiscreteStates): The terminating states.
     """
 
+    supports_enumeration = True
+
     def __init__(
         self,
         reward_fn: Callable,
@@ -227,10 +229,49 @@ class PerfectBinaryTree(DiscreteEnv):
 
     @property
     def terminating_states(self) -> DiscreteStates:
-        """Returns the terminating states of the environment."""
-        lb = 2**self.depth - 1
-        ub = 2 ** (self.depth + 1) - 1
+        """Returns the terminating states of the environment.
+
+        These are exactly the leaves: the forward masks permit the exit action there and
+        nowhere else, so every trajectory terminates at a leaf.
+        """
+        lb, ub = self._leaf_bounds
         return self.make_states_class()(torch.arange(lb, ub).reshape(-1, 1))
+
+    @property
+    def _leaf_bounds(self) -> tuple[int, int]:
+        """Half-open range of node indices that are leaves."""
+        return 2**self.depth - 1, 2 ** (self.depth + 1) - 1
+
+    @property
+    def n_states(self) -> int:
+        """Returns the number of nodes in the tree."""
+        return self.n_nodes
+
+    @property
+    def n_terminating_states(self) -> int:
+        """Returns the number of leaves."""
+        return 2**self.depth
+
+    def get_terminating_states_indices(self, states: States) -> torch.Tensor:
+        """Returns the positions of terminating states in the canonical leaf ordering.
+
+        Leaves occupy a contiguous block at the end of the breadth-first node ordering,
+        so their terminating index is their node index shifted by the block's start.
+
+        Args:
+            states: The terminating states to index.
+
+        Returns:
+            A tensor of shape (*batch_shape,) of indices into ``terminating_states``.
+        """
+        lb, ub = self._leaf_bounds
+        indices = torch.flatten(states.tensor)
+        if self.debug:
+            assert bool(((indices >= lb) & (indices < ub)).all()), (
+                "get_terminating_states_indices was given non-terminating states; "
+                "only the leaves of the tree can terminate a trajectory."
+            )
+        return indices - lb
 
     def reward(self, final_states):
         """Computes the reward for a batch of final states.

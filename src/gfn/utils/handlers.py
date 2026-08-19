@@ -1,8 +1,14 @@
 import logging
 from contextlib import contextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import torch
 
 from gfn.containers import Container
+
+if TYPE_CHECKING:  # Imported lazily: gfn.estimators imports this module.
+    from gfn.estimators import Estimator
+    from gfn.states import States
 
 logger = logging.getLogger(__name__)
 
@@ -69,3 +75,36 @@ def warn_about_recalculating_logprobs(
             "you should instead call loss() or loss_from_trajectories() with "
             "recalculate_all_logprobs=False."
         )
+
+
+def call_estimator_with_conditions(
+    estimator: "Estimator",
+    name: str,
+    states: "States",
+    conditions: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Calls an estimator with or without conditions, using the appropriate handler.
+
+    This centralises the repeated if/else pattern for condition-aware estimator
+    calls. The exception handlers add diagnostic context (estimator name and type)
+    if a TypeError is raised due to a conditions mismatch.
+
+    The function is deliberately thin (no branching beyond the conditions check) so
+    that it does not introduce extra graph breaks for torch.compile.
+
+    Args:
+        estimator: The estimator to call.
+        name: The estimator's name, used in diagnostic messages.
+        states: The states to evaluate.
+        conditions: Conditions aligned with ``states``, or None for unconditional
+            estimators.
+
+    Returns:
+        The estimator's output tensor.
+    """
+    if conditions is not None:
+        with has_conditions_exception_handler(name, estimator):
+            return estimator(states, conditions)
+    else:
+        with no_conditions_exception_handler(name, estimator):
+            return estimator(states)

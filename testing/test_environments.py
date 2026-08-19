@@ -1,3 +1,4 @@
+import time
 from typing import Literal, cast
 
 import numpy as np
@@ -13,7 +14,15 @@ from gfn.estimators import (
     PinnedBrownianMotionForward,
 )
 from gfn.gflownet import TBGFlowNet
-from gfn.gym import Box, ChipDesign, ConditionalHyperGrid, DiscreteEBM, HyperGrid
+from gfn.gym import (
+    BitSequence,
+    Box,
+    ChipDesign,
+    ConditionalHyperGrid,
+    DiscreteEBM,
+    HyperGrid,
+    NonAutoregressiveBitSequence,
+)
 from gfn.gym.chip_design import ChipDesignStates
 from gfn.gym.diffusion_sampling import DiffusionSampling
 from gfn.gym.graph_building import GraphBuilding
@@ -21,8 +30,12 @@ from gfn.gym.perfect_tree import PerfectBinaryTree
 from gfn.gym.set_addition import SetAddition
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
 from gfn.samplers import Sampler
-from gfn.states import GraphStates
-from gfn.utils.modules import DiffusionFixedBackwardModule, DiffusionPISGradNetForward
+from gfn.states import DiscreteStates, GraphStates
+from gfn.utils.modules import (
+    MLP,
+    DiffusionFixedBackwardModule,
+    DiffusionPISGradNetForward,
+)
 
 
 # Utilities.
@@ -1389,3 +1402,254 @@ class TestJSD:
             q = q / q.sum()
             jsd = DiscreteEnv._jsd(p, q)
             assert 0 <= jsd <= np.log(2) + 1e-10
+
+
+# ----------------------------------------------------------------------
+# Enumeration contract and exact terminating distribution.
+# ----------------------------------------------------------------------
+
+ENUMERATION_MEMBERS = (
+    "n_states",
+    "n_terminating_states",
+    "all_states",
+    "terminating_states",
+)
+
+
+def _discrete_envs_for_enumeration():
+    """Builds one instance of every concrete DiscreteEnv in the gym."""
+    bits = torch.randint(0, 2, (3, 6), dtype=torch.long)
+    ones = lambda states: torch.ones(states.batch_shape)  # noqa: E731
+    return {
+        "HyperGrid(enumerable)": HyperGrid(
+            ndim=2, height=5, store_all_states=True, validate_modes=False
+        ),
+        "HyperGrid(not enumerable)": HyperGrid(
+            ndim=2,
+            height=5,
+            store_all_states=False,
+            calculate_partition=False,
+            validate_modes=False,
+        ),
+        "DiscreteEBM": DiscreteEBM(ndim=4),
+        "BitSequence": BitSequence(
+            word_size=2, seq_size=6, n_modes=3, H=bits, device_str="cpu", seed=0
+        ),
+        "NonAutoregressiveBitSequence": NonAutoregressiveBitSequence(
+            word_size=2, seq_size=6, n_modes=3, H=bits, device_str="cpu", seed=0
+        ),
+        "PerfectBinaryTree": PerfectBinaryTree(reward_fn=ones, depth=4),
+        "SetAddition": SetAddition(n_items=5, max_items=3, reward_fn=ones),
+        "SetAddition(fixed_length)": SetAddition(
+            n_items=5, max_items=3, reward_fn=ones, fixed_length=True
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", list(_discrete_envs_for_enumeration()))
+def test_is_enumerable_matches_reality(name):
+    """Every discrete env must advertise enumerability truthfully, not partially.
+
+    `is_enumerable` is the flag callers branch on before attempting an exact
+    computation, so a True that is only partly backed is worse than a False.
+    """
+    env = _discrete_envs_for_enumeration()[name]
+    assert isinstance(env.is_enumerable, bool)
+
+    if not env.is_enumerable:
+        # Every unavailable member must fail the same way: a NotImplementedError, never
+        # a silent None or a bare AssertionError.
+        for member in ENUMERATION_MEMBERS:
+            try:
+                value = getattr(env, member)
+            except NotImplementedError:
+                continue
+            assert value is not None, f"{name}.{member} returned None; raise instead"
+        return
+
+    n_states = env.n_states
+    n_terminating = env.n_terminating_states
+    all_states = env.all_states
+    terminating_states = env.terminating_states
+    assert len(all_states) == n_states
+    assert len(terminating_states) == n_terminating
+
+    # The documented index contract: position in the enumeration is the canonical index.
+    assert torch.equal(
+        cast(torch.Tensor, env.get_states_indices(all_states)),
+        torch.arange(n_states, device=all_states.device),
+    )
+    assert torch.equal(
+        cast(torch.Tensor, env.get_terminating_states_indices(terminating_states)),
+        torch.arange(n_terminating, device=terminating_states.device),
+    )
+
+
+@pytest.mark.parametrize("name", list(_discrete_envs_for_enumeration()))
+def test_exact_terminating_distribution_availability_follows_the_flag(name):
+    """The exact computation is available exactly when the env says it is."""
+    env = _discrete_envs_for_enumeration()[name]
+    state_dim = int(env.s0.numel())
+    preprocessor = IdentityPreprocessor(output_dim=state_dim)
+    pf = DiscretePolicyEstimator(
+        MLP(state_dim, env.n_actions),
+        env.n_actions,
+        preprocessor=preprocessor,
+    )
+    if env.is_enumerable:
+        pmf = env.exact_terminating_distribution(pf)
+        assert pmf.shape == (env.n_terminating_states,)
+    else:
+        with pytest.raises(NotImplementedError, match="is_enumerable"):
+            env.exact_terminating_distribution(pf)
+
+
+@pytest.mark.parametrize("name", list(_discrete_envs_for_enumeration()))
+def test_exact_terminating_distribution_conserves_mass(name):
+    """Every trajectory ends somewhere, so the exact pmf must sum to one.
+
+    This is the sharpest available check on `terminating_states`: if it omitted a
+    reachable state whose forward mask permits exit, that state's exit probability would
+    have nowhere to go and the total would fall short of one.
+    """
+    env = _discrete_envs_for_enumeration()[name]
+    if not env.is_enumerable:
+        pytest.skip(f"{name} is not enumerable")
+
+    torch.manual_seed(0)
+    state_dim = int(env.s0.numel())
+    preprocessor = IdentityPreprocessor(output_dim=state_dim)
+    pf = DiscretePolicyEstimator(
+        MLP(state_dim, env.n_actions),
+        env.n_actions,
+        preprocessor=preprocessor,
+    )
+    pmf = env.exact_terminating_distribution(pf)
+    assert (pmf >= 0).all()
+    assert pmf.sum().item() == pytest.approx(1.0, abs=1e-5)
+
+
+def test_exact_terminating_distribution_matches_sampling():
+    """The closed form must agree with the sampling estimator it replaces."""
+    torch.manual_seed(0)
+    env = HyperGrid(
+        ndim=2,
+        height=6,
+        store_all_states=True,
+        calculate_partition=True,
+        validate_modes=False,
+    )
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
+    pf = DiscretePolicyEstimator(
+        MLP(preprocessor.output_dim, env.n_actions),
+        env.n_actions,
+        preprocessor=preprocessor,
+    )
+    pb = DiscretePolicyEstimator(
+        MLP(preprocessor.output_dim, env.n_actions - 1),
+        env.n_actions,
+        preprocessor=preprocessor,
+        is_backward=True,
+    )
+    exact = env.exact_terminating_distribution(pf)
+    _, sampled_states = env.validate(
+        TBGFlowNet(pf=pf, pb=pb), 200_000, check_sample_sufficiency=False
+    )
+    empirical = env.get_terminating_state_dist(cast(DiscreteStates, sampled_states))
+    assert (exact - empirical).abs().sum().item() < 0.02
+
+
+def test_exact_terminating_distribution_of_a_deterministic_policy():
+    """A policy that always exits puts all of its mass on the initial state."""
+    env = HyperGrid(ndim=2, height=5, store_all_states=True, validate_modes=False)
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
+
+    class AlwaysExit(torch.nn.Module):
+        """Emits an overwhelming logit on the exit action."""
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            logits = torch.zeros(x.shape[0], env.n_actions, device=x.device)
+            logits[:, -1] = 50.0
+            return logits
+
+    pf = DiscretePolicyEstimator(AlwaysExit(), env.n_actions, preprocessor=preprocessor)
+    pmf = env.exact_terminating_distribution(pf)
+    s0_index = cast(
+        torch.Tensor,
+        env.get_terminating_states_indices(
+            cast(DiscreteStates, env.reset(batch_shape=(1,)))
+        ),
+    )
+    assert pmf[s0_index].item() == pytest.approx(1.0, abs=1e-4)
+    assert pmf.sum().item() == pytest.approx(1.0, abs=1e-5)
+
+
+def test_enumerability_depends_on_hyperparameters_not_just_the_class():
+    """The same class is enumerable at one size and not at another.
+
+    This is why `is_enumerable` is an instance property: a HyperGrid's state count is
+    `height ** ndim`, so dimensionality alone decides the answer.
+    """
+    small = HyperGrid(ndim=2, height=20, store_all_states=True, validate_modes=False)
+    assert small.supports_enumeration
+    assert small.is_enumerable
+    assert small.n_states == 400
+
+    huge = HyperGrid(
+        ndim=10,
+        height=20,
+        store_all_states=False,
+        calculate_partition=False,
+        validate_modes=False,
+    )
+    assert huge.supports_enumeration, "capability is a property of the class"
+    assert not huge.is_enumerable, "tractability is a property of the instance"
+    assert huge.n_states == 20**10
+
+
+def test_enumeration_size_guard_fires_before_materializing():
+    """The state count is checked from its formula, never by trying and failing.
+
+    Asking a 10-dimensional grid to store all states would otherwise enumerate 10^13
+    states and hang, long before `is_enumerable` could be consulted.
+    """
+    start = time.monotonic()
+    with pytest.raises(ValueError, match="max_enumerable_states"):
+        HyperGrid(ndim=10, height=20, store_all_states=True, validate_modes=False)
+    assert time.monotonic() - start < 5.0, "the guard must not enumerate anything"
+
+    # The limit is a guardrail, not a hard ceiling.
+    env = HyperGrid(ndim=2, height=20, store_all_states=True, validate_modes=False)
+    assert env.is_enumerable
+    env.max_enumerable_states = 100
+    assert not env.is_enumerable
+    assert "max_enumerable_states" in str(env.enumeration_unavailable_reason())
+    with pytest.raises(NotImplementedError, match="max_enumerable_states"):
+        env.all_states
+
+
+def test_enumeration_unavailable_reason_distinguishes_its_causes():
+    """A caller should be able to tell 'unsupported' from 'too big' from 'not stored'."""
+    unsupported = BitSequence(
+        word_size=2,
+        seq_size=6,
+        n_modes=3,
+        H=torch.randint(0, 2, (3, 6), dtype=torch.long),
+        device_str="cpu",
+        seed=0,
+    )
+    assert not unsupported.supports_enumeration
+    assert "does not implement" in str(unsupported.enumeration_unavailable_reason())
+
+    not_stored = HyperGrid(
+        ndim=2,
+        height=5,
+        store_all_states=False,
+        calculate_partition=False,
+        validate_modes=False,
+    )
+    assert not_stored.supports_enumeration
+    assert "store_all_states" in str(not_stored.enumeration_unavailable_reason())
+
+    enumerable = HyperGrid(ndim=2, height=5, store_all_states=True, validate_modes=False)
+    assert enumerable.enumeration_unavailable_reason() is None

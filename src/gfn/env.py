@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 if TYPE_CHECKING:
+    from gfn.estimators import Estimator
     from gfn.gflownet import GFlowNet
 
 import numpy as np
@@ -843,7 +844,8 @@ class DiscreteEnv(Env, ABC):
                 f"({samples_per_state:.2f} samples/state). Most states "
                 f"will have zero counts — L1 and JSD will be unreliable."
                 f"{mode_info} Recommend at least "
-                f"{10 * n_ts} samples.",
+                f"{10 * n_ts} samples, or use "
+                f"exact_terminating_distribution() for a noise-free measurement.",
                 UserWarning,
                 stacklevel=3,
             )
@@ -853,7 +855,8 @@ class DiscreteEnv(Env, ABC):
                 f"n_terminating_states={n_ts} "
                 f"({samples_per_state:.1f} samples/state) may produce "
                 f"noisy validation metrics.{mode_info} Recommend at "
-                f"least {10 * n_ts} samples.",
+                f"least {10 * n_ts} samples, or use "
+                f"exact_terminating_distribution() for a noise-free measurement.",
                 UserWarning,
                 stacklevel=3,
             )
@@ -1010,6 +1013,237 @@ class DiscreteEnv(Env, ABC):
 
         if learned_logZ is not None and true_logZ is not None:
             validation_info["logZ_diff"] = abs(learned_logZ - true_logZ)
+
+    supports_enumeration: bool = False
+    max_enumerable_states: int = 10_000_000
+
+    @property
+    def is_enumerable(self) -> bool:
+        """Whether *this instance* can have its state space enumerated.
+
+        This is deliberately an instance-level question, not a class-level one. Almost
+        every enumerable environment is enumerable only for some hyperparameters: a
+        :class:`~gfn.gym.HyperGrid` has ``height ** ndim`` states, so a 20x20 grid in two
+        dimensions is trivially enumerable while the same grid in ten dimensions has
+        :math:`10^{13}` states and is not. Two separate conditions are checked:
+
+        - **Capability** — :attr:`supports_enumeration`, a class attribute, records
+          whether the environment type implements the enumeration API at all. Partial
+          support does not count: a True commits the class to :attr:`n_states`,
+          :attr:`all_states`, :meth:`get_states_indices`, :attr:`n_terminating_states`,
+          :attr:`terminating_states` and :meth:`get_terminating_states_indices`, with
+          ``get_states_indices(all_states) == arange(n_states)`` and likewise for the
+          terminating variants.
+        - **Tractability** — :attr:`n_states` must not exceed
+          :attr:`max_enumerable_states`. This is checked from the *formula* for the state
+          count, so it costs nothing and, crucially, happens before anything tries to
+          materialize the states. Raise the attribute if you have the memory for it.
+
+        Individual environments may add further conditions; HyperGrid, for instance, only
+        enumerates when built with ``store_all_states=True``.
+
+        Use :meth:`enumeration_unavailable_reason` when you want to tell a user *why*.
+
+        Returns:
+            True if the enumeration API is fully available on this instance.
+        """
+        return self.enumeration_unavailable_reason() is None
+
+    def enumeration_unavailable_reason(self) -> Optional[str]:
+        """Explains why this instance cannot be enumerated, or None if it can.
+
+        Subclasses with further conditions should override this, returning their own
+        reason first and otherwise deferring to ``super()``.
+
+        Returns:
+            A human-readable reason, or None if :attr:`is_enumerable` is True.
+        """
+        if not self.supports_enumeration:
+            return f"{type(self).__name__} does not implement the enumeration API"
+        try:
+            n_states = self.n_states
+        except NotImplementedError:
+            return (
+                f"{type(self).__name__} sets supports_enumeration=True but does not "
+                f"implement n_states"
+            )
+        if n_states > self.max_enumerable_states:
+            return (
+                f"{type(self).__name__} has {n_states:,} states, above its "
+                f"max_enumerable_states={self.max_enumerable_states:,}; materializing "
+                f"them would likely exhaust memory. Raise that attribute if you know "
+                f"the state space fits"
+            )
+        return None
+
+    def assert_enumerable(self, feature: str) -> None:
+        """Raises a pointed error if this environment cannot be enumerated.
+
+        Args:
+            feature: Name of the caller, used in the error message.
+
+        Raises:
+            NotImplementedError: If :attr:`is_enumerable` is False.
+        """
+        reason = self.enumeration_unavailable_reason()
+        if reason is not None:
+            raise NotImplementedError(
+                f"{feature} requires state enumeration, which is unavailable: {reason}. "
+                f"Check `env.is_enumerable` before calling."
+            )
+
+    @torch.no_grad()
+    def exact_terminating_distribution(
+        self,
+        pf: "Estimator",
+        conditions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        r"""Computes the exact distribution over terminating states induced by ``pf``.
+
+        Where :meth:`validate` estimates this distribution by sampling, this computes it
+        in closed form by pushing probability mass forward through the DAG in topological
+        order:
+
+        .. math::
+
+            u(s_0) = 1, \qquad
+            u(s') = \sum_{s \in \mathrm{Par}(s')} u(s)\, P_F(s' \mid s), \qquad
+            p(x) = u(x)\, P_F(s_f \mid x).
+
+        The sampling estimator has a noise floor of its own, which on a small state space
+        can be as large as the differences between the methods being compared: a *perfect*
+        model over 256 terminating states scores a total variation distance of roughly
+        0.06 when measured with 10,000 samples. Prefer this method whenever the
+        environment is enumerable.
+
+        Args:
+            pf: The forward policy estimator to evaluate.
+            conditions: Optional conditions for conditional environments, of shape
+                ``(1, condition_dim)`` (broadcast over all states) or
+                ``(n_states, condition_dim)``.
+
+        Returns:
+            A tensor of shape ``(n_terminating_states,)`` summing to 1, aligned with
+            :meth:`true_dist` and indexed by :meth:`get_terminating_states_indices`.
+
+        Raises:
+            NotImplementedError: If the environment is not enumerable.
+            ValueError: If the transition graph is not acyclic.
+        """
+        from gfn.utils.handlers import call_estimator_with_conditions
+
+        self.assert_enumerable("exact_terminating_distribution")
+        states = cast(DiscreteStates, self.all_states)
+        n_states = self.n_states
+        exit_index = self.n_actions - 1
+
+        if conditions is not None and conditions.shape[0] == 1:
+            conditions = conditions.expand(n_states, *conditions.shape[1:])
+        module_output = call_estimator_with_conditions(pf, "pf", states, conditions)
+        action_probs = pf.to_probability_distribution(states, module_output).probs
+
+        # `all_states` is contractually ordered so that its own index is its position.
+        source, destination, action = self._build_transition_edges(states, exit_index)
+
+        # Kahn's algorithm, level-synchronous: a state joins the frontier only once every
+        # predecessor has been processed, so its visitation mass is final when it does.
+        in_degree = torch.zeros(n_states, dtype=torch.long, device=states.device)
+        in_degree.index_add_(0, destination, torch.ones_like(destination))
+
+        visits = torch.zeros(n_states, device=states.device)
+        s0 = cast(DiscreteStates, self.reset(batch_shape=(1,)))
+        visits[self.get_states_indices(s0)] = 1.0
+
+        processed = torch.zeros(n_states, dtype=torch.bool, device=states.device)
+        frontier = in_degree == 0
+        n_processed = 0
+        while bool(frontier.any()):
+            processed |= frontier
+            n_processed += int(frontier.sum())
+            outgoing = frontier[source]
+            src, dst, act = (
+                source[outgoing],
+                destination[outgoing],
+                action[outgoing],
+            )
+            visits.index_add_(0, dst, visits[src] * action_probs[src, act])
+            in_degree.index_add_(0, dst, -torch.ones_like(dst))
+            frontier = (in_degree == 0) & ~processed
+
+        if n_processed != n_states:
+            raise ValueError(
+                f"{type(self).__name__}'s transition graph is not acyclic: only "
+                f"{n_processed} of {n_states} states could be topologically ordered."
+            )
+
+        # Read the terminating set from the environment rather than deriving it from the
+        # forward masks: `all_states` may contain states that are unreachable from s0 but
+        # whose masks still advertise the exit action, and those have no slot here.
+        terminating_states = cast(DiscreteStates, self.terminating_states)
+        pmf = torch.zeros(self.n_terminating_states, device=states.device)
+        pmf[self.get_terminating_states_indices(terminating_states)] = (
+            visits * action_probs[:, exit_index]
+        )[self.get_states_indices(terminating_states)]
+
+        # An environment whose forward masks let a reachable state exit without listing
+        # it in `terminating_states` would silently lose that state's mass, which is
+        # exactly the kind of inconsistency this method must not paper over.
+        total = float(pmf.sum())
+        if abs(total - 1.0) > 1e-3:
+            raise ValueError(
+                f"{type(self).__name__}'s terminating distribution sums to {total:.6f}, "
+                f"not 1. Its `terminating_states` is inconsistent with its forward "
+                f"masks: some reachable state can take the exit action but is not "
+                f"listed as terminating."
+            )
+        return pmf
+
+    def _build_transition_edges(
+        self, states: DiscreteStates, exit_index: int
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Enumerates the DAG's non-exit edges as (source, destination, action) indices.
+
+        Args:
+            states: All states, ordered by their canonical index.
+            exit_index: The index of the exit action.
+
+        Returns:
+            Three aligned 1D tensors of edge sources, destinations, and action indices.
+        """
+        n_states = self.n_states
+        positions = torch.arange(n_states, device=states.device)
+        sources, destinations, actions = [], [], []
+
+        for action_index in range(exit_index):
+            allowed = states.forward_masks[:, action_index]
+            if not bool(allowed.any()):
+                continue
+            n_allowed = int(allowed.sum())
+            step_actions = self.actions_from_tensor(
+                torch.full(
+                    (n_allowed,) + self.action_shape,
+                    action_index,
+                    dtype=torch.long,
+                    device=states.device,
+                )
+            )
+            children = cast(DiscreteStates, self.step(states[allowed], step_actions))
+            child_indices = self.get_states_indices(children)
+            if not isinstance(child_indices, torch.Tensor):
+                # Environments whose index space exceeds int64 return object arrays; such
+                # an environment is far too large to enumerate in the first place.
+                raise NotImplementedError(
+                    f"{type(self).__name__}.get_states_indices returned a non-tensor "
+                    "index; exact enumeration is not possible at this scale."
+                )
+            sources.append(positions[allowed])
+            destinations.append(child_indices.to(states.device))
+            actions.append(torch.full((n_allowed,), action_index, device=states.device))
+
+        if not sources:
+            empty = torch.zeros(0, dtype=torch.long, device=states.device)
+            return empty, empty.clone(), empty.clone()
+        return torch.cat(sources), torch.cat(destinations), torch.cat(actions)
 
     def get_states_indices(
         self, states: DiscreteStates

@@ -94,6 +94,42 @@ A variant of TB designed for posterior fine-tuning from a pre-trained prior. Use
 
 ---
 
+### Soft Policy Gradient (VPG)
+
+**Class:** `PolicyGradientGFlowNet`
+
+Trains the forward policy as an entropy-regularized RL agent instead of enforcing a balance condition. With a fixed backward policy, GFlowNet training is equivalent to soft RL at `α = γ = 1` under the per-step reward `log P_B(s_t | s_{t+1})`, plus `log R(x)` on the exit transition; the soft value function is the GFlowNet log-flow, and `V(s_0) = log Z`. Introduced for GFlowNets in [Proximal Policy Optimization for Amortized Discrete Sampling](https://arxiv.org/abs/2606.15793).
+
+Four advantage estimators are available via `advantage=`, in increasing order of sophistication and decreasing variance: `"total"` (the full soft return — this is REINFORCE on the reverse KL, and equals the negated TB score), `"reward_to_go"`, `"baseline"` (reward-to-go minus a learned soft value), and `"gae"` (the default; Generalized Advantage Estimation, `gae_lambda=0.7` in the paper).
+
+**Requires:** Forward policy (PF), backward policy (PB), and — for `"baseline"`/`"gae"` — a soft value estimator (logV) via `ScalarEstimator`.
+
+**When to use:** When you want RL-style variance reduction and multiple gradient steps per rollout. The paper reports that VPG with GAE already beats TB, DB and SubTB on Hypergrid and sequence problems.
+
+**Note:** Unlike the balance objectives, these admit no joint forward/backward loss — changing `P_B` changes the MDP reward itself. Learn `P_B` with `tlm_loss` (Trajectory Likelihood Maximization) as a separate update.
+
+**See:** `train_hypergrid_ppo.py` (with `--method vpg --advantage ...`).
+
+---
+
+### Entropic PPO (Ent-PPO)
+
+**Class:** `EntPPOGFlowNet`
+
+Proximal Policy Optimization adapted to the soft-RL formulation above, from the same paper. Combines the usual clipped importance ratio with an *analytic* KL penalty against the rollout policy, which falls out of soft policy improvement rather than being imposed on top. Standard PPO carries a free entropy coefficient and no cross-entropy term, and its optimum concentrates on `argmax_x R(x)` instead of sampling from `R/Z` — which is why earlier attempts at PPO for GFlowNets reported mode collapse.
+
+**Requires:** Forward policy (PF), backward policy (PB), soft value estimator (logV). For the analytic KL, sample with `save_estimator_outputs=True`; `kl_estimator="importance"` is a fallback for policies with no closed-form KL.
+
+**When to use:** When reward evaluations are the bottleneck. The importance ratio and KL trust region make several update epochs (`K`) per rollout safe, so each batch of trajectories yields more learning.
+
+**Note:** `use_kl=False` and `use_clipping=False` reproduce the paper's ablations. Dropping the KL roughly doubles the final TV distance on a 16x16 HyperGrid at `K=8` — it is the load-bearing term. The clipping ablation does not separate at that scale; the paper reports divergence without it at `K` of 16-32.
+
+**Workflow:** call `to_training_samples(trajectories)` once per rollout to freeze the advantages, value targets and `π_old` log-probs, then call `policy_loss` / `value_loss` as many times as you like on that frozen batch. Slicing the returned `PolicyGradientTrajectories` gives mini-batches that carry the same frozen targets.
+
+**See:** `train_hypergrid_ppo.py`.
+
+---
+
 ## Choosing a Loss Function
 
 | Loss | Estimators needed | Learning signal | Computational cost | Recommended for |
@@ -104,8 +140,40 @@ A variant of TB designed for posterior fine-tuning from a pre-trained prior. Use
 | **FM** | logF only | Per-state flow | High | Completeness / comparison |
 | **ZVar** | PF, PB | Per-trajectory | Low | When logZ learning is unstable |
 | **RTB** | PF, PB, PF_prior | Per-trajectory | Medium | Posterior fine-tuning |
+| **VPG** | PF, PB, logV | Per-step advantage | Medium | RL-style variance reduction |
+| **Ent-PPO** | PF, PB, logV | Per-step advantage | Medium | When reward evaluations are the bottleneck |
 
-For a single-script comparison of TB, DB, and FM on the same environment, see `train_hypergrid_simple.py`. For all six losses in a single script, see `train_hypergrid.py`.
+### Measuring a discrete GFlowNet exactly
+
+`env.validate(...)` estimates the terminating distribution by sampling, which has a noise
+floor of its own: over 256 terminating states, a *perfect* model scores a total variation
+distance of about 0.06 when measured with 10 000 samples. On small problems that floor can
+swamp the differences between objectives.
+
+When the state space is enumerable, use `env.exact_terminating_distribution(gflownet.pf)`
+instead. It computes the distribution in closed form by pushing probability mass forward
+through the DAG, and returns a tensor aligned with `env.true_dist()`.
+
+Check `env.is_enumerable` first. It answers an *instance*-level question, because most
+enumerable environments are only enumerable for some hyperparameters — a `HyperGrid` has
+`height ** ndim` states, so a 20x20 grid is trivially enumerable while the same grid in
+ten dimensions has 10^13 states and is not. Two conditions are checked:
+
+- `supports_enumeration`, a class attribute, records whether the environment type
+  implements the enumeration API at all. It is all-or-nothing: True commits the class to
+  `n_states`, `all_states`, `get_states_indices` and the three terminating equivalents,
+  with `get_states_indices(all_states) == arange(n_states)`.
+- `n_states <= max_enumerable_states`, checked from the *formula* for the state count, so
+  it costs nothing and fires before anything tries to materialize the states. Raise
+  `env.max_enumerable_states` if you know the space fits in memory.
+
+`env.enumeration_unavailable_reason()` returns a human-readable explanation of which
+condition failed, or None. Note that measuring exactly removes sampling noise but not
+training noise — comparing objectives still needs multiple seeds.
+
+---
+
+For a single-script comparison of TB, DB, and FM on the same environment, see `train_hypergrid_simple.py`. For all six balance losses in a single script, see `train_hypergrid.py`. For the policy-gradient objectives, see `train_hypergrid_ppo.py`.
 
 ## Common Training Patterns
 
@@ -120,7 +188,10 @@ optimizer = torch.optim.Adam([
 ])
 ```
 
-For DB/SubTB, add a third group for the logF estimator.
+For DB/SubTB, add a third group for the logF estimator. For VPG/Ent-PPO, use
+`gflownet.logV_parameters()` — the paper trains the soft value function at one third of
+the policy learning rate, and with a separate optimizer, since the two take a different
+number of steps per rollout.
 
 ### On-Policy vs Off-Policy
 

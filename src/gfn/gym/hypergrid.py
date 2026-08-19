@@ -155,6 +155,8 @@ class HyperGrid(DiscreteEnv):
         mode_stats_samples: Number of random samples when `mode_stats="approx"`.
     """
 
+    supports_enumeration = True
+
     def __init__(
         self,
         ndim: int = 2,
@@ -232,8 +234,22 @@ class HyperGrid(DiscreteEnv):
         self.calculate_partition = calculate_partition or store_all_states
         self.store_all_states = store_all_states
 
-        # Pre-computes these values when printing.
+        # Pre-computes these values when printing. Guard first: enumerating is
+        # `height ** ndim` work, so asking for it on a large grid would otherwise hang
+        # here, long before anything could consult `is_enumerable`.
         if self.store_all_states or self.calculate_partition:
+            if self.n_states > self.max_enumerable_states:
+                requested = (
+                    "store_all_states" if store_all_states else "calculate_partition"
+                )
+                raise ValueError(
+                    f"{requested}=True requires enumerating all {self.n_states:,} "
+                    f"states of a {self.ndim}-dimensional grid of height "
+                    f"{self.height}, which is above max_enumerable_states="
+                    f"{self.max_enumerable_states:,}. Reduce ndim or height, leave "
+                    f"{requested} False, or raise HyperGrid.max_enumerable_states if "
+                    f"you know the state space fits in memory."
+                )
             self._enumerate_all_states_tensor()
 
         if self.store_all_states:
@@ -559,7 +575,7 @@ class HyperGrid(DiscreteEnv):
         ):
             return float(self._n_mode_states_estimate)
         # On-demand computation when all states are available.
-        if self.store_all_states and self.all_states is not None:
+        if self.is_enumerable:
             mask = self.mode_mask(self.all_states)
             return int(mask.sum().item())
         return None
@@ -724,7 +740,7 @@ class HyperGrid(DiscreteEnv):
         # Also prefer exact when all states are already stored.
         # All work is done on CPU to avoid device-mismatch issues (e.g. MPS).
         try:
-            if self.store_all_states and self.all_states is not None:
+            if self.is_enumerable:
                 cpu_states = self.all_states.tensor.cpu()
                 rewards = self.reward_fn(cpu_states)
                 return bool((rewards >= thr - EPS_REWARD_CMP).any().item())
@@ -1250,9 +1266,7 @@ class HyperGrid(DiscreteEnv):
     def true_dist(self, condition=None) -> torch.Tensor | None:  # condition is ignored
         """Returns the pmf over all states in the hypergrid."""
         if self._true_dist is None:
-            assert (
-                self.all_states is not None
-            ), "true_dist is not available without all_states"
+            self.assert_enumerable("true_dist")
             all_rewards = self.reward(self.all_states)
             self._true_dist = all_rewards / all_rewards.sum()
 
@@ -1278,11 +1292,32 @@ class HyperGrid(DiscreteEnv):
         """Returns the log partition of the reward function."""
         return self._log_partition
 
-    @property
-    def all_states(self) -> DiscreteStates | None:
-        """Returns a tensor of all hypergrid states as a `DiscreteStates` instance."""
+    def enumeration_unavailable_reason(self) -> str | None:
+        """Explains why this grid cannot be enumerated, or None if it can.
+
+        A HyperGrid has ``height ** ndim`` states, so enumerability is a property of the
+        hyperparameters rather than of the class: a 20x20 grid has 400 states, while the
+        same grid in ten dimensions has over 10^13. On top of the size check inherited
+        from :class:`~gfn.env.DiscreteEnv`, the states must actually have been
+        materialized, which only happens with ``store_all_states=True``.
+        """
         if not self.store_all_states:
-            return None
+            return (
+                f"this HyperGrid was built with store_all_states=False, so its "
+                f"{self.n_states:,} states were never materialized; rebuild it with "
+                f"store_all_states=True"
+            )
+        return super().enumeration_unavailable_reason()
+
+    @property
+    def all_states(self) -> DiscreteStates:
+        """Returns a tensor of all hypergrid states as a `DiscreteStates` instance.
+
+        Raises:
+            NotImplementedError: If the environment was built without
+                ``store_all_states=True``.
+        """
+        self.assert_enumerable("all_states")
 
         if self._all_states_tensor is None:
             self._enumerate_all_states_tensor()
@@ -1296,8 +1331,14 @@ class HyperGrid(DiscreteEnv):
         return self.States(self._all_states_tensor)
 
     @property
-    def terminating_states(self) -> DiscreteStates | None:
-        """Returns all terminating states of the environment."""
+    def terminating_states(self) -> DiscreteStates:
+        """Returns all terminating states of the environment.
+
+        Every hypergrid state permits the exit action, so this is :attr:`all_states`.
+
+        Raises:
+            NotImplementedError: If the environment is not enumerable.
+        """
         return self.all_states
 
     def _generate_combinations_in_batches(

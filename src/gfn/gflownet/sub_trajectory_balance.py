@@ -26,6 +26,17 @@ PredictionsTensor: TypeAlias = torch.Tensor  # shape: [maxlen + 1 - i, n_traj]
 TargetsTensor: TypeAlias = torch.Tensor  # shape: [maxlen + 1 - i, n_traj]
 
 
+SubTBWeighting = Literal[
+    "DB",
+    "ModifiedDB",
+    "TB",
+    "geometric",
+    "equal",
+    "geometric_within",
+    "equal_within",
+]
+
+
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     r"""GFlowNet for the Sub-Trajectory Balance loss.
 
@@ -71,15 +82,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         pf: Estimator,
         pb: Estimator | None,
         logF: ScalarEstimator | ConditionalScalarEstimator,
-        weighting: Literal[
-            "DB",
-            "ModifiedDB",
-            "TB",
-            "geometric",
-            "equal",
-            "geometric_within",
-            "equal_within",
-        ] = "geometric_within",
+        weighting: SubTBWeighting = "geometric_within",
         lamda: float = 0.9,
         log_reward_clip_min: float = -float("inf"),
         forward_looking: bool = False,
@@ -269,6 +272,48 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         return targets
 
+    def _resolve_logprobs(
+        self,
+        trajectories: Trajectories,
+        recalculate_all_logprobs: bool,
+        log_pf_trajectories: torch.Tensor | None,
+        log_pb_trajectories: torch.Tensor | None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Returns caller-supplied logprobs, or evaluates them from the policies.
+
+        Args:
+            trajectories: The batch of trajectories.
+            recalculate_all_logprobs: Whether to re-evaluate all logprobs.
+            log_pf_trajectories: Optional precomputed forward logprobs.
+            log_pb_trajectories: Optional precomputed backward logprobs.
+
+        Returns:
+            A tuple ``(log_pf, log_pb)``, each of shape (max_length, n_trajectories).
+
+        Raises:
+            ValueError: If only one of the two tensors is supplied, or if a supplied
+                tensor has the wrong shape.
+        """
+        if log_pf_trajectories is None and log_pb_trajectories is None:
+            return self.get_pfs_and_pbs(
+                trajectories,
+                recalculate_all_logprobs=recalculate_all_logprobs,
+            )
+        if log_pf_trajectories is None or log_pb_trajectories is None:
+            raise ValueError(
+                "log_pf_trajectories and log_pb_trajectories must be supplied together."
+            )
+        expected = (trajectories.max_length, trajectories.batch_size)
+        for name, tensor in (
+            ("log_pf_trajectories", log_pf_trajectories),
+            ("log_pb_trajectories", log_pb_trajectories),
+        ):
+            if tuple(tensor.shape) != expected:
+                raise ValueError(
+                    f"{name} has shape {tuple(tensor.shape)}, expected {expected}."
+                )
+        return log_pf_trajectories, log_pb_trajectories
+
     def calculate_log_state_flows(
         self,
         env: Env,
@@ -345,6 +390,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         env: Env | None = None,
         *,
         log_rewards: torch.Tensor | None = None,
+        log_pf_trajectories: torch.Tensor | None = None,
+        log_pb_trajectories: torch.Tensor | None = None,
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         r"""Computes sub-trajectory balance scores for all submitted trajectories.
 
@@ -357,6 +404,15 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 Useful for intrinsic rewards (see
                 "Towards Improving Exploration through Sibling Augmented
                 GFlowNets", Madan et al., ICLR 2025).
+            log_pf_trajectories: Optional precomputed forward logprobs of shape
+                (max_length, n_trajectories). When given, the forward policy is not
+                re-evaluated. Passing detached logprobs freezes the policy so only
+                ``logF`` receives gradient — this is what the Sub-EB critic of
+                :class:`~gfn.gflownet.policy_gradient.PolicyGradientGFlowNet` needs.
+                Both ``log_pf_trajectories`` and ``log_pb_trajectories`` must be
+                supplied together.
+            log_pb_trajectories: Optional precomputed backward logprobs, same shape
+                and semantics as ``log_pf_trajectories``.
 
         Returns:
             A tuple (scores, flattening_masks):
@@ -372,9 +428,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                     those tensors are True if the corresponding sub-trajectory does not
                     exist.
         """
-        log_pf_trajectories, log_pb_trajectories = self.get_pfs_and_pbs(
+        log_pf_trajectories, log_pb_trajectories = self._resolve_logprobs(
             trajectories,
-            recalculate_all_logprobs=recalculate_all_logprobs,
+            recalculate_all_logprobs,
+            log_pf_trajectories,
+            log_pb_trajectories,
         )
 
         log_pf_trajectories_cum = self.cumulative_logprobs(
@@ -579,6 +637,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         reduction: str = "mean",
         *,
         log_rewards: torch.Tensor | None = None,
+        log_pf_trajectories: torch.Tensor | None = None,
+        log_pb_trajectories: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Computes the sub-trajectory balance loss.
 
@@ -599,6 +659,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 rewards in that mode. Useful for intrinsic rewards affecting the
                 terminal boundary term (see "Towards Improving Exploration
                 through Sibling Augmented GFlowNets", Madan et al., ICLR 2025).
+            log_pf_trajectories: Optional precomputed forward logprobs of shape
+                (max_length, n_trajectories); see :meth:`get_scores`. Passing detached
+                logprobs freezes the policies so only ``logF`` receives gradient.
+            log_pb_trajectories: Optional precomputed backward logprobs, same shape
+                and semantics as ``log_pf_trajectories``.
 
         Returns:
             The computed sub-trajectory balance loss as a tensor. The shape depends on
@@ -615,8 +680,11 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             # vector reduction. For continuous environments with large log-prob
             # magnitudes (e.g. Box), this difference can exceed typical tolerances.
             # Bypass get_scores entirely and mirror TBGFlowNet's exact computation.
-            log_pf_traj, log_pb_traj = self.get_pfs_and_pbs(
-                trajectories, recalculate_all_logprobs=recalculate_all_logprobs
+            log_pf_traj, log_pb_traj = self._resolve_logprobs(
+                trajectories,
+                recalculate_all_logprobs,
+                log_pf_trajectories,
+                log_pb_trajectories,
             )
             log_state_flows = self.calculate_log_state_flows(
                 env, trajectories, log_pf_traj
@@ -645,6 +713,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             log_rewards=log_rewards,
             recalculate_all_logprobs=recalculate_all_logprobs,
             env=env,
+            log_pf_trajectories=log_pf_trajectories,
+            log_pb_trajectories=log_pb_trajectories,
         )
         flattening_mask = torch.cat(flattening_masks)
         all_scores = torch.cat(scores, 0)
