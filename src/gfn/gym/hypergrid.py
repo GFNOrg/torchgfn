@@ -234,21 +234,18 @@ class HyperGrid(DiscreteEnv):
         self.calculate_partition = calculate_partition or store_all_states
         self.store_all_states = store_all_states
 
-        # Pre-computes these values when printing. Guard first: enumerating is
-        # `height ** ndim` work, so asking for it on a large grid would otherwise hang
-        # here, long before anything could consult `is_enumerable`.
+        # Pre-computes these values when printing. Only `store_all_states` keeps the
+        # `height ** ndim` states in memory; `calculate_partition` streams them in
+        # batches and accumulates a scalar, so it is bounded by `batch_size`.
         if self.store_all_states or self.calculate_partition:
-            if self.n_states > self.max_enumerable_states:
-                requested = (
-                    "store_all_states" if store_all_states else "calculate_partition"
-                )
+            if self.store_all_states and self.n_states > self.max_enumerable_states:
                 raise ValueError(
-                    f"{requested}=True requires enumerating all {self.n_states:,} "
-                    f"states of a {self.ndim}-dimensional grid of height "
-                    f"{self.height}, which is above max_enumerable_states="
+                    f"store_all_states=True requires materializing all "
+                    f"{self.n_states:,} states of a {self.ndim}-dimensional grid of "
+                    f"height {self.height}, which is above max_enumerable_states="
                     f"{self.max_enumerable_states:,}. Reduce ndim or height, leave "
-                    f"{requested} False, or raise HyperGrid.max_enumerable_states if "
-                    f"you know the state space fits in memory."
+                    f"store_all_states False, or raise HyperGrid.max_enumerable_states "
+                    f"if you know the state space fits in memory."
                 )
             self._enumerate_all_states_tensor()
 

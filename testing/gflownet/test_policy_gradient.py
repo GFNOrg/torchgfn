@@ -828,3 +828,48 @@ def test_tlm_loss_is_importable_from_the_gflownet_package():
     from gfn.gflownet.policy_gradient import tlm_loss as direct
 
     assert tlm_loss is direct
+
+
+def test_custom_log_rewards_reach_the_sub_eb_critic(setup):
+    """The Sub-EB critic must fit the same MDP the advantages were built from."""
+    env, pf, pb, logV, traj = setup
+    gfn = PolicyGradientGFlowNet(
+        pf=pf, pb=pb, logV=logV, advantage="gae", critic_loss="sub_eb"
+    )
+    intrinsic = traj.log_rewards + 5.0
+    batch = gfn.to_training_samples(traj, log_rewards=intrinsic)
+
+    assert batch.log_rewards is not None
+    assert torch.equal(batch.log_rewards, intrinsic)
+    assert gfn.value_loss(env, batch).item() != pytest.approx(
+        gfn.value_loss(env, gfn.to_training_samples(traj)).item()
+    )
+
+
+def test_analytic_kl_rejects_non_categorical_policies(setup):
+    """A distribution that merely exposes `.logits` must not take the masked path."""
+    _, pf, pb, logV, traj = setup
+    gfn = EntPPOGFlowNet(pf=pf, pb=pb, logV=logV, kl_estimator="analytic")
+    batch = gfn.to_training_samples(traj)
+    action_mask = ~batch.actions.is_dummy
+    n_valid = int(action_mask.sum())
+
+    class _LogitsDist(torch.distributions.Bernoulli):
+        """`.logits` of shape (n,): no action axis for `masked_categorical_kl` to sum."""
+
+        def log_prob(self, value):
+            return torch.zeros(value.shape[0])
+
+    def fake_distribution(states, module_output, conditions):
+        fill = 0.0 if module_output is None else 2.0
+        return _LogitsDist(logits=torch.full((n_valid,), fill))
+
+    gfn._distribution = fake_distribution
+    _, kl = gfn._current_logprobs_and_kl(batch)
+    assert kl is not None
+
+    expected = torch.distributions.kl_divergence(
+        _LogitsDist(logits=torch.zeros(n_valid)),
+        _LogitsDist(logits=torch.full((n_valid,), 2.0)),
+    )
+    assert torch.allclose(kl[action_mask], expected)

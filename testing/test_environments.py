@@ -1628,6 +1628,24 @@ def test_enumeration_size_guard_fires_before_materializing():
         env.all_states
 
 
+def test_partition_only_is_not_capped_by_the_enumeration_limit(monkeypatch):
+    """`calculate_partition` streams states in batches, so only storing them needs a cap."""
+    monkeypatch.setattr(HyperGrid, "max_enumerable_states", 10)
+
+    env = HyperGrid(
+        ndim=2,
+        height=8,
+        store_all_states=False,
+        calculate_partition=True,
+        validate_modes=False,
+    )
+    assert env.n_states > env.max_enumerable_states
+    assert env.log_partition() is not None
+
+    with pytest.raises(ValueError, match="store_all_states"):
+        HyperGrid(ndim=2, height=8, store_all_states=True, validate_modes=False)
+
+
 def test_enumeration_unavailable_reason_distinguishes_its_causes():
     """A caller should be able to tell 'unsupported' from 'too big' from 'not stored'."""
     unsupported = BitSequence(

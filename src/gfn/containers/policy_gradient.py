@@ -85,6 +85,7 @@ class PolicyGradientTrajectories(Trajectories):
         trajectories: Trajectories,
         advantages: torch.Tensor,
         value_targets: torch.Tensor,
+        log_rewards: torch.Tensor | None = None,
     ) -> "PolicyGradientTrajectories":
         r"""Wraps existing trajectories together with their frozen PG quantities.
 
@@ -99,6 +100,10 @@ class PolicyGradientTrajectories(Trajectories):
                 ``estimator_outputs``) define $\pi_{\text{old}}$.
             advantages: Frozen advantages of shape (max_length, batch_size).
             value_targets: Frozen value-fit targets of shape (max_length, batch_size).
+            log_rewards: Optional log rewards of shape (batch_size,) that replace the
+                ones carried by ``trajectories``. The container must record the reward
+                the advantages were built from, so that a critic trained on the same
+                batch fits the same MDP.
 
         Returns:
             A new PolicyGradientTrajectories sharing the input's states and actions.
@@ -113,7 +118,9 @@ class PolicyGradientTrajectories(Trajectories):
             actions=trajectories.actions,
             terminating_idx=trajectories.terminating_idx,
             is_backward=trajectories.is_backward,
-            log_rewards=trajectories._log_rewards,
+            log_rewards=(
+                trajectories._log_rewards if log_rewards is None else log_rewards
+            ),
             log_probs=None if log_probs is None else log_probs.detach(),
             estimator_outputs=(
                 None if estimator_outputs is None else estimator_outputs.detach()

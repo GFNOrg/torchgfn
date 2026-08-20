@@ -43,7 +43,7 @@ from __future__ import annotations
 from typing import Literal, Tuple, cast
 
 import torch
-from torch.distributions import Distribution, kl_divergence
+from torch.distributions import Categorical, Distribution, kl_divergence
 
 from gfn.containers import PolicyGradientTrajectories, Trajectories
 from gfn.env import Env
@@ -110,8 +110,8 @@ def masked_categorical_kl(
     gradient. This computes the same quantity while keeping the arithmetic finite.
 
     Args:
-        dist_new: The current policy's action distribution, exposing ``logits``.
-        dist_old: The rollout policy's action distribution, exposing ``logits``.
+        dist_new: The current policy's Categorical action distribution.
+        dist_old: The rollout policy's Categorical action distribution.
         debug: If True, asserts that both distributions mask the same actions.
 
     Returns:
@@ -425,7 +425,7 @@ class PolicyGradientGFlowNet(TrajectoryBasedGFlowNet):
             value_targets = value_targets * valid
 
         prepared = PolicyGradientTrajectories.from_trajectories(
-            trajectories, advantages, value_targets
+            trajectories, advantages, value_targets, log_rewards=log_rewards
         )
         prepared.log_probs = log_pf
         return prepared
@@ -539,6 +539,7 @@ class PolicyGradientGFlowNet(TrajectoryBasedGFlowNet):
                 env,
                 batch,
                 reduction=reduction,
+                log_rewards=batch.log_rewards,
                 log_pf_trajectories=log_pf,
                 log_pb_trajectories=log_pb,
             )
@@ -864,7 +865,10 @@ class EntPPOGFlowNet(PolicyGradientGFlowNet):
         dist_old = self._distribution(
             valid_states, batch.estimator_outputs[action_mask].detach(), valid_conditions
         )
-        if hasattr(dist_new, "logits") and hasattr(dist_old, "logits"):
+        # `isinstance`, not `hasattr("logits")`: `masked_categorical_kl` reduces over
+        # the last axis, which is only the action axis for a Categorical. Anything else
+        # falls through to `kl_divergence` or to the NotImplementedError below.
+        if isinstance(dist_new, Categorical) and isinstance(dist_old, Categorical):
             kl_valid = masked_categorical_kl(dist_new, dist_old, debug=self.debug)
         else:
             try:
