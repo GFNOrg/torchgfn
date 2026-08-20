@@ -84,7 +84,10 @@ def build_gflownet(args, env, preprocessor):
         The configured GFlowNet.
     """
     module_pf = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions)
-    if args.uniform_pb:
+    # P_B is the per-step soft-MDP reward, r(s_t, s_{t+1}) = log P_B(s_t | s_{t+1}).
+    # An MLP that no optimizer ever updates would shape that reward by its random
+    # initialization, so it is only built when TLM actually trains it.
+    if args.uniform_pb or args.learn_pb == "none":
         module_pb = DiscreteUniform(output_dim=env.n_actions - 1)
     else:
         module_pb = MLP(input_dim=preprocessor.output_dim, output_dim=env.n_actions - 1)
@@ -337,7 +340,9 @@ if __name__ == "__main__":
 
     # Backward policy.
     parser.add_argument(
-        "--uniform_pb", action="store_true", help="Use a fixed uniform backward policy"
+        "--uniform_pb",
+        action="store_true",
+        help="Use a fixed uniform backward policy. Implied by --learn_pb none",
     )
     parser.add_argument(
         "--learn_pb",

@@ -47,6 +47,9 @@ from tutorials.examples.train_hypergrid_gafn import main as train_hypergrid_gafn
 from tutorials.examples.train_hypergrid_local_search import (
     main as train_hypergrid_local_search_main,
 )
+from tutorials.examples.train_hypergrid_ppo import (
+    build_gflownet as build_hypergrid_ppo_gflownet,
+)
 from tutorials.examples.train_hypergrid_ppo import main as train_hypergrid_ppo_main
 from tutorials.examples.train_hypergrid_simple import main as train_hypergrid_simple_main
 from tutorials.examples.train_ising import main as train_ising_main
@@ -54,6 +57,10 @@ from tutorials.examples.train_line import main as train_line_main
 from tutorials.examples.train_with_example_modes import (
     main as train_with_example_modes_main,
 )
+
+from gfn.gym import HyperGrid
+from gfn.preprocessors import KHotPreprocessor
+from gfn.utils.modules import MLP, DiscreteUniform
 
 
 @dataclass
@@ -591,6 +598,28 @@ def test_hypergrid_ppo_smoke(overrides):
     logs = train_hypergrid_ppo_main(Namespace(**{**vars(args), **overrides}))
     assert "l1_dist" in logs
     assert logs["reward_evaluations"] == args.batch_size * args.n_iterations
+
+
+@pytest.mark.parametrize("learn_pb,expected", [("none", DiscreteUniform), ("tlm", MLP)])
+def test_hypergrid_ppo_never_uses_an_untrained_pb(learn_pb, expected):
+    """P_B is the soft-MDP reward, so an MLP is only built when TLM trains it."""
+    env = HyperGrid(ndim=2, height=8, validate_modes=False)
+    preprocessor = KHotPreprocessor(height=env.height, ndim=env.ndim)
+    args = Namespace(
+        method="ent_ppo",
+        advantage="gae",
+        gae_lambda=0.7,
+        clip_eps=0.2,
+        no_kl=False,
+        no_clip=False,
+        kl_estimator="analytic",
+        critic="mse",
+        uniform_pb=False,
+        learn_pb=learn_pb,
+    )
+    gflownet = build_hypergrid_ppo_gflownet(args, env, preprocessor)
+    assert gflownet.pb is not None
+    assert isinstance(gflownet.pb.module, expected)
 
 
 def test_hypergrid_simple_smoke():
