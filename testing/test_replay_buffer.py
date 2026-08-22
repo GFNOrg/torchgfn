@@ -790,7 +790,19 @@ def test_manager_baseline_sync_overrides_local(simple_env, trajectories):
     assert score["baseline_log_reward"] == pytest.approx(-7.5)
 
 
-def test_manager_baseline_sync_ignores_missing_payload(simple_env, trajectories):
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"global_baseline_log_reward": None},
+        {"global_baseline_log_reward": float("-inf")},
+        None,
+    ],
+    ids=["missing", "none", "non_finite", "not_a_dict"],
+)
+def test_manager_baseline_sync_rejects_malformed_payload(simple_env, payload):
+    # Keeping the shard-local threshold on a malformed sync is the
+    # inconsistency this message exists to remove, and it leaves no trace.
     mgr = ReplayBufferManager(
         simple_env,
         rank=0,
@@ -798,10 +810,9 @@ def test_manager_baseline_sync_ignores_missing_payload(simple_env, trajectories)
         capacity=5,
         store_locally=False,
     )
-    mgr._apply_baseline_sync(Message(MessageType.BASELINE_SYNC, {}))
-    score: dict = {"score": 0.0}
-    mgr._inject_baseline_log_reward(score, trajectories)
-    assert score["baseline_log_reward"] == pytest.approx(0.0)  # falls back to EMA.
+    with pytest.raises(ValueError, match="BASELINE_SYNC"):
+        mgr._apply_baseline_sync(Message(MessageType.BASELINE_SYNC, payload))
+    assert mgr._global_baseline is None
 
 
 def test_manager_multi_manager_baseline_warning(simple_env):
