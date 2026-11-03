@@ -424,11 +424,11 @@ def get_trajectory_pbs(
 ) -> torch.Tensor:
     """Calculate PB log‑probabilities for trajectories.
 
-    Non‑vectorized (per‑step) evaluation with with alignment
-        (action at ``t`` with state at ``t+1``) and mask
-        ``~is_sink_state[t+1] & ~is_initial_state[t+1] & ~is_dummy[t] & ~is_exit[t]``;
-        skip ``t==0``. is supported when specifically needed
-        (estimator.is_vectorized=False).
+    Non-vectorized evaluation (``estimator.is_vectorized=False``) aligns each
+    action at ``t`` with its successor at ``t+1``. Sink/initial successor states
+    and dummy/exit actions are excluded. The first transition is evaluated too:
+    trajectories resumed from interior states can have non-unit backward
+    probabilities.
 
     Args:
         pb: Backward policy estimator, or ``None`` for trees (PB=1).
@@ -513,9 +513,6 @@ def get_trajectory_pbs(
             next_state_isnt_sink = ~trajectories.states.is_sink_state[t + 1]
             next_state_isnt_initial = ~trajectories.states.is_initial_state[t + 1]
             state_ok = next_state_isnt_sink & next_state_isnt_initial
-            if t == 0:
-                # log PB is always zero for the transition s1 -> s0.
-                state_ok = torch.zeros_like(state_ok, dtype=torch.bool)
 
             action_ok = (~trajectories.actions.is_dummy[t]) & (
                 ~trajectories.actions.is_exit[t]

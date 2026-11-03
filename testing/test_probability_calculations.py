@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from gfn.containers import Trajectories
 from gfn.estimators import DiscretePolicyEstimator
 from gfn.gym import HyperGrid
 from gfn.preprocessors import IdentityPreprocessor
@@ -441,3 +442,47 @@ def test_trajectory_states_sink_consistency():
     assert trajectories.states.is_sink_state[:-1].equal(
         trajectories.actions.is_dummy
     ), "Sink states (excluding last) should correspond to dummy actions"
+
+
+def test_resumed_trajectory_pb_probabilities_and_gradients(monkeypatch):
+    env = HyperGrid(ndim=2, height=8)
+    states = env.states_from_tensor(
+        torch.stack(
+            [
+                torch.tensor([[1, 1], [0, 0], [1, 1]]),
+                torch.stack([torch.tensor([1, 2]), torch.tensor([1, 0]), env.sf]),
+                env.sf.expand(3, -1),
+            ]
+        )
+    )
+    trajectories = Trajectories(
+        env=env,
+        states=states,
+        actions=env.Actions(torch.tensor([[[1], [0], [2]], [[2], [2], [-1]]])),
+        terminating_idx=torch.tensor([2, 2, 1]),
+    )
+    with torch.random.fork_rng(devices=[]):
+        module = torch.nn.Linear(2, 2)
+    with torch.no_grad():
+        module.weight.zero_()
+        module.bias.copy_(torch.tensor([0.25, 0.75]).log())
+    pb = DiscretePolicyEstimator(
+        module,
+        n_actions=env.n_actions,
+        is_backward=True,
+        preprocessor=IdentityPreprocessor(
+            output_dim=2, target_dtype=torch.get_default_dtype()
+        ),
+    )
+    vectorized = get_trajectory_pbs(pb, trajectories)
+    monkeypatch.setattr(
+        DiscretePolicyEstimator, "is_vectorized", property(lambda self: False)
+    )
+    stepwise = get_trajectory_pbs(pb, trajectories)
+    expected = torch.zeros(2, 3)
+    expected[0, 0] = torch.tensor(0.75).log()
+    torch.testing.assert_close(stepwise, expected)
+    torch.testing.assert_close(stepwise, vectorized)
+
+    gradient = torch.autograd.grad(stepwise.sum(), module.bias)[0]
+    torch.testing.assert_close(gradient, torch.tensor([-0.25, 0.25]))
