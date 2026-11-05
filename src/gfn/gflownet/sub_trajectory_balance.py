@@ -67,9 +67,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             - "geometric_within": Each sub-trajectory of each trajectory is weighed
                 proportionally to (lamda ** len(sub_trajectory)), within each
                 trajectory. THIS CORRESPONDS TO THE ONE IN THE PAPER.
-            - "geometric": Each sub-trajectory of each trajectory is weighed
-                proportionally to (lamda ** len(sub_trajectory)), within the set of
-                all sub-trajectories.
+            - "geometric": The mean loss for each sub-trajectory length is weighed
+                proportionally to (lamda ** len(sub_trajectory)). With lamda=1,
+                these per-length means are weighed equally.
         lamda: Discount factor for longer trajectories (used in geometric weighting).
         log_reward_clip_min: If finite, clips log rewards to this value.
         forward_looking: Whether to use the forward-looking GFN loss.
@@ -742,11 +742,15 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 ]
             )
             max_len = trajectories.max_length
-            L = self.lamda
-            ratio = (1 - L) / (1 - L**max_len)
-            weights = ratio * (
-                L ** torch.arange(max_len, device=per_length_losses.device)
+            exponents = torch.arange(
+                max_len,
+                device=per_length_losses.device,
+                dtype=per_length_losses.dtype,
             )
+            if self.lamda > 1:
+                exponents.sub_(max_len - 1)
+            weights = self.lamda**exponents
+            weights = weights / weights.sum()
             if self.debug:
                 assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
             return (per_length_losses * weights).sum()
