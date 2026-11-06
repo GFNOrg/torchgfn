@@ -1,5 +1,6 @@
 from typing import Literal, Tuple, cast
 
+import numpy as np
 import pytest
 import torch
 from torch.distributions import Categorical
@@ -35,7 +36,7 @@ from gfn.preprocessors import (
     OneHotPreprocessor,
 )
 from gfn.samplers import LocalSearchSampler, Sampler
-from gfn.states import States
+from gfn.states import GraphStates, States
 from gfn.utils.modules import (
     MLP,
     GraphActionGNN,
@@ -1200,6 +1201,240 @@ def test_trajectories_extend(
         trajectories.extend(trajectories[[1, 0]])
     except Exception as e:
         raise ValueError(f"Error while testing {env_name}") from e
+
+
+def _backward_grid_trajectory(env, length):
+    return Trajectories(
+        env=env,
+        states=env.states_from_tensor(
+            torch.arange(length, -1, -1).reshape(length + 1, 1, 1)
+        ),
+        actions=env.actions_from_tensor(torch.zeros(length, 1, 1, dtype=torch.long)),
+        terminating_idx=torch.tensor([length]),
+        is_backward=True,
+        log_probs=torch.zeros(length, 1),
+        estimator_outputs=torch.zeros(length, 1, 1),
+    )
+
+
+@pytest.mark.parametrize("lengths", [(1, 3), (3, 1)])
+def test_extend_unequal_backward_trajectories(lengths):
+    env = HyperGrid(ndim=1, height=8, validate_modes=False)
+    trajectories = _backward_grid_trajectory(env, lengths[0])
+    other = _backward_grid_trajectory(env, lengths[1])
+    trajectories.extend(other)
+
+    assert trajectories.states[-1].is_initial_state.all()
+    reversed_trajectories = trajectories.reverse_backward_trajectories()
+    for column, length in enumerate(lengths):
+        assert torch.equal(
+            reversed_trajectories.states.tensor[: length + 1, column, 0],
+            torch.arange(length + 1),
+        )
+    assert trajectories.to_transitions().n_transitions == sum(lengths)
+
+
+def test_extend_preserves_source_trajectory_caches():
+    env = HyperGrid(ndim=1, height=8, validate_modes=False)
+    trajectories = _backward_grid_trajectory(env, 3)
+    other = _backward_grid_trajectory(env, 1)
+    trajectories.extend(other)
+
+    assert other.log_probs is not None and other.estimator_outputs is not None
+    assert torch.equal(other.log_probs, torch.zeros(1, 1))
+    assert torch.equal(other.estimator_outputs, torch.zeros(1, 1, 1))
+    transitions = other.to_transitions()
+    assert transitions.n_transitions == 1
+    assert torch.equal(transitions.states.tensor, torch.tensor([[1]]))
+    assert torch.equal(transitions.next_states.tensor, torch.tensor([[0]]))
+    assert transitions.log_probs is not None
+    assert torch.equal(transitions.log_probs, torch.zeros(1))
+
+
+def _assert_same_states(
+    actual: States, expected: States, conditions_mask: torch.Tensor | None = None
+) -> None:
+    """Asserts equal batch shapes, contents and conditions.
+
+    Args:
+        actual: The states to check.
+        expected: The reference states.
+        conditions_mask: If given, conditions are only compared where it is True.
+    """
+    assert actual.batch_shape == expected.batch_shape
+    if isinstance(expected, GraphStates):
+        assert isinstance(actual, GraphStates)
+        for got, want in zip(actual.data.flat, expected.data.flat):
+            assert torch.equal(got.x, want.x)
+            assert torch.equal(got.edge_index, want.edge_index)
+            assert torch.equal(got.edge_attr, want.edge_attr)
+    else:
+        assert torch.equal(actual.tensor, expected.tensor)
+    if expected.conditions is None:
+        assert actual.conditions is None
+        return
+    assert actual.conditions is not None
+    if conditions_mask is None:
+        assert torch.equal(actual.conditions, expected.conditions)
+    else:
+        assert torch.equal(
+            actual.conditions[conditions_mask], expected.conditions[conditions_mask]
+        )
+
+
+@pytest.mark.parametrize("is_backward", [False, True])
+@pytest.mark.parametrize(
+    "env_name",
+    ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"],
+)
+def test_extend_matches_sampled_padding(
+    env_name: Literal[
+        "HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges", "ConditionalHyperGrid"
+    ],
+    is_backward: bool,
+):
+    """Extending single trajectories reproduces the sampler's padding.
+
+    The sampler pads finished trajectories with sf (forward) or s0 (backward) and
+    keeps each trajectory's condition on those rows. Extending one trajectory with
+    another must give the same states, actions and log-probs as indexing both from
+    the sampled batch, in either order, and must leave the appended one unchanged.
+    """
+    torch.manual_seed(0)
+    np.random.seed(0)  # Random graph states are drawn with numpy.
+    forward, backward, *_ = trajectory_sampling_with_return(
+        env_name,
+        preprocessor_name="KHot" if env_name == "HyperGrid" else "Identity",
+        batch_size=8,
+        delta=0.1,
+        n_components=1,
+        n_components_s0=1,
+    )
+    trajectories = backward if is_backward else forward
+    if env_name == "GraphBuildingOnEdges":
+        # The graph environment is unconditional. Attach one condition per
+        # trajectory, as a conditional sampler would, to cover GraphStates
+        # conditions.
+        n_rows, n_trajectories = trajectories.states.batch_shape
+        trajectories.states.conditions = (
+            torch.rand(1, n_trajectories, 2).expand(n_rows, n_trajectories, 2).clone()
+        )
+    shortest = int(trajectories.terminating_idx.argmin())
+    longest = int(trajectories.terminating_idx.argmax())
+
+    for first, second in [(shortest, longest), (longest, shortest)]:
+        extended = trajectories[[first]]
+        other = trajectories[[second]]
+        other_states = other.states.clone()
+        other_actions = other.actions.tensor.clone()
+        assert other.log_probs is not None
+        other_log_probs = other.log_probs.clone()
+
+        extended.extend(other)
+        expected = trajectories[[first, second]]
+
+        assert extended.is_backward == is_backward
+        assert torch.equal(extended.terminating_idx, expected.terminating_idx)
+        # Forward padding marks sf rows with -inf conditions where the sampler
+        # keeps the real one, so forward conditions are compared on real rows.
+        rows = torch.arange(expected.states.batch_shape[0]).unsqueeze(1)
+        real_rows = rows <= expected.terminating_idx.unsqueeze(0)
+        _assert_same_states(
+            extended.states, expected.states, None if is_backward else real_rows
+        )
+        assert torch.equal(extended.actions.tensor, expected.actions.tensor)
+        assert extended.log_probs is not None and expected.log_probs is not None
+        assert torch.equal(extended.log_probs, expected.log_probs)
+        _assert_same_states(other.states, other_states)
+        assert torch.equal(other.actions.tensor, other_actions)
+        assert torch.equal(other.log_probs, other_log_probs)
+
+        # A backward trajectory sampled from a random state that is already s0 has
+        # no steps, and GraphBuildingOnEdges states reject empty batches (see
+        # test_graph_building_on_edges_rejects_empty_batch), so containers without
+        # steps are not converted.
+        for container in (extended, other):
+            n_steps = int(container.terminating_idx.sum())
+            if n_steps > 0:
+                assert container.to_transitions().n_transitions == n_steps
+
+        if is_backward:
+            _assert_same_states(
+                extended.reverse_backward_trajectories().states,
+                expected.reverse_backward_trajectories().states,
+            )
+            other.reverse_backward_trajectories()
+
+
+def _grid_containers(
+    env: HyperGrid, length: int, container_type: str
+) -> tuple[Trajectories | Transitions, Trajectories | Transitions]:
+    """Returns a backward and a forward container for one trajectory of `length`."""
+    backward = _backward_grid_trajectory(env, length)
+    forward = backward.reverse_backward_trajectories()
+    if container_type == "transitions":
+        return backward.to_transitions(), forward.to_transitions()
+    return backward, forward
+
+
+@pytest.mark.parametrize("container_type", ["trajectories", "transitions"])
+def test_replay_buffer_keeps_backward_direction(container_type: str):
+    """The replay buffer stores and samples backward containers as backward.
+
+    The buffer starts from an empty container, which is forward by default, so it
+    must take the direction of the first container added.
+    """
+    env = HyperGrid(ndim=1, height=8, validate_modes=False)
+    buffer = ReplayBuffer(env, capacity=10)
+    buffer.add(_grid_containers(env, 1, container_type)[0])
+    buffer.add(_grid_containers(env, 3, container_type)[0])
+
+    container = buffer.training_container
+    assert container is not None
+    assert container.is_backward
+    assert buffer.sample(n_samples=2).is_backward
+    if isinstance(container, Trajectories):
+        # Backward trajectories are padded with s0, not sf.
+        assert torch.equal(
+            container.states.tensor[..., 0],
+            torch.tensor([[1, 3], [0, 2], [0, 1], [0, 0]]),
+        )
+    else:
+        assert isinstance(container, Transitions)
+        assert container.n_transitions == 4
+        # The terminating next states of backward transitions are s0, so they have
+        # no reward. A forward container would compute rewards for them.
+        assert container.log_rewards is None
+
+
+@pytest.mark.parametrize("container_type", ["trajectories", "transitions"])
+def test_extend_rejects_mixed_directions(container_type: str):
+    """Forward and backward containers cannot be merged, in either order."""
+    env = HyperGrid(ndim=1, height=8, validate_modes=False)
+    backward, forward = _grid_containers(env, 2, container_type)
+    backward_len, forward_len = len(backward), len(forward)
+
+    with pytest.raises(ValueError, match="direction"):
+        backward.extend(forward)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="direction"):
+        forward.extend(backward)  # type: ignore[arg-type]
+    assert (len(backward), len(forward)) == (backward_len, forward_len)
+    assert backward.is_backward and not forward.is_backward
+
+
+@pytest.mark.parametrize("container_type", ["trajectories", "transitions"])
+def test_extend_empty_container_takes_direction(container_type: str):
+    """An empty container takes the direction of the first container added to it."""
+    env = HyperGrid(ndim=1, height=8, validate_modes=False)
+    backward, forward = _grid_containers(env, 2, container_type)
+    container_cls = Trajectories if container_type == "trajectories" else Transitions
+
+    for added in (backward, forward):
+        for empty_is_backward in (False, True):
+            container = container_cls(env, is_backward=empty_is_backward)
+            container.extend(added)  # type: ignore[arg-type]
+            assert container.is_backward == added.is_backward
+            assert len(container) == len(added)
 
 
 @pytest.mark.parametrize(
