@@ -14,10 +14,12 @@ from gfn.estimators import (
 from gfn.estimators import RolloutContext  # New rollout context used by PolicyMixin
 from gfn.estimators import (
     ConditionalDiscretePolicyEstimator,
+    ConditionalLogZEstimator,
     DiscreteGraphPolicyEstimator,
     DiscretePolicyEstimator,
     Estimator,
 )
+from gfn.gflownet import TBGFlowNet
 from gfn.gym import BoxPolar, ConditionalHyperGrid, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_polar_utils import (
@@ -505,6 +507,161 @@ def test_reverse_backward_trajectories(
     if env_name == "Box" or env_name == "GraphBuildingOnEdges":
         pytest.skip("`to_states_container` only works with DiscreteStates")
     _ = reversed_trajs.to_states_container()
+
+
+def test_local_search_preserves_conditions():
+    """LocalSearchSampler keeps each trajectory's condition on the trajectories it
+    returns, so a conditional GFlowNet can train on them.
+
+    Regression: the searched trajectories were built without conditions, and
+    `Trajectories.extend` then dropped the conditions of the whole batch.
+    """
+    torch.manual_seed(0)
+    env, pf, pb = get_env_and_estimators(
+        "ConditionalHyperGrid", "Identity", delta=0.1, n_components=1, n_components_s0=1
+    )
+    assert isinstance(env, ConditionalHyperGrid)
+    sampler = LocalSearchSampler(pf_estimator=pf, pb_estimator=pb)
+    n, n_loops = 8, 2
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=n,
+        save_logprobs=True,
+        n_local_search_loops=n_loops,
+        back_ratio=0.5,
+        use_metropolis_hastings=True,
+    )
+    assert trajectories.batch_size == n * (1 + n_loops)
+
+    conditions = trajectories.states.conditions
+    assert conditions is not None
+    # Each block (the initial samples, then one per search loop) holds the same n
+    # chains, so row i of every block carries chain i's condition at every non-sink
+    # state.
+    per_trajectory = conditions[0]
+    torch.testing.assert_close(per_trajectory, per_trajectory[:n].repeat(1 + n_loops, 1))
+    not_sink = ~trajectories.states.is_sink_state
+    torch.testing.assert_close(
+        conditions[not_sink], per_trajectory.expand_as(conditions)[not_sink]
+    )
+
+    # A conditional GFlowNet can train on the returned trajectories.
+    logZ = ConditionalLogZEstimator(
+        MLP(input_dim=env.condition_dim, output_dim=1), reduction="sum"
+    )
+    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=logZ)
+    loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=True)
+    assert torch.isfinite(loss)
+    loss.backward()
+
+
+def _sample_with_local_search(
+    n: int,
+    n_loops: int,
+    use_metropolis_hastings: bool = False,
+    force_decisions: bool | None = None,
+) -> Tuple[Trajectories, list[Trajectories], list[torch.Tensor]]:
+    """Samples HyperGrid trajectories with local search and records every round.
+
+    Args:
+        n: Number of chains.
+        n_loops: Number of local search rounds.
+        use_metropolis_hastings: If True, rounds accept proposals by
+            Metropolis-Hastings; otherwise, by reward.
+        force_decisions: If not None, replaces every accept/reject decision with this
+            value after it is drawn, so the random stream does not depend on it.
+
+    Returns:
+        The trajectories returned by the sampler, then, for each round, the
+        trajectories it searched from and its accept/reject decisions.
+    """
+    torch.manual_seed(0)
+    env, pf, pb = get_env_and_estimators(
+        "HyperGrid", "Identity", delta=0.1, n_components=1, n_components_s0=1
+    )
+    sampler = LocalSearchSampler(pf_estimator=pf, pb_estimator=pb)
+    local_search = sampler.local_search
+    searched: list[Trajectories] = []
+    decisions: list[torch.Tensor] = []
+
+    def recording_local_search(env, trajectories, *args, **kwargs):
+        proposals, is_updated = local_search(env, trajectories, *args, **kwargs)
+        if force_decisions is not None:
+            is_updated = torch.full_like(is_updated, force_decisions)
+        searched.append(trajectories)
+        decisions.append(is_updated)
+        return proposals, is_updated
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(sampler, "local_search", recording_local_search)
+        trajectories = sampler.sample_trajectories(
+            env,
+            n=n,
+            n_local_search_loops=n_loops,
+            back_ratio=0.5,
+            use_metropolis_hastings=use_metropolis_hastings,
+        )
+    return trajectories, searched, decisions
+
+
+def _assert_same_trajectories(actual: Trajectories, expected: Trajectories) -> None:
+    """Asserts that two batches hold the same trajectories in the same order.
+
+    Args:
+        actual: The trajectories to check.
+        expected: The trajectories they must equal.
+    """
+    assert torch.equal(actual.terminating_idx, expected.terminating_idx)
+    assert torch.equal(actual.states.tensor, expected.states.tensor)
+    assert torch.equal(actual.actions.tensor, expected.actions.tensor)
+
+
+@pytest.mark.parametrize("use_metropolis_hastings", [False, True])
+def test_local_search_continues_from_accepted_proposals(use_metropolis_hastings: bool):
+    """Each round searches every chain from its last accepted trajectory: the proposal
+    of the latest round that accepted one, otherwise its initial sample.
+
+    Regression: accepted chains were moved to the previous round's proposals (in the
+    first round, to their initial samples) instead of the ones just accepted, so the
+    first two rounds both searched every chain from its initial sample.
+    """
+    n, n_loops = 16, 3
+    trajectories, searched, decisions = _sample_with_local_search(
+        n, n_loops, use_metropolis_hastings
+    )
+    accepted = torch.stack(decisions)
+    # The check below covers both branches only if both occur.
+    assert accepted.any() and not accepted.all()
+
+    # Rows [0, n) hold the initial samples, and rows [n * (r + 1), n * (r + 2)) the
+    # proposals of round r.
+    last_accepted = torch.arange(n)
+    for r in range(n_loops):
+        _assert_same_trajectories(searched[r], trajectories[last_accepted])
+        proposals = torch.arange(n * (r + 1), n * (r + 2))
+        last_accepted = torch.where(accepted[r], proposals, last_accepted)
+
+
+def test_local_search_decisions_change_the_next_round():
+    """With two rounds, the second round's proposals depend on whether the first
+    round's proposals were accepted.
+
+    Regression: they did not, because no chain moved to an accepted proposal before
+    the third round.
+    """
+    n = 16
+    accept_all, _, _ = _sample_with_local_search(n, n_loops=2, force_decisions=True)
+    reject_all, _, _ = _sample_with_local_search(n, n_loops=2, force_decisions=False)
+    # The random streams are identical, so the initial samples and the first round's
+    # proposals coincide...
+    first_round = torch.arange(2 * n)
+    _assert_same_trajectories(accept_all[first_round], reject_all[first_round])
+    # ...but the second round searched from the first round's proposals in one run,
+    # and from the initial samples in the other.
+    second_round = torch.arange(2 * n, 3 * n)
+    assert not torch.equal(
+        accept_all[second_round].states.tensor, reject_all[second_round].states.tensor
+    )
 
 
 @pytest.mark.parametrize(
