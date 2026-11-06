@@ -361,11 +361,120 @@ def test_subtb_weighting_functions():
         "ModifiedDB",
         "TB",
         "equal",
+        "equal_within",
+        "geometric",
         "geometric_within",
     ):  # pyright: ignore[reportArgumentType]
         gfn = SubTBGFlowNet(pf=pf, pb=pb, logF=logF, weighting=weighting)
         loss = gfn.loss(env, trajs)
         assert torch.isfinite(loss), f"Non-finite loss for weighting={weighting}"
+
+
+def _make_subtb(env, pf, pb, **kwargs):
+    from gfn.gflownet import SubTBGFlowNet
+
+    preproc = KHotPreprocessor(env.height, env.ndim)
+    assert isinstance(preproc.output_dim, int)
+    logF = ScalarEstimator(
+        module=MLP(input_dim=preproc.output_dim, output_dim=1),
+        preprocessor=preproc,
+    )
+    return SubTBGFlowNet(pf=pf, pb=pb, logF=logF, **kwargs)
+
+
+@pytest.mark.parametrize("weighting", ["geometric", "geometric_within"])
+@pytest.mark.parametrize("lamda", [0.0, 0.9, 1.0, 1.5])
+def test_subtb_geometric_weightings_train_at_any_lamda(weighting, lamda):
+    """Regression: 'geometric' raised ZeroDivisionError at lamda=1."""
+    env, pf, pb = _make_env_and_estimators()
+    gfn = _make_subtb(env, pf, pb, weighting=weighting, lamda=lamda, debug=True)
+    trajs = _sample_trajs(env, pf, n=32)
+
+    loss = gfn.loss(env, trajs, reduction="sum")
+    assert loss.shape == ()
+    assert torch.isfinite(loss)
+
+    loss.backward()
+    grads = [p.grad for p in gfn.parameters() if p.grad is not None]
+    assert grads
+    assert all(torch.isfinite(g).all() for g in grads)
+
+
+@pytest.mark.parametrize("lamda", [0.5, 1.0, 1.5])
+def test_subtb_geometric_loss_is_weighted_mean_of_per_length_means(lamda):
+    """'geometric' weighs the mean loss of each length by lamda ** length."""
+    env, pf, pb = _make_env_and_estimators()
+    gfn = _make_subtb(env, pf, pb, weighting="geometric", lamda=lamda)
+    trajs = _sample_trajs(env, pf, n=32)
+
+    loss = gfn.loss(env, trajs)
+
+    scores, masks = gfn.get_scores(trajs, env=env)
+    per_length_means = torch.stack(
+        [gfn.loss_fn(s[~m]).double().mean() for s, m in zip(scores, masks)]
+    )
+    weights = torch.tensor(
+        [lamda**k for k in range(len(per_length_means))], dtype=torch.float64
+    )
+    expected = (weights / weights.sum() * per_length_means).sum()
+    torch.testing.assert_close(loss.double(), expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "weighting",
+    ["equal", "equal_within", "ModifiedDB", "geometric", "geometric_within"],
+)
+def test_subtb_reduction_none_returns_weighted_subtrajectory_losses(weighting):
+    """'none' gives one weighted loss per sub-trajectory, summing to the loss.
+
+    Regression: 'geometric' ignored the reduction and always returned a scalar.
+    """
+    env, pf, pb = _make_env_and_estimators()
+    gfn = _make_subtb(env, pf, pb, weighting=weighting)
+    trajs = _sample_trajs(env, pf)
+
+    per_subtrajectory = gfn.loss(env, trajs, reduction="none")
+
+    lengths = trajs.terminating_idx
+    n_subtrajectories = int((lengths * (lengths + 1) // 2).sum())
+    assert per_subtrajectory.shape == (n_subtrajectories,)
+    total = gfn.loss(env, trajs, reduction="sum")
+    torch.testing.assert_close(per_subtrajectory.sum(), total)
+    torch.testing.assert_close(gfn.loss(env, trajs, reduction="mean"), total)
+
+
+@pytest.mark.parametrize("weighting", ["geometric", "geometric_within"])
+def test_subtb_geometric_loss_ignores_padding(weighting):
+    """Regression: 'geometric' returned NaN for a container padded beyond its
+    longest trajectory, because the padded lengths had no sub-trajectories."""
+    from gfn.containers import Trajectories
+
+    env, pf, pb = _make_env_and_estimators()
+    gfn = _make_subtb(env, pf, pb, weighting=weighting)
+    trajs = _sample_trajs(env, pf)
+
+    pad = 3
+    states = trajs.states.clone()
+    states.pad_dim0_with_sf(required_first_dim=states.batch_shape[0] + pad)
+    actions = trajs.actions.clone()
+    actions.extend_with_dummy_actions(required_first_dim=actions.batch_shape[0] + pad)
+    padded = Trajectories(
+        env=env,
+        states=states,
+        actions=actions,
+        terminating_idx=trajs.terminating_idx,
+        log_rewards=trajs.log_rewards,
+    )
+    assert padded.max_length == trajs.max_length + pad
+
+    torch.testing.assert_close(gfn.loss(env, padded), gfn.loss(env, trajs))
+
+
+@pytest.mark.parametrize("lamda", [-0.5, float("nan"), float("inf")])
+def test_subtb_rejects_invalid_lamda(lamda):
+    env, pf, pb = _make_env_and_estimators()
+    with pytest.raises(ValueError, match="lamda"):
+        _make_subtb(env, pf, pb, weighting="geometric", lamda=lamda)
 
 
 # ---------------------------------------------------------------------------

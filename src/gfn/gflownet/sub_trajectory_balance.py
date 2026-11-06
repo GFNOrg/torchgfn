@@ -37,6 +37,100 @@ SubTBWeighting = Literal[
 ]
 
 
+def _geometric_length_weights(
+    lamda: float | torch.Tensor,
+    n_lengths: torch.Tensor,
+    max_len: int,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Returns geometric sub-trajectory length weights, rescaled to at most one.
+
+    Entry ``[k, ...]`` weighs sub-trajectories of length ``k + 1`` among the
+    ``n_lengths`` shortest lengths. It is ``lamda ** k`` divided by the largest of
+    those weights (``1`` when ``lamda <= 1``, ``lamda ** (n_lengths - 1)``
+    otherwise), and 0 for ``k >= n_lengths``. Every weight is thus a non-negative
+    integer power of ``min(lamda, 1 / lamda)`` in [0, 1], so none overflows for any
+    finite ``lamda >= 0`` and any trajectory length. The rescaling cancels once
+    callers normalize, and because the normalizer is built from these same values,
+    normalized weights sum to one up to rounding.
+
+    Args:
+        lamda: The geometric base, finite and non-negative.
+        n_lengths: Integer tensor with the number of lengths to weight, e.g. one
+            trajectory length per batch element.
+        max_len: The number of lengths in the returned tensor.
+        dtype: The floating-point dtype of the returned tensor.
+
+    Returns:
+        A tensor of shape (max_len, *n_lengths.shape).
+    """
+    offsets = torch.arange(max_len, device=n_lengths.device)
+    offsets = offsets.view(-1, *([1] * n_lengths.dim()))
+    lam = torch.as_tensor(lamda, device=n_lengths.device, dtype=dtype)
+    flip = lam > 1
+    base = torch.where(flip, lam.reciprocal(), lam)
+    exponents = torch.where(flip, n_lengths - 1 - offsets, offsets).clamp(min=0)
+    return base.pow(exponents).masked_fill(offsets >= n_lengths, 0.0)
+
+
+def _subtrajectory_counts(terminating_idx: torch.Tensor, max_len: int) -> torch.Tensor:
+    """Returns the number of sub-trajectories of each length in each trajectory.
+
+    Args:
+        terminating_idx: The trajectory lengths, of shape (batch_size,).
+        max_len: The number of lengths to count.
+
+    Returns:
+        A tensor of shape (max_len, batch_size) whose entry ``[k, b]`` is the number
+        of sub-trajectories of length ``k + 1`` in trajectory ``b``.
+    """
+    offsets = torch.arange(max_len, device=terminating_idx.device).unsqueeze(-1)
+    return (terminating_idx - offsets).clamp(min=0)
+
+
+def _repeat_per_start(per_length: torch.Tensor, max_len: int) -> ContributionsTensor:
+    """Repeats each length's row once per start position, as laid out by get_scores.
+
+    Args:
+        per_length: A tensor whose row ``k`` holds values for length ``k + 1``.
+        max_len: The maximum trajectory length.
+
+    Returns:
+        A tensor with max_len * (max_len + 1) / 2 rows, where row ``k`` of
+        ``per_length`` is repeated ``max_len - k`` times.
+    """
+    return per_length.repeat_interleave(
+        torch.arange(max_len, 0, -1, device=per_length.device),
+        dim=0,
+        output_size=max_len * (max_len + 1) // 2,
+    )
+
+
+def _assert_normalized(weights: torch.Tensor, name: str) -> None:
+    """Checks that ``weights`` are finite, non-negative, and sum to one.
+
+    The sum-to-one tolerance scales with ``weights.dtype``. torch accumulates
+    reduced-precision sums in float32, so their error comes from rounding: each
+    weight costs at most half an epsilon relative, or half the smallest subnormal
+    absolute if it underflows, and the normalization and the total cost about one
+    more epsilon. The 1e-5 floor covers float32 summation error over large batches
+    and keeps the float32 and float64 checks unchanged.
+
+    Args:
+        weights: The weights to check.
+        name: A name for the weights, used in error messages.
+
+    Raises:
+        AssertionError: If any check fails.
+    """
+    assert torch.isfinite(weights).all(), f"{name} contain non-finite values."
+    assert (weights >= 0).all(), f"{name} contain negative values."
+    info = torch.finfo(weights.dtype)
+    tol = max(1e-5, info.eps * (2 + weights.numel() * info.tiny))
+    total = weights.sum()
+    assert (total - 1.0).abs() <= tol, f"{name} sum to {total.item()}, not 1."
+
+
 class SubTBGFlowNet(TrajectoryBasedGFlowNet):
     r"""GFlowNet for the Sub-Trajectory Balance loss.
 
@@ -67,10 +161,19 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             - "geometric_within": Each sub-trajectory of each trajectory is weighed
                 proportionally to (lamda ** len(sub_trajectory)), within each
                 trajectory. THIS CORRESPONDS TO THE ONE IN THE PAPER.
-            - "geometric": Each sub-trajectory of each trajectory is weighed
-                proportionally to (lamda ** len(sub_trajectory)), within the set of
-                all sub-trajectories.
-        lamda: Discount factor for longer trajectories (used in geometric weighting).
+            - "geometric": Sub-trajectories are grouped by length across the whole
+                batch. Each length gets a total weight proportional to
+                (lamda ** length), normalized over the lengths present in the
+                batch, which is split equally among the sub-trajectories of that
+                length. A length's total weight does not depend on how many
+                sub-trajectories have it, so the few longest sub-trajectories can
+                weigh as much as all one-step transitions. With lamda=1, every
+                length gets the same total weight.
+        lamda: Base of the geometric weighting over sub-trajectory lengths (used by
+            the "geometric" and "geometric_within" weightings). A sub-trajectory of
+            length k is weighed proportionally to lamda ** k: values below 1 favor
+            short sub-trajectories, 1 weighs all lengths equally, and values above
+            1 favor long ones.
         log_reward_clip_min: If finite, clips log rewards to this value.
         forward_looking: Whether to use the forward-looking GFN loss.
         constant_pb: Whether to ignore the backward policy estimator, e.g., if the
@@ -99,7 +202,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 log flow of the states.
             weighting: The sub-trajectory weighting scheme (see class docstring for
                 details).
-            lamda: Discount factor for longer trajectories (used in geometric weighting).
+            lamda: Base of the geometric weighting over sub-trajectory lengths (see
+                class docstring). Must be finite and non-negative.
             log_reward_clip_min: If finite, clips log rewards to this value.
             forward_looking: Whether to use the forward-looking GFN loss.
             constant_pb: Whether to ignore the backward policy estimator, e.g., if the
@@ -110,6 +214,9 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             loss_fn: Regression loss applied to balance residuals.
                 Defaults to :class:`~gfn.gflownet.losses.SquaredLoss`.
 
+        Raises:
+            TypeError: If logF is not a ScalarEstimator or ConditionalScalarEstimator.
+            ValueError: If lamda is negative or not finite.
         """
         super().__init__(
             pf,
@@ -124,6 +231,10 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
                 f"logF must be a ScalarEstimator or ConditionalScalarEstimator, "
                 f"got {type(logF).__name__}"
             )
+        # Negative bases give negative weights, which make the objective unbounded
+        # below; NaN or infinite bases give non-finite weights.
+        if not (math.isfinite(lamda) and lamda >= 0):
+            raise ValueError(f"lamda must be finite and non-negative, got {lamda}.")
         self.logF = logF
         self.weighting = weighting
         self.lamda = lamda
@@ -596,38 +707,47 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             The contributions tensor of shape (max_len * (max_len+1) / 2, batch_size).
         """
         t_idx = trajectories.terminating_idx
-        default_dtype = torch.get_default_dtype()
-        lam = torch.as_tensor(self.lamda, device=t_idx.device, dtype=default_dtype)
         max_len = trajectories.max_length
-
-        arange = torch.arange(max_len, device=t_idx.device, dtype=default_dtype)
-        pow_lam = lam.pow(arange)
-
-        # The following tensor represents the weights given to each possible
-        # sub-trajectory length.
-        contributions = pow_lam
-        contributions = contributions.unsqueeze(-1).repeat(1, len(trajectories))
-        contributions = contributions.repeat_interleave(
-            torch.arange(max_len, 0, -1, device=t_idx.device),
-            dim=0,
-            output_size=int(max_len * (max_len + 1) / 2),
+        # weights[k, b] and counts[k, b] are the weight and the number of
+        # length-(k + 1) sub-trajectories in trajectory b.
+        weights = _geometric_length_weights(
+            self.lamda, t_idx, max_len, torch.get_default_dtype()
         )
+        counts = _subtrajectory_counts(t_idx, max_len)
 
-        # Now we need to divide each column by
-        #   sum_{i=0}^{n-1} (n - i) * lambda^i
-        # where n is the length of the trajectory corresponding to that column.
-        # We can do it the ugly way, or using the cool identity:
-        # https://www.wolframalpha.com/input?i=sum%28%28n-i%29+*+lambda+%5Ei%2C+i%3D0..n%29
-        pow_cumsum = pow_lam.cumsum(0)
-        i_pow_cumsum = (arange * pow_lam).cumsum(0)
-        gather_idx = (t_idx.clamp(min=1) - 1).long()
-        sum_geom = pow_cumsum[gather_idx]
-        sum_i_geom = i_pow_cumsum[gather_idx]
-        t_idx_f = t_idx.to(default_dtype)
-        per_trajectory_denom = t_idx_f * sum_geom - sum_i_geom
-        contributions = contributions / per_trajectory_denom / len(trajectories)
+        # Normalize within each trajectory, then weigh trajectories equally.
+        per_length = weights / (counts * weights).sum(0) / len(trajectories)
+        return _repeat_per_start(per_length, max_len)
 
-        return contributions
+    def get_geometric_contributions(
+        self, trajectories: Trajectories
+    ) -> ContributionsTensor:
+        """Calculates contributions for the 'geometric' weighting method.
+
+        Each length gets a total weight proportional to lamda ** length, normalized
+        over the lengths present in the batch, and split equally among the
+        sub-trajectories of that length. The weighted sum of the per-sub-trajectory
+        losses is therefore a weighted mean of the per-length mean losses.
+
+        Args:
+            trajectories: The batch of trajectories.
+
+        Returns:
+            The contributions tensor of shape (max_len * (max_len+1) / 2, batch_size).
+        """
+        t_idx = trajectories.terminating_idx
+        max_len = trajectories.max_length
+        # Every length up to the longest trajectory's occurs in the batch. Longer
+        # lengths only exist in a container padded beyond its longest trajectory;
+        # they get zero weight, so the present lengths' weights still sum to one.
+        weights = _geometric_length_weights(
+            self.lamda, t_idx.max(), max_len, torch.get_default_dtype()
+        )
+        counts = _subtrajectory_counts(t_idx, max_len).sum(-1)
+
+        per_length = weights / weights.sum() / counts.clamp(min=1)
+        contributions = _repeat_per_start(per_length, max_len)
+        return contributions.unsqueeze(-1).expand(-1, len(trajectories))
 
     def loss(
         self,
@@ -647,9 +767,12 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             trajectories: The batch of trajectories to compute the loss with.
             recalculate_all_logprobs: Whether to re-evaluate all logprobs.
             reduction: The reduction method to use ('mean', 'sum', or 'none').
-                Note: for geometric-based sub-trajectory weighting, 'mean' is not
-                supported and is coerced to 'sum' (a warning is emitted when
-                debug=True).
+                With 'DB' and 'TB' weighting, the per-transition or per-trajectory
+                losses are reduced as requested. Every other weighting scales each
+                sub-trajectory's loss by its normalized weight, so the loss is their
+                sum: 'mean' is treated as 'sum' (a warning is emitted when
+                debug=True), and 'none' returns the weighted per-sub-trajectory
+                losses, which sum to the loss.
             log_rewards: Optional custom log rewards tensor of shape
                 (n_trajectories,). When None, uses the environment rewards.
                 When provided, this overrides the terminal reward term used by
@@ -725,32 +848,6 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             final_scores = self.loss_fn(scores[0][~flattening_masks[0]])
             return loss_reduce(final_scores, reduction)
 
-        elif self.weighting == "geometric":
-            # The position i of the following 1D tensor represents the number of sub-
-            # trajectories of length i in the batch.
-            # n_sub_trajectories = torch.maximum(
-            #     trajectories.terminating_idx - torch.arange(3).unsqueeze(-1),
-            #     torch.tensor(0),
-            # ).sum(1)
-
-            # The following tensor's k-th entry represents the mean of all losses of
-            # sub-trajectories of length k.
-            per_length_losses = torch.stack(
-                [
-                    self.loss_fn(scores[~flattening_mask]).mean()
-                    for scores, flattening_mask in zip(scores, flattening_masks)
-                ]
-            )
-            max_len = trajectories.max_length
-            L = self.lamda
-            ratio = (1 - L) / (1 - L**max_len)
-            weights = ratio * (
-                L ** torch.arange(max_len, device=per_length_losses.device)
-            )
-            if self.debug:
-                assert (weights.sum() - 1.0).abs() < 1e-5, f"{weights.sum()}"
-            return (per_length_losses * weights).sum()
-
         # TODO: we need to know what reductions are valid for each weighting method.
         weight_functions = {
             "equal_within": self.get_equal_within_contributions,
@@ -758,6 +855,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
             "TB": self.get_tb_contributions,
             "ModifiedDB": self.get_modified_db_contributions,
             "geometric_within": self.get_geometric_within_contributions,
+            "geometric": self.get_geometric_contributions,
         }
         # Validate weighting unconditionally — this runs once per loss() call,
         # not per-element, so it doesn't affect torch.compile hot paths.
@@ -768,9 +866,7 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
 
         flat_contributions = contributions[~flattening_mask]
         if self.debug:
-            assert (
-                flat_contributions.sum() - 1.0
-            ).abs() < 1e-5, f"{flat_contributions.sum()}"
+            _assert_normalized(flat_contributions, f"{self.weighting!r} contributions")
 
         final_scores = flat_contributions * self.loss_fn(all_scores[~flattening_mask])
 
@@ -778,8 +874,8 @@ class SubTBGFlowNet(TrajectoryBasedGFlowNet):
         if reduction == "mean":
             if self.debug:
                 warnings.warn(
-                    "Mean reduction is not supported for SubTBGFlowNet with geometric "
-                    "weighting, using sum instead."
+                    "Mean reduction is not supported for SubTBGFlowNet with "
+                    f"{self.weighting!r} weighting, using sum instead."
                 )
             reduction = "sum"
 
