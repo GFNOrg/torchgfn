@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import inspect
 import logging
 from abc import ABC
@@ -437,14 +438,18 @@ class States(ABC):
         )
         return self.__class__(states, conditions=conditions, debug=self.debug)
 
-    def extend(self, other: States) -> None:
-        """Concatenates another States object along the final batch dimension.
+    def extend(self, other: States, pad_with_s0: bool = False) -> None:
+        r"""Concatenates another States object along the final batch dimension.
 
         Both States objects must have the same number of batch dimensions, which
-        should be 1 or 2.
+        should be 1 or 2. With 2 batch dimensions, the side with fewer rows is first
+        padded to the length of the other, with $s_f$ by default or with $s_0$ when
+        `pad_with_s0` is True. `other` is not modified.
 
         Args:
             other: States object to be concatenated to the current States object.
+            pad_with_s0: Whether to pad with $s_0$ instead of $s_f$. Backward
+                trajectories end in $s_0$, so they are padded with it.
         """
         self_was_empty = len(self) == 0
 
@@ -454,13 +459,11 @@ class States(ABC):
 
         elif len(other.batch_shape) == len(self.batch_shape) == 2:
             # This corresponds to adding a trajectory to a batch of trajectories
-            other = other.clone()  # TODO: Is there a more efficient way?
-            self.pad_dim0_with_sf(
-                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
-            )
-            other.pad_dim0_with_sf(
-                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
-            )
+            required_first_dim = max(self.batch_shape[0], other.batch_shape[0])
+            if other.batch_shape[0] < required_first_dim:
+                other = other.clone()  # Pad a copy, so that `other` is unchanged.
+                other._pad_dim0(required_first_dim, pad_with_s0)
+            self._pad_dim0(required_first_dim, pad_with_s0)
             self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
         else:
             raise ValueError(
@@ -501,42 +504,87 @@ class States(ABC):
         Given a batch of states (i.e. of `batch_shape=(a, b)`), extends `a` to a
         States object of `batch_shape = (required_first_dim, b)`, by adding the
         required number of $s_f$ tensors. This is useful to extend trajectories of
-        different lengths.
+        different lengths. The padded rows get the dummy condition -inf.
 
         Args:
             required_first_dim: The size of the first batch dimension post-expansion.
         """
+        sf = cast(torch.Tensor, self.__class__.sf)
+        self._pad_dim0_with_state(required_first_dim, sf, with_s0=False)
 
+    def pad_dim0_with_s0(self, required_first_dim: int) -> None:
+        r"""Extends a 2-dimensional batch of states along the first batch dimension.
+
+        Same as `pad_dim0_with_sf`, but adds $s_0$ tensors, which is where backward
+        trajectories end. The padded rows keep the condition of their trajectory, as
+        the samplers do.
+
+        Args:
+            required_first_dim: The size of the first batch dimension post-expansion.
+        """
+        s0 = cast(torch.Tensor, self.__class__.s0)
+        self._pad_dim0_with_state(required_first_dim, s0, with_s0=True)
+
+    def _pad_dim0(self, required_first_dim: int, with_s0: bool) -> None:
+        """Pads with `pad_dim0_with_s0` or `pad_dim0_with_sf`, so overrides apply."""
+        if with_s0:
+            self.pad_dim0_with_s0(required_first_dim)
+        else:
+            self.pad_dim0_with_sf(required_first_dim)
+
+    def _pad_dim0_with_state(
+        self, required_first_dim: int, state: torch.Tensor, with_s0: bool
+    ) -> None:
+        """Pads a 2-dimensional batch along the first batch dimension with `state`.
+
+        Args:
+            required_first_dim: The size of the first batch dimension post-expansion.
+            state: The state to pad with, $s_0$ or $s_f$.
+            with_s0: Whether `state` is $s_0$, which sets how conditions are padded.
+        """
         if len(self.batch_shape) != 2:
             raise ValueError(
-                f"pad_dim0_with_sf is not implemented for States of type "
-                f"{self.__class__.__name__} nor for batch shapes {self.batch_shape}"
+                f"Padding along the first batch dimension is not implemented for "
+                f"States of type {self.__class__.__name__} nor for batch shapes "
+                f"{self.batch_shape}"
             )
 
         if self.batch_shape[0] >= required_first_dim:
             return
 
         pad_count = required_first_dim - self.batch_shape[0]
-        self.tensor = torch.cat(
-            (
-                self.tensor,
-                self.__class__.sf.repeat(pad_count, self.batch_shape[1], 1).to(
-                    self.tensor.device
-                ),
-            ),
-            dim=0,
+        padding = state.repeat(
+            pad_count, self.batch_shape[1], *((1,) * len(self.state_shape))
         )
+        self.tensor = torch.cat((self.tensor, padding.to(self.tensor.device)), dim=0)
         # Invalidate cached comparisons since self.tensor changed.
         self._is_initial_cache = None
         self._is_sink_cache = None
-        # Pad conditions with -inf for sf states
-        if self.conditions is not None:
-            cond_pad = torch.full(
-                (pad_count, self.batch_shape[1], self.conditions.shape[-1]),
+        self._pad_conditions_dim0(pad_count, with_s0)
+
+    def _pad_conditions_dim0(self, pad_count: int, with_s0: bool) -> None:
+        """Pads the conditions of a 2-dimensional batch along the first dimension.
+
+        Call this after padding the states. Rows padded with $s_0$ keep the condition
+        of their trajectory, read from its first row, since a trajectory's condition
+        does not change along it. Rows padded with $s_f$ get the dummy condition -inf.
+
+        Args:
+            pad_count: The number of rows to add.
+            with_s0: Whether the rows were padded with $s_0$.
+        """
+        if self.conditions is None:
+            return
+        if with_s0 and self.conditions.shape[0] > 0:
+            padding = self.conditions[:1].expand(pad_count, *self.conditions.shape[1:])
+        else:
+            padding = torch.full(
+                (pad_count, *self.conditions.shape[1:]),
                 -float("inf"),
-                device=self.device,
+                dtype=self.conditions.dtype,
+                device=self.conditions.device,
             )
-            self.conditions = torch.cat((self.conditions, cond_pad), dim=0)
+        self.conditions = torch.cat((self.conditions, padding), dim=0)
 
     def _compare(self, other: torch.Tensor) -> torch.Tensor:
         """Computes elementwise equality between state tensor and an external tensor.
@@ -913,33 +961,21 @@ class DiscreteStates(States, ABC):
             if self.conditions is not None
             else None
         )
-        return self.__class__(states, conditions, debug=self.debug)
+        # Conditions by keyword: subclasses may take other arguments before them.
+        return self.__class__(states, conditions=conditions, debug=self.debug)
 
-    def extend(self, other: DiscreteStates) -> None:
-        """Concatenates another DiscreteStates object along the batch dimension.
+    def extend(self, other: DiscreteStates, pad_with_s0: bool = False) -> None:
+        r"""Concatenates another DiscreteStates object along the batch dimension.
+
+        See `States.extend`.
 
         Args:
-            other: DiscreteStates object to concatenate with.
+            other: DiscreteStates object to concatenate with. It is not modified.
+            pad_with_s0: Whether to pad 2-dimensional batches with $s_0$ instead of
+                $s_f$.
         """
         assert self.device == other.device, "Devices must match"
-        self_was_empty = len(self) == 0
-
-        if len(other.batch_shape) == len(self.batch_shape) == 1:
-            # This corresponds to adding a state to a trajectory
-            self.tensor = torch.cat((self.tensor, other.tensor), dim=0)
-        elif len(other.batch_shape) == len(self.batch_shape) == 2:
-            # This corresponds to adding a trajectory to a batch of trajectories
-            other = other.clone()
-            self.pad_dim0_with_sf(
-                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
-            )
-            other.pad_dim0_with_sf(
-                required_first_dim=max(self.batch_shape[0], other.batch_shape[0])
-            )
-            self.tensor = torch.cat((self.tensor, other.tensor), dim=1)
-
-        self._merge_conditions(other, self_was_empty)
-
+        super().extend(other, pad_with_s0=pad_with_s0)
         # Invalidate masks cache since underlying tensor has changed
         self._invalidate_masks_cache()
 
@@ -955,6 +991,18 @@ class DiscreteStates(States, ABC):
             required_first_dim: The size of the first batch dimension post-expansion.
         """
         super().pad_dim0_with_sf(required_first_dim)
+        # Invalidate masks cache since underlying tensor has changed
+        self._invalidate_masks_cache()
+
+    def pad_dim0_with_s0(self, required_first_dim: int) -> None:
+        r"""Extends states along the first batch dimension with initial states.
+
+        See `States.pad_dim0_with_s0`.
+
+        Args:
+            required_first_dim: The size of the first batch dimension post-expansion.
+        """
+        super().pad_dim0_with_s0(required_first_dim)
         # Invalidate masks cache since underlying tensor has changed
         self._invalidate_masks_cache()
 
@@ -1643,33 +1691,52 @@ class GraphStates(States):
         Args:
             required_first_dim: The size of the first batch dimension post-expansion.
         """
+        self._pad_dim0_with_graphs(required_first_dim, with_s0=False)
+
+    def pad_dim0_with_s0(self, required_first_dim: int) -> None:
+        r"""Extends a 2-dimensional batch of graph states along the first batch dimension.
+
+        Same as `pad_dim0_with_sf`, but adds $s_0$ graphs, which is where backward
+        trajectories end. The padded rows keep the condition of their trajectory, as
+        the samplers do.
+
+        Args:
+            required_first_dim: The size of the first batch dimension post-expansion.
+        """
+        self._pad_dim0_with_graphs(required_first_dim, with_s0=True)
+
+    def _pad_dim0_with_graphs(self, required_first_dim: int, with_s0: bool) -> None:
+        r"""Pads a 2-dimensional batch along the first dimension with $s_0$ or $s_f$.
+
+        Args:
+            required_first_dim: The size of the first batch dimension post-expansion.
+            with_s0: Whether to pad with $s_0$ graphs instead of $s_f$ graphs.
+        """
         if len(self.batch_shape) != 2:
             raise ValueError(
-                f"pad_dim0_with_sf requires batch_shape of length 2, "
-                f"got {self.batch_shape}"
+                f"Padding along the first batch dimension requires batch_shape of "
+                f"length 2, got {self.batch_shape}"
             )
 
         if self.batch_shape[0] >= required_first_dim:
             return
 
         pad_count = required_first_dim - self.batch_shape[0]
-        sf_states = self.make_sink_states((pad_count, self.batch_shape[1]))
-        self.data = np.concatenate([self.data, sf_states.data], axis=0)
+        make_states = self.make_initial_states if with_s0 else self.make_sink_states
+        padding = make_states((pad_count, self.batch_shape[1]), device=self.device)
+        self.data = np.concatenate([self.data, padding.data], axis=0)
+        self._pad_conditions_dim0(pad_count, with_s0)
 
-        # Pad conditions with -inf for sf states
-        if self.conditions is not None:
-            cond_pad = torch.full(
-                (pad_count, self.batch_shape[1], self.conditions.shape[-1]),
-                -float("inf"),
-                device=self.device,
-            )
-            self.conditions = torch.cat((self.conditions, cond_pad), dim=0)
+    def extend(self, other: GraphStates, pad_with_s0: bool = False) -> None:
+        r"""Concatenates another GraphStates object along the batch dimension.
 
-    def extend(self, other: GraphStates):
-        """Concatenates another GraphStates object along the batch dimension.
+        See `States.extend`. `other` is not modified, but its graphs are not copied:
+        both objects hold the same graphs afterwards.
 
         Args:
             other: GraphStates object to concatenate with.
+            pad_with_s0: Whether to pad 2-dimensional batches with $s_0$ instead of
+                $s_f$.
         """
         self_was_empty = len(self) == 0
 
@@ -1677,11 +1744,14 @@ class GraphStates(States):
             self.data = np.concatenate([self.data, other.data])
 
         elif len(self.batch_shape) == len(other.batch_shape) == 2:
-            max_first_dim = max(self.batch_shape[0], other.batch_shape[0])
-
-            # Pad both to the same first dimension using pad_dim0_with_sf
-            self.pad_dim0_with_sf(max_first_dim)
-            other.pad_dim0_with_sf(max_first_dim)
+            required_first_dim = max(self.batch_shape[0], other.batch_shape[0])
+            if other.batch_shape[0] < required_first_dim:
+                # Pad a shallow copy, so that `other` is unchanged. Padding replaces
+                # `data` and `conditions` rather than modifying them, so the graphs
+                # themselves need not be cloned.
+                other = copy.copy(other)
+                other._pad_dim0(required_first_dim, pad_with_s0)
+            self._pad_dim0(required_first_dim, pad_with_s0)
 
             # Concatenate along the second batch dimension
             self.data = np.concatenate([self.data, other.data], axis=1)

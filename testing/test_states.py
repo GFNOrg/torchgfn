@@ -1523,3 +1523,123 @@ class TestExtendPadCacheInvalidation:
         assert result.shape == (2,)
         assert result[0].item() is True
         assert result[1].item() is False
+
+
+# ---------------------------------------------------------------------------
+# 2-D extend padding
+# ---------------------------------------------------------------------------
+
+
+def _make_2d_states(kind: str, n_rows: int, n_cols: int, offset: float) -> States:
+    """Builds 2-D states that are neither s0 nor sf, with one condition per column."""
+    conditions = (
+        (offset + torch.arange(n_cols, dtype=torch.get_default_dtype()))
+        .view(1, n_cols, 1)
+        .expand(n_rows, n_cols, 1)
+        .clone()
+    )
+    if kind == "graph":
+        data = np.empty((n_rows, n_cols), dtype=object)
+        for i in range(n_rows * n_cols):
+            data.flat[i] = GeometricData(
+                x=torch.tensor([[offset + i]]),
+                edge_index=torch.zeros((2, 0), dtype=torch.long),
+                edge_attr=torch.zeros((0, 1)),
+            )
+        return MyGraphStates(data, conditions=conditions)
+
+    tensor = 2.0 + offset + torch.arange(n_rows * n_cols * 2.0).view(n_rows, n_cols, 2)
+    states_cls = SimpleDiscreteStates if kind == "discrete" else SimpleTensorStates
+    return states_cls(tensor, conditions=conditions)
+
+
+def _assert_same_states(actual: States, expected: States) -> None:
+    """Asserts that two states have the same batch shape, contents and conditions."""
+    assert actual.batch_shape == expected.batch_shape
+    if isinstance(expected, GraphStates):
+        assert isinstance(actual, GraphStates)
+        for got, want in zip(actual.data.flat, expected.data.flat):
+            assert torch.equal(got.x, want.x)
+            assert torch.equal(got.edge_index, want.edge_index)
+            assert torch.equal(got.edge_attr, want.edge_attr)
+    else:
+        assert torch.equal(actual.tensor, expected.tensor)
+    if expected.conditions is None:
+        assert actual.conditions is None
+    else:
+        assert actual.conditions is not None
+        assert torch.equal(actual.conditions, expected.conditions)
+
+
+@pytest.mark.parametrize("longer_first", [True, False])
+@pytest.mark.parametrize("pad_with_s0", [False, True])
+@pytest.mark.parametrize("kind", ["tensor", "discrete", "graph"])
+def test_extend_2d_pads_shorter_side(kind: str, pad_with_s0: bool, longer_first: bool):
+    """2-D extend pads the shorter side with s0 or sf and leaves `other` unchanged.
+
+    Rows padded with s0 keep their column's condition, since a backward trajectory
+    rests at s0 under its own condition. Rows padded with sf get the dummy -inf
+    condition.
+    """
+    long_states = _make_2d_states(kind, n_rows=3, n_cols=2, offset=0.0)
+    short_states = _make_2d_states(kind, n_rows=1, n_cols=2, offset=10.0)
+    states, other = (
+        (long_states, short_states) if longer_first else (short_states, long_states)
+    )
+    other_before = other.clone()
+
+    states.extend(other, pad_with_s0=pad_with_s0)
+
+    assert states.batch_shape == (3, 4)
+    is_padded = torch.zeros(3, 4, dtype=torch.bool)
+    if longer_first:
+        is_padded[1:, 2:] = True
+    else:
+        is_padded[1:, :2] = True
+    if pad_with_s0:
+        assert torch.equal(states.is_initial_state, is_padded)
+        assert not states.is_sink_state.any()
+    else:
+        assert torch.equal(states.is_sink_state, is_padded)
+        assert not states.is_initial_state.any()
+
+    # Every column has a constant condition, and row 0 is never padding.
+    assert states.conditions is not None
+    expected_conditions = states.conditions[:1].expand(3, 4, 1).clone()
+    if not pad_with_s0:
+        expected_conditions[is_padded] = -float("inf")
+    assert torch.equal(states.conditions, expected_conditions)
+
+    _assert_same_states(other, other_before)
+
+
+@pytest.mark.parametrize("pad_with_s0", [False, True])
+def test_extend_2d_pads_multidimensional_states(pad_with_s0: bool):
+    """Padding repeats s0 or sf over the batch for states with a 2-D state_shape."""
+
+    class MatrixStates(States):
+        state_shape = (2, 3)
+        s0 = torch.zeros(2, 3)
+        sf = torch.ones(2, 3)
+
+    states = MatrixStates(torch.full((3, 2, 2, 3), 5.0))
+    states.extend(MatrixStates(torch.full((1, 4, 2, 3), 7.0)), pad_with_s0=pad_with_s0)
+
+    assert states.tensor.shape == (3, 6, 2, 3)
+    padding = states.is_initial_state if pad_with_s0 else states.is_sink_state
+    assert padding[1:, 2:].all()
+    assert not padding[:, :2].any() and not padding[0].any()
+
+
+@pytest.mark.parametrize("batch_shape", [(2,), (2, 3)])
+def test_discrete_extend_refreshes_state_caches(batch_shape: tuple[int, ...]):
+    """DiscreteStates.extend drops cached is_initial_state/is_sink_state results."""
+    states = SimpleDiscreteStates(torch.zeros(*batch_shape, 2))
+    assert states.is_initial_state.all()  # Populates the cache.
+    assert not states.is_sink_state.any()  # Populates the cache.
+
+    states.extend(SimpleDiscreteStates(torch.ones(*batch_shape, 2)))
+
+    assert states.is_initial_state.shape == states.batch_shape
+    assert torch.equal(states.is_initial_state, (states.tensor == 0).all(-1))
+    assert torch.equal(states.is_sink_state, (states.tensor == 1).all(-1))

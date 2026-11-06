@@ -158,13 +158,22 @@ class BitSequenceStates(DiscreteStates):
             conditions = None
         return self.__class__(states, length, conditions, debug=self.debug)
 
-    def extend(self, other: BitSequenceStates) -> None:
-        """Extends the current BitSequenceStates object with another BitSequenceStates object.
+    def extend(self, other: BitSequenceStates, pad_with_s0: bool = False) -> None:
+        r"""Extends the current BitSequenceStates object with another BitSequenceStates object.
 
         Args:
-            other: The BitSequenceStates object to extend with.
+            other: The BitSequenceStates object to extend with. It is not modified.
+            pad_with_s0: Whether to pad 2-dimensional batches with $s_0$ instead of
+                $s_f$.
         """
-        super().extend(other)
+        if (
+            len(self.batch_shape) == len(other.batch_shape) == 2
+            and other.batch_shape[0] < self.batch_shape[0]
+        ):
+            # Pad a copy of `other` here, so that its `length` is padded too.
+            other = other.clone()
+            other._pad_dim0(self.batch_shape[0], pad_with_s0)
+        super().extend(other, pad_with_s0=pad_with_s0)
         self.length = torch.cat(
             (self.length, other.length), dim=len(self.batch_shape) - 1
         )
@@ -175,13 +184,28 @@ class BitSequenceStates(DiscreteStates):
         Args:
             required_first_dim: The required first dimension of the extended states.
         """
-        if self.batch_shape[0] >= required_first_dim:
-            return
-
-        pad_count = required_first_dim - self.batch_shape[0]
+        n_rows = self.batch_shape[0]
         super().pad_dim0_with_sf(required_first_dim)
+        self._pad_length(self.batch_shape[0] - n_rows)
 
-        # Extend length with zeros for the sink states
+    def pad_dim0_with_s0(self, required_first_dim: int) -> None:
+        """Extends the current BitSequenceStates object with initial states.
+
+        Args:
+            required_first_dim: The required first dimension of the extended states.
+        """
+        n_rows = self.batch_shape[0]
+        super().pad_dim0_with_s0(required_first_dim)
+        self._pad_length(self.batch_shape[0] - n_rows)
+
+    def _pad_length(self, pad_count: int) -> None:
+        """Pads `length` with zeros along the first batch dimension.
+
+        Args:
+            pad_count: The number of rows to add.
+        """
+        if pad_count <= 0:
+            return
         length_pad = torch.zeros(
             pad_count,
             *self.length.shape[1:],

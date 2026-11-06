@@ -90,17 +90,22 @@ class ChipDesignStates(DiscreteStates):
             tensor=tensor, conditions=conditions, device=device, debug=debug
         )
         if current_node_idx is None:
-            is_unplaced = tensor == -1
-            is_unplaced_padded = torch.cat(
-                [
-                    is_unplaced,
-                    torch.ones_like(is_unplaced[..., :1]),
-                ],
-                dim=-1,
-            )
-            current_node_idx = is_unplaced_padded.long().argmax(dim=-1)
+            current_node_idx = self._first_unplaced_idx(tensor)
 
         self.current_node_idx = current_node_idx
+
+    @staticmethod
+    def _first_unplaced_idx(tensor: torch.Tensor) -> torch.Tensor:
+        """Returns the index of the first unplaced macro, or n_macros if none is."""
+        is_unplaced = tensor == -1
+        is_unplaced_padded = torch.cat(
+            [
+                is_unplaced,
+                torch.ones_like(is_unplaced[..., :1]),
+            ],
+            dim=-1,
+        )
+        return is_unplaced_padded.long().argmax(dim=-1)
 
     def clone(self) -> "ChipDesignStates":
         """Creates a copy of the states."""
@@ -124,6 +129,8 @@ class ChipDesignStates(DiscreteStates):
         subset = self.__class__(
             self.tensor[index],
             current_node_idx=self.current_node_idx[index],
+            conditions=self.conditions[index] if self.conditions is not None else None,
+            debug=self.debug,
         )
         if self._forward_masks_cache is not None:
             subset.forward_masks = self._forward_masks_cache[index]
@@ -136,13 +143,60 @@ class ChipDesignStates(DiscreteStates):
         super().__setitem__(index, value)
         self.current_node_idx[index] = value.current_node_idx
 
-    def extend(self, other: "ChipDesignStates") -> None:
-        """Extends the states with another states."""
-        super().extend(other)
+    def extend(self, other: "ChipDesignStates", pad_with_s0: bool = False) -> None:
+        """Extends the states with another states, which are not modified.
+
+        Args:
+            other: The states to extend with.
+            pad_with_s0: Whether to pad 2-dimensional batches with s0 instead of sf.
+        """
+        if (
+            len(self.batch_shape) == len(other.batch_shape) == 2
+            and other.batch_shape[0] < self.batch_shape[0]
+        ):
+            # Pad a copy of `other` here, so that its `current_node_idx` is padded too.
+            other = other.clone()
+            other._pad_dim0(self.batch_shape[0], pad_with_s0)
+        super().extend(other, pad_with_s0=pad_with_s0)
         self.current_node_idx = torch.cat(
             (self.current_node_idx, other.current_node_idx),
             dim=len(self.batch_shape) - 1,
         )
+
+    def pad_dim0_with_sf(self, required_first_dim: int) -> None:
+        """Pads the first batch dimension with sink states.
+
+        Args:
+            required_first_dim: The size of the first batch dimension post-expansion.
+        """
+        n_rows = self.batch_shape[0]
+        super().pad_dim0_with_sf(required_first_dim)
+        self._pad_current_node_idx(n_rows)
+
+    def pad_dim0_with_s0(self, required_first_dim: int) -> None:
+        """Pads the first batch dimension with initial states.
+
+        Args:
+            required_first_dim: The size of the first batch dimension post-expansion.
+        """
+        n_rows = self.batch_shape[0]
+        super().pad_dim0_with_s0(required_first_dim)
+        self._pad_current_node_idx(n_rows)
+
+    def _pad_current_node_idx(self, n_rows: int) -> None:
+        """Computes `current_node_idx` for the rows added after the first `n_rows`.
+
+        Args:
+            n_rows: The number of rows before padding.
+        """
+        if self.batch_shape[0] > n_rows:
+            self.current_node_idx = torch.cat(
+                (
+                    self.current_node_idx,
+                    self._first_unplaced_idx(self.tensor[n_rows:]),
+                ),
+                dim=0,
+            )
 
     @classmethod
     def stack(cls, states: Sequence["ChipDesignStates"]) -> "ChipDesignStates":

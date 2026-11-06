@@ -353,18 +353,24 @@ class Trajectories(Container):
         """Extends this Trajectories object with another Trajectories object.
 
         Extends along all attributes in turn (actions, states, terminating_idx, log_probs,
-        log_rewards).
+        log_rewards). Shorter trajectories are padded with the state they end in: $s_f$
+        for forward trajectories and $s_0$ for backward ones. `other` is not modified.
 
-        Shorter backward trajectories are padded with initial states. The appended
-        object, including its cached probabilities and estimator outputs, is unchanged.
+        An empty container takes the direction of `other`, so that a container created
+        with the default `is_backward=False`, as the replay buffer does, can collect
+        backward trajectories.
 
         Args:
-            other: Another Trajectories to append.
+            other: Another Trajectories to append, in the same direction as this one.
+
+        Raises:
+            ValueError: If both containers are non-empty and only one is backward.
         """
         if len(other) == 0:
             return
 
         if len(self) == 0:
+            self.is_backward = other.is_backward
             if other._log_rewards is not None:
                 self._log_rewards = torch.full(
                     (0,), fill_value=-float("inf"), device=self.device
@@ -380,34 +386,22 @@ class Trajectories(Container):
                     dtype=other.estimator_outputs.dtype,
                     device=self.device,
                 )
-
-        self_state_length, self_batch_size = self.states.batch_shape
-        other_state_length = other.states.batch_shape[0]
+        elif self.is_backward != other.is_backward:
+            raise ValueError(
+                "Cannot extend trajectories with trajectories of the other direction "
+                f"(is_backward={self.is_backward}, other.is_backward="
+                f"{other.is_backward})."
+            )
 
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
-        self.states.extend(other.states)  # batch_size comes from this.
-        if self.is_backward and self_state_length != other_state_length:
-            # States.extend pads with sink states, but backward paths terminate at s0.
-            pad_start = min(self_state_length, other_state_length)
-            batch_slice = (
-                slice(None, self_batch_size)
-                if self_state_length < other_state_length
-                else slice(self_batch_size, None)
-            )
-            pad_index = (slice(pad_start, None), batch_slice)
-            conditions = self.states.conditions
-            self.states[pad_index] = self.env.states_from_batch_shape(
-                (
-                    self.states.batch_shape[0] - pad_start,
-                    (
-                        self_batch_size
-                        if self_state_length < other_state_length
-                        else len(other)
-                    ),
-                ),
-                conditions=conditions[pad_index] if conditions is not None else None,
-            )
+        # batch_size comes from the states.
+        if self.is_backward:
+            self.states.extend(other.states, pad_with_s0=True)
+        else:
+            # No keyword here, so that States subclasses whose `extend` does not take
+            # `pad_with_s0` keep working with forward trajectories.
+            self.states.extend(other.states)
         self.terminating_idx = torch.cat(
             (self.terminating_idx, other.terminating_idx), dim=0
         )

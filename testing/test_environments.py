@@ -7,6 +7,7 @@ import torch
 from tensordict import TensorDict
 
 from gfn.actions import GraphActions, GraphActionType
+from gfn.containers import Trajectories
 from gfn.env import DiscreteEnv, Env, NonValidActionsError
 from gfn.estimators import (
     DiscretePolicyEstimator,
@@ -25,7 +26,7 @@ from gfn.gym import (
 )
 from gfn.gym.chip_design import ChipDesignStates
 from gfn.gym.diffusion_sampling import DiffusionSampling
-from gfn.gym.graph_building import GraphBuilding
+from gfn.gym.graph_building import GraphBuilding, GraphBuildingOnEdges
 from gfn.gym.perfect_tree import PerfectBinaryTree
 from gfn.gym.set_addition import SetAddition
 from gfn.preprocessors import IdentityPreprocessor, KHotPreprocessor, OneHotPreprocessor
@@ -1671,3 +1672,123 @@ def test_enumeration_unavailable_reason_distinguishes_its_causes():
 
     enumerable = HyperGrid(ndim=2, height=5, store_all_states=True, validate_modes=False)
     assert enumerable.enumeration_unavailable_reason() is None
+
+
+@pytest.mark.parametrize("longer_first", [True, False])
+@pytest.mark.parametrize("pad_with_s0", [False, True])
+def test_bitsequence_extend_2d_pads_length(pad_with_s0: bool, longer_first: bool):
+    """BitSequenceStates.extend pads `length` along with the states."""
+    env = BitSequence(word_size=1, seq_size=8, n_modes=2, device_str="cpu", seed=0)
+    long_tensor = -torch.ones(3, 2, env.words_per_seq, dtype=torch.long)
+    long_tensor[..., 0] = 1
+    short_tensor = -torch.ones(1, 2, env.words_per_seq, dtype=torch.long)
+    short_tensor[..., :2] = 0
+    long_states, short_states = env.States(long_tensor), env.States(short_tensor)
+    states, other = (
+        (long_states, short_states) if longer_first else (short_states, long_states)
+    )
+    other_length = other.length.clone()
+
+    states.extend(other, pad_with_s0=pad_with_s0)
+
+    assert states.batch_shape == (3, 4)
+    assert states.length.shape == (3, 4)
+    expected_length = torch.zeros(3, 4, dtype=torch.long)
+    long_cols, short_cols = (slice(0, 2), slice(2, 4))
+    if not longer_first:
+        long_cols, short_cols = short_cols, long_cols
+    expected_length[:, long_cols] = 1
+    expected_length[0, short_cols] = 2
+    assert torch.equal(states.length, expected_length)
+    assert torch.equal(other.length, other_length)
+
+
+class _ChipStates(ChipDesignStates):
+    """ChipDesign states for 3 macros, usable without the ChipDesign environment.
+
+    The environment needs a placement binary that only runs on Linux.
+    """
+
+    state_shape = (3,)
+    s0 = torch.full((3,), -1, dtype=torch.long)
+    sf = torch.full((3,), -2, dtype=torch.long)
+    n_actions = 5
+
+
+@pytest.mark.parametrize("longer_first", [True, False])
+@pytest.mark.parametrize("pad_with_s0", [False, True])
+def test_chip_design_extend_2d_pads_current_node_idx(
+    pad_with_s0: bool, longer_first: bool
+):
+    """ChipDesignStates.extend keeps `current_node_idx` in step with the states."""
+    long_tensor = torch.tensor([[0, -1, -1], [0, 1, -1], [0, 1, 2]])
+    long_states = _ChipStates(long_tensor.unsqueeze(1).expand(3, 2, 3).clone())
+    short_states = _ChipStates(torch.tensor([[[3, -1, -1], [3, 2, -1]]]))
+    states, other = (
+        (long_states, short_states) if longer_first else (short_states, long_states)
+    )
+    other_node_idx = other.current_node_idx.clone()
+
+    states.extend(other, pad_with_s0=pad_with_s0)
+
+    assert states.batch_shape == (3, 4)
+    padding = states.is_initial_state if pad_with_s0 else states.is_sink_state
+    assert padding.sum() == 4
+    # current_node_idx is the index of the first unplaced macro: 0 for s0, and
+    # n_macros for sf, which has no unplaced macros.
+    assert torch.equal(
+        states.current_node_idx, _ChipStates(states.tensor).current_node_idx
+    )
+    assert torch.equal(other.current_node_idx, other_node_idx)
+
+
+def test_chip_design_states_keep_conditions():
+    """Indexing and flattening ChipDesignStates keep conditions and node indices."""
+    tensor = torch.tensor(
+        [
+            [[0, -1, -1], [0, 1, -1], [0, 1, 2]],
+            [[2, -1, -1], [-1, -1, -1], [-2, -2, -2]],
+        ]
+    )
+    conditions = torch.rand(2, 3, 4)
+    states = _ChipStates(tensor, conditions=conditions, debug=True)
+    node_idx = states.current_node_idx
+
+    for index in (0, (slice(None), [0, 2]), states.is_initial_state):
+        subset = states[index]
+        assert subset.conditions is not None
+        assert torch.equal(subset.conditions, conditions[index])
+        assert torch.equal(subset.current_node_idx, node_idx[index])
+        assert subset.debug
+
+    flat = states.flatten()
+    assert flat.conditions is not None
+    assert torch.equal(flat.conditions, conditions.view(6, 4))
+    assert torch.equal(flat.current_node_idx, node_idx.view(6))
+
+
+def test_graph_building_on_edges_rejects_empty_batch():
+    """Sink and initial-state checks on an empty batch fail with a clear message."""
+    env = GraphBuildingOnEdges(
+        n_nodes=3,
+        state_evaluator=lambda s: torch.zeros(s.batch_shape),
+        directed=False,
+        device=torch.device("cpu"),
+    )
+    states = env.states_from_batch_shape((0,))
+    with pytest.raises(AssertionError, match="empty batch"):
+        _ = states.is_sink_state
+    with pytest.raises(AssertionError, match="empty batch"):
+        _ = states.is_initial_state
+
+    # The common way to get there: a backward trajectory that starts at s0 has no
+    # steps, so it has no transitions.
+    no_steps = Trajectories(
+        env,
+        states=env.states_from_batch_shape((1, 1)),
+        actions=env.actions_from_batch_shape((0, 1)),
+        terminating_idx=torch.tensor([0]),
+        is_backward=True,
+    )
+    with pytest.raises(AssertionError, match="empty batch"):
+        no_steps.to_transitions()

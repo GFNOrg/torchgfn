@@ -573,7 +573,18 @@ class GraphBuildingOnEdges(GraphBuilding):
 
             @property
             def is_sink_state(self) -> torch.Tensor:
-                """Returns a tensor that is `True` for states that are `sf`."""
+                """Returns a tensor that is `True` for states that are `sf`.
+
+                Raises:
+                    AssertionError: If the batch is empty. `is_initial_state` relies on
+                        this property, so it raises the same error.
+                """
+                assert self.data.size > 0, (
+                    "is_sink_state and is_initial_state cannot be computed for an "
+                    f"empty batch of {type(self).__name__} (batch_shape="
+                    f"{self.batch_shape}). An empty batch arises, for example, from "
+                    "converting trajectories without any steps to transitions."
+                )
                 xs = torch.cat([g.x for g in self.data.flat], dim=1)  # type: ignore
                 return (xs == self.sf.x).all(dim=0).view(self.batch_shape)
 

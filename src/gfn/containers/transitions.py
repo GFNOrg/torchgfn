@@ -325,13 +325,22 @@ class Transitions(Container):
     def extend(self, other: Transitions) -> None:
         """Extends this Transitions object with another Transitions object.
 
+        An empty container takes the direction of `other`, so that a container created
+        with the default `is_backward=False`, as the replay buffer does, can collect
+        backward transitions.
+
         Args:
-            Another Transitions object to append.
+            other: Another Transitions object to append, in the same direction as this
+                one.
+
+        Raises:
+            ValueError: If both containers are non-empty and only one is backward.
         """
         if len(other) == 0:
             return
 
         if len(self) == 0:
+            self.is_backward = other.is_backward
             if other._log_rewards is not None:
                 self._log_rewards = torch.full(
                     size=(0,),
@@ -344,6 +353,12 @@ class Transitions(Container):
                     fill_value=0.0,
                     device=self.device,
                 )
+        elif self.is_backward != other.is_backward:
+            raise ValueError(
+                "Cannot extend transitions with transitions of the other direction "
+                f"(is_backward={self.is_backward}, other.is_backward="
+                f"{other.is_backward})."
+            )
 
         assert len(self.states.batch_shape) == len(other.states.batch_shape) == 1
 
