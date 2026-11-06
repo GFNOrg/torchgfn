@@ -14,10 +14,12 @@ from gfn.estimators import (
 from gfn.estimators import RolloutContext  # New rollout context used by PolicyMixin
 from gfn.estimators import (
     ConditionalDiscretePolicyEstimator,
+    ConditionalLogZEstimator,
     DiscreteGraphPolicyEstimator,
     DiscretePolicyEstimator,
     Estimator,
 )
+from gfn.gflownet import TBGFlowNet
 from gfn.gym import BoxPolar, ConditionalHyperGrid, DiscreteEBM, HyperGrid
 from gfn.gym.graph_building import GraphBuildingOnEdges
 from gfn.gym.helpers.box_polar_utils import (
@@ -505,6 +507,52 @@ def test_reverse_backward_trajectories(
     if env_name == "Box" or env_name == "GraphBuildingOnEdges":
         pytest.skip("`to_states_container` only works with DiscreteStates")
     _ = reversed_trajs.to_states_container()
+
+
+def test_local_search_preserves_conditions():
+    """LocalSearchSampler keeps each trajectory's condition on the trajectories it
+    returns, so a conditional GFlowNet can train on them.
+
+    Regression: the searched trajectories were built without conditions, and
+    `Trajectories.extend` then dropped the conditions of the whole batch.
+    """
+    torch.manual_seed(0)
+    env, pf, pb = get_env_and_estimators(
+        "ConditionalHyperGrid", "Identity", delta=0.1, n_components=1, n_components_s0=1
+    )
+    assert isinstance(env, ConditionalHyperGrid)
+    sampler = LocalSearchSampler(pf_estimator=pf, pb_estimator=pb)
+    n, n_loops = 8, 2
+    trajectories = sampler.sample_trajectories(
+        env,
+        n=n,
+        save_logprobs=True,
+        n_local_search_loops=n_loops,
+        back_ratio=0.5,
+        use_metropolis_hastings=True,
+    )
+    assert trajectories.batch_size == n * (1 + n_loops)
+
+    conditions = trajectories.states.conditions
+    assert conditions is not None
+    # Each block (the initial samples, then one per search loop) holds the same n
+    # chains, so row i of every block carries chain i's condition at every non-sink
+    # state.
+    per_trajectory = conditions[0]
+    torch.testing.assert_close(per_trajectory, per_trajectory[:n].repeat(1 + n_loops, 1))
+    not_sink = ~trajectories.states.is_sink_state
+    torch.testing.assert_close(
+        conditions[not_sink], per_trajectory.expand_as(conditions)[not_sink]
+    )
+
+    # A conditional GFlowNet can train on the returned trajectories.
+    logZ = ConditionalLogZEstimator(
+        MLP(input_dim=env.condition_dim, output_dim=1), reduction="sum"
+    )
+    gflownet = TBGFlowNet(pf=pf, pb=pb, logZ=logZ)
+    loss = gflownet.loss(env, trajectories, recalculate_all_logprobs=True)
+    assert torch.isfinite(loss)
+    loss.backward()
 
 
 @pytest.mark.parametrize(

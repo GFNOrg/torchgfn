@@ -868,9 +868,22 @@ class LocalSearchSampler(Sampler):
             ):
                 assert torch.all(_new_trajectories_log_pb == new_trajectories_log_pb)
 
+        # Conditions are constant within a trajectory (see `local_search`), so each
+        # new trajectory carries its source trajectory's condition at every step, as
+        # the sampler records them. Without this, conditional policies cannot evaluate
+        # the new trajectories, and `Trajectories.extend` drops the conditions of the
+        # whole batch they are appended to.
+        new_trajectories_conditions = None
+        if prev_trajectories.states.conditions is not None:
+            new_trajectories_conditions = prev_trajectories.states.conditions[0].repeat(
+                max_traj_len + 1, 1, 1
+            )
+
         new_trajectories = Trajectories(
             env=env,
-            states=env.states_from_tensor(new_trajectories_states_tsr),
+            states=env.states_from_tensor(
+                new_trajectories_states_tsr, conditions=new_trajectories_conditions
+            ),
             actions=env.actions_from_tensor(new_trajectories_actions_tsr),
             terminating_idx=new_trajectories_dones,
             is_backward=False,
