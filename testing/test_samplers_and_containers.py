@@ -942,6 +942,52 @@ def test_trajectories_extend(
         raise ValueError(f"Error while testing {env_name}") from e
 
 
+def _backward_grid_trajectory(env, length):
+    return Trajectories(
+        env=env,
+        states=env.states_from_tensor(
+            torch.arange(length, -1, -1).reshape(length + 1, 1, 1)
+        ),
+        actions=env.actions_from_tensor(torch.zeros(length, 1, 1, dtype=torch.long)),
+        terminating_idx=torch.tensor([length]),
+        is_backward=True,
+        log_probs=torch.zeros(length, 1),
+        estimator_outputs=torch.zeros(length, 1, 1),
+    )
+
+
+@pytest.mark.parametrize("lengths", [(1, 3), (3, 1)])
+def test_extend_unequal_backward_trajectories(lengths):
+    env = HyperGrid(ndim=1, height=8, validate_modes=False)
+    trajectories = _backward_grid_trajectory(env, lengths[0])
+    other = _backward_grid_trajectory(env, lengths[1])
+    trajectories.extend(other)
+
+    assert trajectories.states[-1].is_initial_state.all()
+    reversed_trajectories = trajectories.reverse_backward_trajectories()
+    for column, length in enumerate(lengths):
+        assert torch.equal(
+            reversed_trajectories.states.tensor[: length + 1, column, 0],
+            torch.arange(length + 1),
+        )
+    assert trajectories.to_transitions().n_transitions == sum(lengths)
+
+
+def test_extend_preserves_source_trajectory_caches():
+    env = HyperGrid(ndim=1, height=8, validate_modes=False)
+    trajectories = _backward_grid_trajectory(env, 3)
+    other = _backward_grid_trajectory(env, 1)
+    trajectories.extend(other)
+
+    assert torch.equal(other.log_probs, torch.zeros(1, 1))
+    assert torch.equal(other.estimator_outputs, torch.zeros(1, 1, 1))
+    transitions = other.to_transitions()
+    assert transitions.n_transitions == 1
+    assert torch.equal(transitions.states.tensor, torch.tensor([[1]]))
+    assert torch.equal(transitions.next_states.tensor, torch.tensor([[0]]))
+    assert torch.equal(transitions.log_probs, torch.zeros(1))
+
+
 @pytest.mark.parametrize(
     "env_name", ["HyperGrid", "DiscreteEBM", "Box", "GraphBuildingOnEdges"]
 )

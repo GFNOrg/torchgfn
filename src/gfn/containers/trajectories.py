@@ -355,6 +355,9 @@ class Trajectories(Container):
         Extends along all attributes in turn (actions, states, terminating_idx, log_probs,
         log_rewards).
 
+        Shorter backward trajectories are padded with initial states. The appended
+        object, including its cached probabilities and estimator outputs, is unchanged.
+
         Args:
             other: Another Trajectories to append.
         """
@@ -378,9 +381,33 @@ class Trajectories(Container):
                     device=self.device,
                 )
 
+        self_state_length, self_batch_size = self.states.batch_shape
+        other_state_length = other.states.batch_shape[0]
+
         # TODO: The replay buffer is storing `dones` - this wastes a lot of space.
         self.actions.extend(other.actions)
         self.states.extend(other.states)  # batch_size comes from this.
+        if self.is_backward and self_state_length != other_state_length:
+            # States.extend pads with sink states, but backward paths terminate at s0.
+            pad_start = min(self_state_length, other_state_length)
+            batch_slice = (
+                slice(None, self_batch_size)
+                if self_state_length < other_state_length
+                else slice(self_batch_size, None)
+            )
+            pad_index = (slice(pad_start, None), batch_slice)
+            conditions = self.states.conditions
+            self.states[pad_index] = self.env.states_from_batch_shape(
+                (
+                    self.states.batch_shape[0] - pad_start,
+                    (
+                        self_batch_size
+                        if self_state_length < other_state_length
+                        else len(other)
+                    ),
+                ),
+                conditions=conditions[pad_index] if conditions is not None else None,
+            )
         self.terminating_idx = torch.cat(
             (self.terminating_idx, other.terminating_idx), dim=0
         )
@@ -396,21 +423,21 @@ class Trajectories(Container):
         # number of steps (first dimension), padding with 0.0 if necessary, before
         # concatenation.
         if self.log_probs is not None and other.log_probs is not None:
-            self.log_probs, other.log_probs = pad_dim0_if_needed(
+            log_probs, other_log_probs = pad_dim0_if_needed(
                 self.log_probs, other.log_probs, 0.0
             )
-            self.log_probs = torch.cat((self.log_probs, other.log_probs), dim=1)
+            self.log_probs = torch.cat((log_probs, other_log_probs), dim=1)
             assert self.log_probs.shape == self.actions.batch_shape
         else:
             self.log_probs = None
 
         # Do the same for estimator_outputs, but padding with -float("inf") instead of 0.0
         if self.estimator_outputs is not None and other.estimator_outputs is not None:
-            self.estimator_outputs, other.estimator_outputs = pad_dim0_if_needed(
+            estimator_outputs, other_estimator_outputs = pad_dim0_if_needed(
                 self.estimator_outputs, other.estimator_outputs
             )
             self.estimator_outputs = torch.cat(
-                (self.estimator_outputs, other.estimator_outputs), dim=1
+                (estimator_outputs, other_estimator_outputs), dim=1
             )
             assert (
                 self.estimator_outputs.shape[: len(self.actions.batch_shape)]
