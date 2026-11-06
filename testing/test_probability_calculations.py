@@ -272,26 +272,46 @@ def test_trajectory_pf_vectorized_vs_nonvectorized_parity(monkeypatch):
     torch.testing.assert_close(vec, nvec)
 
 
-def test_trajectory_pb_vectorized_vs_nonvectorized_parity(monkeypatch):
+@pytest.mark.parametrize("start", ["s0", "resumed"])
+def test_trajectory_pb_vectorized_vs_nonvectorized_parity(monkeypatch, start):
+    torch.manual_seed(0)
     env, _, pb_estimator, pf_sampler = _build_env_pf_pb()
 
     trajectories = pf_sampler.sample_trajectories(
         env,
-        n=6,
+        n=16,
         save_estimator_outputs=False,
         save_logprobs=False,
     )
+    if start == "resumed":
+        # Resume from each trajectory's midpoint (s0 for very short ones), as
+        # LocalSearchSampler does from its junction states.
+        mid = (trajectories.terminating_idx - 1) // 2
+        midpoints = trajectories.states.tensor[mid, torch.arange(len(mid))]
+        trajectories = pf_sampler.sample_trajectories(
+            env, states=env.states_from_tensor(midpoints)
+        )
+
+    pb_params = list(pb_estimator.parameters())
 
     # Vectorized path (default: is_vectorized=True).
     vec = get_trajectory_pbs(pb_estimator, trajectories)
+    vec_grads = torch.autograd.grad(vec.sum(), pb_params)
 
     # Per-step path: temporarily override is_vectorized.
     monkeypatch.setattr(
         type(pb_estimator), "is_vectorized", property(lambda self: False)
     )
     nvec = get_trajectory_pbs(pb_estimator, trajectories)
+    nvec_grads = torch.autograd.grad(nvec.sum(), pb_params)
 
+    if start == "resumed":
+        # Interior starts must produce first transitions with non-unit PB, or
+        # this case would not exercise them.
+        assert (vec[0] != 0).any()
     torch.testing.assert_close(vec, nvec)
+    for vec_grad, nvec_grad in zip(vec_grads, nvec_grads):
+        torch.testing.assert_close(vec_grad, nvec_grad)
 
 
 def test_adapter_log_probs_precomputed_matches_forward():
@@ -484,5 +504,15 @@ def test_resumed_trajectory_pb_probabilities_and_gradients(monkeypatch):
     torch.testing.assert_close(stepwise, expected)
     torch.testing.assert_close(stepwise, vectorized)
 
-    gradient = torch.autograd.grad(stepwise.sum(), module.bias)[0]
-    torch.testing.assert_close(gradient, torch.tensor([-0.25, 0.25]))
+    params = (module.weight, module.bias)
+    stepwise_grads = torch.autograd.grad(stepwise.sum(), params)
+    vectorized_grads = torch.autograd.grad(vectorized.sum(), params)
+    # Only the interior-start transition contributes (the root-start child has a
+    # single parent): d log PB / d logits = onehot(1) - [0.25, 0.75], and PB is
+    # evaluated at the successor state [1, 2], not at the start state [1, 1].
+    torch.testing.assert_close(stepwise_grads[1], torch.tensor([-0.25, 0.25]))
+    torch.testing.assert_close(
+        stepwise_grads[0], torch.tensor([[-0.25, -0.5], [0.25, 0.5]])
+    )
+    for stepwise_grad, vectorized_grad in zip(stepwise_grads, vectorized_grads):
+        torch.testing.assert_close(stepwise_grad, vectorized_grad)

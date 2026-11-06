@@ -40,7 +40,7 @@ from gfn.utils.modules import (
     RecurrentDiscreteSequenceModel,
     TransformerDiscreteSequenceModel,
 )
-from gfn.utils.prob_calculations import get_trajectory_pfs
+from gfn.utils.prob_calculations import get_trajectory_pbs, get_trajectory_pfs
 from gfn.utils.training import states_actions_tns_to_traj
 
 
@@ -547,6 +547,109 @@ def test_local_search_for_loop_equivalence(
         raise ValueError(
             f"Error while testing LocalSearchSampler.local_search in {env_name}"
         ) from e
+
+
+class _StepwiseDiscretePolicyEstimator(DiscretePolicyEstimator):
+    """A DiscretePolicyEstimator evaluated through the per-step (non-vectorized) path."""
+
+    @property
+    def is_vectorized(self) -> bool:
+        return False
+
+
+@pytest.mark.parametrize("pb_path", ["vectorized", "stepwise"])
+@pytest.mark.parametrize("env_name", ["HyperGrid", "DiscreteEBM"])
+def test_local_search_metropolis_hastings_acceptance_ratio(
+    monkeypatch: pytest.MonkeyPatch,
+    env_name: Literal["HyperGrid", "DiscreteEBM"],
+    pb_path: Literal["vectorized", "stepwise"],
+):
+    """LocalSearchSampler's MH step must accept x' with probability
+
+        min(1, R(x') P_B(tau | x) P_F(tau') / (R(x) P_B(tau' | x') P_F(tau)))
+
+    where tau and tau' are the complete s0 -> x and s0 -> x' trajectories.
+    local_search builds the tau' terms by splicing the backtracked prefix of tau onto
+    a rollout resumed from the junction state, so this also checks that resumed
+    rollouts' log-probs include their first transition, for both PB evaluation paths.
+
+    Two internals are hooked. When `_combine_prev_and_recon_trajectories` returns,
+    every term is recomputed on the complete trajectories. The next `torch.rand` call
+    (the MH uniform draw) is then replaced by draws just below (even rows: must
+    accept) or just above (odd rows: must reject) the reference acceptance
+    probability, so any error in the ratio larger than `margin` flips a decision.
+    """
+    torch.manual_seed(0)
+    env, pf, pb = get_env_and_estimators(
+        env_name, "Identity", delta=0.1, n_components=1, n_components_s0=1
+    )
+    assert isinstance(pb, DiscretePolicyEstimator)
+    # The sampler's PB shares `pb`'s parameters; only the evaluation path differs.
+    # The reference terms below always use the vectorized `pb`.
+    pb_cls = (
+        _StepwiseDiscretePolicyEstimator
+        if pb_path == "stepwise"
+        else DiscretePolicyEstimator
+    )
+    sampler_pb = pb_cls(
+        module=pb.module,
+        n_actions=pb.n_actions,
+        preprocessor=pb.preprocessor,
+        is_backward=True,
+    )
+    sampler = LocalSearchSampler(pf_estimator=pf, pb_estimator=sampler_pb)
+    trajectories = sampler.sample_trajectories(env, n=32, save_logprobs=True)
+
+    margin = 1e-3
+    expected: dict[str, torch.Tensor] = {}
+    combine = LocalSearchSampler._combine_prev_and_recon_trajectories
+    rand = torch.rand
+
+    def combine_then_plan_mh_draws(**kwargs):
+        new_traj, new_log_pf, new_log_pb = combine(**kwargs)
+        prev_traj = kwargs["prev_trajectories"]
+        assert new_log_pf is not None and new_log_pb is not None
+        assert new_traj.log_rewards is not None
+
+        # Reference terms, evaluated on the complete s0-start trajectories.
+        new_pf = get_trajectory_pfs(pf, new_traj).sum(0)
+        new_pb = get_trajectory_pbs(pb, new_traj).sum(0)
+        prev_pf = get_trajectory_pfs(pf, prev_traj).sum(0)
+        prev_pb = get_trajectory_pbs(pb, prev_traj).sum(0)
+
+        # The spliced log-probs that local_search feeds into the ratio.
+        torch.testing.assert_close(new_log_pf.sum(0), new_pf)
+        torch.testing.assert_close(new_log_pb.sum(0), new_pb)
+
+        log_ratio = (
+            (new_traj.log_rewards + prev_pb + new_pf)
+            - (prev_traj.log_rewards + new_pb + prev_pf)
+        ).clamp_max(0.0)
+        accept_prob = log_ratio.exp()
+        above = accept_prob * (1 + margin)
+        # A draw above accept_prob is impossible when accept_prob is ~1.
+        must_accept = (torch.arange(len(accept_prob)) % 2 == 0) | (above >= 1)
+        u = torch.where(must_accept, accept_prob * (1 - margin), above)
+        expected["is_updated"] = must_accept & (accept_prob > 0)
+
+        def mh_uniform_draw(*args, **kwargs):
+            monkeypatch.setattr(torch, "rand", rand)  # One-shot.
+            return u
+
+        monkeypatch.setattr(torch, "rand", mh_uniform_draw)
+        return new_traj, new_log_pf, new_log_pb
+
+    monkeypatch.setattr(
+        LocalSearchSampler,
+        "_combine_prev_and_recon_trajectories",
+        staticmethod(combine_then_plan_mh_draws),
+    )
+    with torch.no_grad():
+        _, is_updated = sampler.local_search(
+            env, trajectories, back_ratio=0.5, use_metropolis_hastings=True
+        )
+
+    assert torch.equal(is_updated, expected["is_updated"])
 
 
 @pytest.mark.parametrize(

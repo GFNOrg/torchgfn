@@ -425,10 +425,10 @@ def get_trajectory_pbs(
     """Calculate PB log‑probabilities for trajectories.
 
     Non-vectorized evaluation (``estimator.is_vectorized=False``) aligns each
-    action at ``t`` with its successor at ``t+1``. Sink/initial successor states
-    and dummy/exit actions are excluded. The first transition is evaluated too:
-    trajectories resumed from interior states can have non-unit backward
-    probabilities.
+    action at ``t`` with its successor state at ``t+1`` and uses the mask
+    ``~is_sink_state[t+1] & ~is_initial_state[t+1] & ~is_dummy[t] & ~is_exit[t]``.
+    The first transition is evaluated too: trajectories resumed from interior
+    states can have non-unit backward probabilities.
 
     Args:
         pb: Backward policy estimator, or ``None`` for trees (PB=1).
