@@ -623,8 +623,10 @@ class LocalSearchSampler(Sampler):
             )
             trajectories.extend(ls_trajectories)
 
+            # Accepted chains continue from the proposals just appended (block it + 1);
+            # rejected chains stay where they were.
             last_indices = torch.arange(
-                n * it, n * (it + 1), device=trajectories.states.device
+                n * (it + 1), n * (it + 2), device=trajectories.states.device
             )
             search_indices[is_updated] = last_indices[is_updated]
 
