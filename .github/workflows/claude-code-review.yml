@@ -18,6 +18,12 @@ jobs:
     #   github.event.pull_request.user.login == 'new-developer' ||
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
+    # Skip PRs from forks: GitHub withholds secrets and OIDC tokens from
+    # `pull_request` runs on fork PRs, so the action cannot authenticate.
+    # To review a fork PR, a maintainer can comment `@claude` on it instead
+    # (handled by claude.yml, which runs with the base repo's secrets).
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
     runs-on: ubuntu-latest
     permissions:
       contents: read
