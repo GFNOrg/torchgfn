@@ -142,10 +142,31 @@ class ReplayBufferManager:
 
         Sent by a coordinator aggregating local baselines across buffer
         managers.  The manager doesn't need to know who sent it or why.
+
+        A malformed message is an error, not a no-op: the adopted value
+        gates what every assigned worker sends, so a manager that quietly
+        keeps its shard-local threshold filters against a different cutoff
+        from its siblings — the exact condition this message exists to
+        remove, and one that leaves no trace in the run.
         """
-        global_baseline = msg.message_data.get("global_baseline_log_reward")
-        if global_baseline is not None:
-            self._global_baseline = float(global_baseline)
+        if not isinstance(msg.message_data, dict):
+            raise ValueError(
+                "BASELINE_SYNC message_data must be a dict, got "
+                f"{type(msg.message_data).__name__}"
+            )
+        value = msg.message_data.get("global_baseline_log_reward")
+        if value is None:
+            raise ValueError(
+                "BASELINE_SYNC has no usable 'global_baseline_log_reward'; "
+                f"message_data={msg.message_data}"
+            )
+        global_baseline = float(value)
+        if not math.isfinite(global_baseline):
+            raise ValueError(
+                f"BASELINE_SYNC global_baseline_log_reward is {global_baseline}; "
+                "a non-finite baseline keeps every trajectory or none"
+            )
+        self._global_baseline = global_baseline
 
     def _inject_baseline_log_reward(
         self, score_dict: dict[str, float], incoming
