@@ -14,8 +14,8 @@ from gfn.env import Env
 class PolicyGradientTrajectories(Trajectories):
     r"""Trajectories augmented with the per-rollout quantities a PPO update must freeze.
 
-    Policy-gradient GFlowNet training (Zykova-Myzina et al., 2026, arXiv:2606.15793)
-    takes several gradient steps on a single batch of rollouts. Algorithm 2 line 4 is
+    Entropic PPO (Zykova-Myzina et al., 2026, arXiv:2606.15793) takes several
+    gradient steps on a single batch of rollouts. Algorithm 2 line 4 is
     explicit that the advantages $\hat{A}_t$, the value-fit targets $y_t$ and the
     rollout-time log-probabilities are computed **once** and held fixed across all $K$
     inner epochs: recomputing them against the moving $V_\varphi$ would change the

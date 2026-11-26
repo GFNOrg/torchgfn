@@ -9,11 +9,18 @@ flow-balance condition:
   selectable advantage estimator: the full soft return, reward-to-go, reward-to-go with a
   learned value baseline, or GAE. The paper's Section 5.2 finds the variance ordering
   matches the RL literature, with GAE best.
-- :class:`EntPPOGFlowNet` — Entropic PPO (their Algorithm 2), the first PPO variant that
-  works for GFlowNets. Soft policy improvement contributes an *analytic* KL trust region
-  against the rollout policy, which standard PPO lacks; the paper shows that both this KL
-  term (their Fig. 7) and the usual ratio clipping (their Fig. 8) are load-bearing, and
-  removing either causes collapse once several update epochs are taken per batch.
+- :class:`EntPPOGFlowNet` — Entropic PPO (their Algorithm 2). Soft policy improvement
+  contributes an *analytic* KL trust region against the rollout policy, which standard
+  PPO lacks; the paper shows that both this KL term (their Fig. 7) and the usual ratio
+  clipping (their Fig. 8) are load-bearing, and removing either causes collapse once
+  several update epochs are taken per batch.
+
+Policy-gradient GFlowNet training, with VPG and a TRPO objective, was introduced by Niu
+et al., "GFlowNet Training by Policy Gradients" (ICML 2024, arXiv:2408.05885). Their
+value and advantage functions equal the soft ones used here up to sign and the constant
+:math:`\log Z`. After the usual swap to the rollout state distribution, the Ent-PPO KL
+penalty is the KL term of their performance-difference identity (proof of their Lemma
+C.2), which their TRPO bounds by a trust-region radius instead.
 
 The RL correspondence holds at :math:`\alpha = \gamma = 1` with a *fixed* backward policy:
 changing :math:`P_B` changes the MDP reward itself, so these objectives admit no joint

@@ -98,7 +98,7 @@ A variant of TB designed for posterior fine-tuning from a pre-trained prior. Use
 
 **Class:** `PolicyGradientGFlowNet`
 
-Trains the forward policy as an entropy-regularized RL agent instead of enforcing a balance condition. With a fixed backward policy, GFlowNet training is equivalent to soft RL at `α = γ = 1` under the per-step reward `log P_B(s_t | s_{t+1})`, plus `log R(x)` on the exit transition; the soft value function is the GFlowNet log-flow, and `V(s_0) = log Z`. Introduced for GFlowNets in [Proximal Policy Optimization for Amortized Discrete Sampling](https://arxiv.org/abs/2606.15793).
+Trains the forward policy as an entropy-regularized RL agent instead of enforcing a balance condition. With a fixed backward policy, GFlowNet training is equivalent to soft RL at `α = γ = 1` under the per-step reward `log P_B(s_t | s_{t+1})`, plus `log R(x)` on the exit transition; the soft value function is the GFlowNet log-flow, and `V(s_0) = log Z`. Policy-gradient GFlowNet training, with VPG and a TRPO objective, was introduced in [GFlowNet Training by Policy Gradients](https://arxiv.org/abs/2408.05885) (Niu et al., ICML 2024); its value and advantage functions equal the soft ones here up to sign and the constant `log Z`. This implementation follows the soft-RL formulation of [Proximal Policy Optimization for Amortized Discrete Sampling](https://arxiv.org/abs/2606.15793).
 
 Four advantage estimators are available via `advantage=`, in increasing order of sophistication and decreasing variance: `"total"` (the full soft return — this is REINFORCE on the reverse KL, and equals the negated TB score), `"reward_to_go"`, `"baseline"` (reward-to-go minus a learned soft value), and `"gae"` (the default; Generalized Advantage Estimation, `gae_lambda=0.7` in the paper).
 
@@ -116,7 +116,7 @@ Four advantage estimators are available via `advantage=`, in increasing order of
 
 **Class:** `EntPPOGFlowNet`
 
-Proximal Policy Optimization adapted to the soft-RL formulation above, from the same paper. Combines the usual clipped importance ratio with an *analytic* KL penalty against the rollout policy, which falls out of soft policy improvement rather than being imposed on top. Standard PPO carries a free entropy coefficient and no cross-entropy term, and its optimum concentrates on `argmax_x R(x)` instead of sampling from `R/Z` — which is why earlier attempts at PPO for GFlowNets reported mode collapse.
+Proximal Policy Optimization adapted to the soft-RL formulation above, from the same paper. Combines the usual clipped importance ratio with an *analytic* KL penalty against the rollout policy, which falls out of soft policy improvement rather than being imposed on top. After the usual swap to the rollout state distribution, this penalty is the KL term of the performance-difference identity in Niu et al. (2024, proof of Lemma C.2), whose TRPO objective bounds that term by a trust-region radius instead. Standard PPO carries a free entropy coefficient and no cross-entropy term, and its optimum concentrates on `argmax_x R(x)` instead of sampling from `R/Z` — which is why earlier attempts at PPO for GFlowNets reported mode collapse.
 
 **Requires:** Forward policy (PF), backward policy (PB), soft value estimator (logV). For the analytic KL, sample with `save_estimator_outputs=True`; `kl_estimator="importance"` is a fallback for policies with no closed-form KL.
 

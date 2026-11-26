@@ -30,6 +30,10 @@ References:
     Tiapkin et al. "Generative Flow Networks as Entropy-Regularized RL"
     (AISTATS 2024, arXiv:2310.12934).
 
+    Niu et al. "GFlowNet Training by Policy Gradients" (ICML 2024,
+    arXiv:2408.05885) — their :math:`V_F` and :math:`A_F` equal the soft value and
+    advantage here up to sign and the constant :math:`\log Z`.
+
     Schulman et al. "High-Dimensional Continuous Control Using Generalized
     Advantage Estimation" (ICLR 2016, arXiv:1506.02438).
 
